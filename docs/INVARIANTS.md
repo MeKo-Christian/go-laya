@@ -21,7 +21,7 @@ Numbered checklist. Each item cites the line that defines it.
 12. Return is `ids[:max_len]` and `[m for m in markers if m < max_len]` (L86) — the final `[SEP]` can be truncated away.
 13. A question whose surviving marker count differs from its rendered option count is rejected with `ValueError("question %r options exceed head_max_len=%d")` (agent.py:262-263). This is the only user-visible validation error in the inference path.
 
-**`render_options` / `render_criterion` (common.py:21-46)**
+**`serialize_state` / `render_options` / `render_criterion` (common.py:15-46)**
 
 14. `choice`: an option renders as the bare key **iff** its value is `None` or `""` — exactly those two. `0`, `False`, `0.0` are legitimate values and render as `"zero: 0"` / `"no: false"` (L38, test_criteria.py:65-67). Otherwise `"<key>: <rendered>"`. Order is criteria definition order.
 15. `score`: `"level %d: %s"` with `i` starting at 0 (L40).
@@ -29,7 +29,7 @@ Numbered checklist. Each item cites the line that defines it.
 17. `render_criterion`: a `str` passes through byte-identical; anything else is `json.dumps(value, ensure_ascii=False, separators=(", ", ": "), default=str)`. Golden cases from test_criteria.py:33-41: `{"desc": "phishing"}` → `'{"desc": "phishing"}'`, `["a","b"]` → `'["a", "b"]'`, `3` → `"3"`, `False` → `"false"`, `None` → `"null"`, `{"d":"münchen"}` → `'{"d": "münchen"}'` (non-ASCII literal, **not** `ü`). Unserialisable values must not raise — fall back to a string form.
 18. `serialize_state`: a `str` passes through; anything else is `json.dumps(state, ensure_ascii=False)` with **default** separators, which are the same `", "` / `": "`. Key order is insertion order; no HTML escaping of `<`, `>`, `&`. **Go's `encoding/json` violates all three of: separators (it emits `{"a":1}`), key ordering (it sorts map keys), and HTML escaping (on by default). A custom encoder is mandatory, or the model sees different bytes than the Python version.**
 
-**`Agent.system_one` — numerics and formatting (agent.py:229-343)**
+**`Agent._to_internal` + `Agent.system_one` — numerics and formatting (agent.py:229-343)**
 
 19. A `choice` question whose `criteria` is a list becomes `{c: None for c in list}` → bare labels in list order (L233-234).
 20. Non-string `instructions` become `json.dumps(ins)` with **default `ensure_ascii=True`** — the one place laya escapes non-ASCII (L236-237).
@@ -37,12 +37,14 @@ Numbered checklist. Each item cites the line that defines it.
 22. `temp_bucket(qtype, k) = "<name>:<size>"` where size is `"2"` for k≤2, `"3-5"` for k≤5, `"6-10"` for k≤10, else `"11+"` (common.py:209-211). Examples: `"noul:2"`, `"choice:3-5"`, `"score:3-5"`.
 23. `t_scale = temperature_by_options[temp_bucket] if present else temperature[qtype]`, with defaults `temperature=[1.0,1.0,1.0]` and `temperature_by_options={}` (L194-195, 304). `laya-multilingual` ships with **no** fitted temperatures (README:355).
 24. `z = logits[r, :k] / max(1e-3, t_scale)` then `p = exp(z − max(z)); p /= sum(p)` — a max-subtracted softmax over exactly the first _k_ logits (L305-307). The `1e-3` floor guards a zero/negative temperature.
+    - **24a. Precision** _(added 2026-09-20)_: `logits` arrives as numpy **float32** (L294) and stays float32 through the division by a Python float (NumPy 2 weak-scalar promotion), `np.exp`, and the normalisation; `confidence_from_probs` (#25) is float32 arithmetic too. `score` (#28) is `float((np.arange(k) * p).sum())` — float64 over a float32 `p`; `noul` (#26/#27) is `float(p[1])` from float32. The act softmax (#32) is torch float32. Go must do the softmax and entropy in `float32` where numpy does, or the fourth decimal after `round` will disagree. `scripts/dump_python_parity.py:747-751` mirrors this.
 25. `choice` and `score` confidence = `round(clip(1 − H(p)/ln k, 0, 1), 4)` with `H = −Σ p·ln(clip(p, 1e-12, 1))`; `k < 2` returns `1.0` (common.py:200-206, agent.py:309).
 26. `noul` confidence = `round(max(p[1], 1 − p[1]), 4)` — **not** the entropy formula (L335). For k=2 the two happen to disagree, so this must be a separate code path.
 27. `noul` value = `round(p[1], 4)`: **index 1 is P(true)** (L334).
 28. `score` value = `round(Σ i·p[i], 4)` for i in 0..k−1 — an expectation over levels, not an argmax (L322).
 29. Every emitted float is `round(x, 4)`. **Python's `round()` is round-half-to-even on the exact binary value of the double; Go's `math.Round` is half-away-from-zero.** Use `strconv.ParseFloat(strconv.FormatFloat(x, 'f', 4, 64), 64)`, which rounds the same way, and test the tie cases (e.g. `0.00125`, `2.5e-5`).
-30. Key sets per answer type are exactly as in §3.2 — in particular a `noul` answer has **no** `probabilities` and no `legend`, and a `choice` answer has no `legend`.
+30. Key sets per answer type are exactly as in `docs/API.md`'s "Return-value shapes" — in particular a `noul` answer has **no** `probabilities` and no `legend`, and a `choice` answer has no `legend`. Every key of a shape is emitted even when its value is empty or `""` (no `omitempty`).
+    - **30a. Tie-break** _(added 2026-09-20)_: `keys[int(p.argmax())]` (L315) — numpy returns the **first** maximum, so on an exact tie the earlier criterion wins.
 31. `score`'s `legend` maps `str(i)` to the **raw** criterion value, not the rendered option text (L326). A dict criterion stays a dict in the legend.
 32. `action.act_probability = round(softmax(act_logits, -1)[r, 0], 4)` — **column 0** of the action head (L295, 310).
 33. Envelope: `model` is the constant `"laya-rl-agent"`; `usage.input_tokens` is `int(attention_mask.sum())` over the **whole batch**, not per question; `usage.output_tokens` is always `0` (L339-343).
@@ -91,7 +93,7 @@ Numbered checklist. Each item cites the line that defines it.
 58. `script_profile` returns fractions over alphabetic characters only, **omitting zero counts** (so `latin` disappears from a pure-Hindi profile), and `{}` when there are no letters (L113-130).
 59. `non_latin_fraction = round(1.0 − profile.get("latin", 0.0), 4)`, or `0.0` when the profile is empty; the `"unknown"` branch hard-codes `0.0` (L168-171).
 60. `state_text` flattens **string leaves only** of str/dict/list/tuple, depth-first in value order, with dict **keys ignored**, a depth cap of 6, joined with a single space, truncated to 4000 chars (L67-88). Asserted by test_router.py:80-86: English keys around Hindi content must still be detected as non-English.
-61. `guess_latin_language`: fewer than 4 word matches → `None` (L140). Words come from `[^\W\d_]+` — effectively Unicode letter runs — lowercased. Go's `\w` is ASCII-only in RE2, so use `unicode.IsLetter` splitting rather than a direct regex translation.
+61. `guess_latin_language`: fewer than 4 **words** → `None` (L139-140) — `_WORD.findall` counts every letter run in the text, not stop-word hits; the per-language matching happens afterwards at L141 _(wording corrected 2026-09-20)_. Words come from `[^\W\d_]+` — effectively Unicode letter runs — lowercased. Go's `\w` is ASCII-only in RE2, so use `unicode.IsLetter` splitting rather than a direct regex translation.
 62. `diac_rate = (count of chars in _NON_EN_DIACRITICS) / max(1, len(lowered))`, computed over the **whole lowered text including spaces and punctuation**, not just letters (L143-145).
 63. The non-English candidate is `max` over `{fr, de, es, pt, it, nl}` by score, ties broken by `_STOP`'s insertion order (fr, de, es, pt, it, nl) (L147-148). Go must keep an explicit ordered slice.
 64. Decision ladder, in order (L149-156): (a) `best == 0 and diac_rate < 0.02` → `"en"` if `en > 0` else `None`; (b) `best_lg and best >= max(2, en + 2)` → `best_lg`; (c) `diac_rate >= 0.04 and best_lg and best >= en` → `best_lg`; (d) `"en"` if `en > 0` else `None`. Golden cases in test_router.py:65-76, including the guard that a long English sentence stays `"en"`.

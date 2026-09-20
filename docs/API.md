@@ -1,7 +1,9 @@
 # Proposed Go API
 
 > Referenced from `PLAN.md` §7. The type definitions the port targets, and the decisions that resolve
-> Python's dynamic typing into explicit Go types.
+> Python's dynamic typing into explicit Go types. **This file is the type appendix; `PLAN.md` wins on
+> any conflict** — in particular §2 of the plan owns the package layout, which used to be duplicated
+> here and drifted within a day (review of 2026-09-20).
 
 ## Return-value shapes to reproduce
 
@@ -44,7 +46,7 @@
 
 ```jsonc
 { "model": "english" | "multilingual" | "typed-decisions",
-  "repo":  "convaiinnovations/laya/multilingual",   // string... except one branch, see §4.42
+  "repo":  "convaiinnovations/laya/multilingual",   // string... except one branch upstream, see INVARIANTS #46 / PLAN Task 3.1.4
   "reason": "<human-readable>",
   "detection": null | { "script": "devanagari",
                         "script_profile": {"devanagari": 1.0},
@@ -54,27 +56,12 @@
   "workflow": null | "customer_service" | ... }
 ```
 
-### 3.3 Proposed Go package layout
+### 3.3 Package layout
 
-```
-github.com/MeKo-Tech/go-laya          // module
-  laya.go            Agent, Open, SystemOne, Result/Answer types
-  question.go        Question interface + Choice/Score/Noul definitions
-  router.go          Router, RouteDecision, model registry, LRU
-  options.go         functional options
-  errors.go          sentinel errors
-  jsonx.go           Obj (ordered object) + Python-compatible marshalling
-  lang/              script + language detection (public; zero deps)
-  mailtext/          email cleaning (public; "email" shadows nothing in Go but mailtext reads better)
-  presets/           the five question presets (public; zero deps)
-  internal/prompt/   render_options, render_criterion, build_sequence
-  internal/calib/    softmax, entropy confidence, temperature, py-round
-  internal/hub/      HF resolve + cache (Tier 5)
-  internal/runtime/  Backend interface + ONNX Runtime implementation (Tier 4)
-  internal/tok/      Tokenizer interface + HF tokenizers binding (Tier 3)
-```
-
-`lang`, `mailtext` and `presets` are separate public packages **with no dependency on the runtime**, so a user who only wants routing/cleaning never links ONNX Runtime. That is the single biggest structural win over the Python layout, where `import laya` drags in torch.
+See `PLAN.md` §2 — the single owner of the layout. In short: module `github.com/MeKo-Christian/go-laya`;
+public `lang/`, `mailtext/`, `presets/`, `jsonx/`, `tokenizer/` and `backend/` (D9: the `Backend`
+interface and `Batch` struct, zero dependencies); `internal/prompt`, `internal/calib`, `internal/hub`,
+`internal/backend/onnx`. The `Obj` type below lives in `jsonx/`, not at the root.
 
 ### 3.4 Concrete Go type definitions
 
@@ -172,6 +159,8 @@ type NoulQuestion struct {
 }
 
 // Questions preserves definition order so results are byte-reproducible.
+// A Python dict cannot hold two questions with the same id, so a duplicate is
+// an error (ErrDuplicateQuestionID), never last-wins.
 type Questions []NamedQuestion
 
 type NamedQuestion struct {
@@ -181,6 +170,7 @@ type NamedQuestion struct {
 
 func (qs Questions) IDs() []string
 func (qs Questions) Get(id string) (Question, bool)
+func (qs Questions) Validate() error // duplicate ids, per-question validate()
 
 // ---------------------------------------------------------------- answers
 
@@ -198,21 +188,26 @@ type ProbEntry struct {
 
 func (p Probs) MarshalJSON() ([]byte, error)
 func (p Probs) Get(key string) float64
-func (p Probs) Max() (key string, p float64)
+func (p Probs) Max() (key string, p float64) // first maximum on a tie, like numpy argmax (INVARIANTS #30a)
 
-// Answer carries all three shapes. Pointer fields are nil for the shapes that
-// do not emit that key, so the JSON matches Python exactly (a noul answer has
-// no "probabilities"; a score of 0.0 must still be emitted).
+// Answer carries all three shapes. Which keys are emitted is decided by Type,
+// through a hand-written MarshalJSON over jsonx.Obj — NOT by `omitempty`: a
+// choice key of "" is legal in Python and omitempty would drop "choice", and an
+// empty legend/probabilities would vanish the same way, breaking invariant #30.
+// A noul answer has no "probabilities" and no "legend"; a score of 0.0 is still
+// emitted. Key order per type is exactly the Python order shown above.
 type Answer struct {
-	Type          string   `json:"type"`
-	Choice        string   `json:"choice,omitempty"`
-	Score         *float64 `json:"score,omitempty"`
-	Noul          *float64 `json:"noul,omitempty"`
-	Legend        Obj      `json:"legend,omitempty"`        // raw criterion values
-	Probabilities Probs    `json:"probabilities,omitempty"`
-	Confidence    float64  `json:"confidence"`
-	Action        Action   `json:"action"`
+	Type          string
+	Choice        string   // choice only
+	Score         *float64 // score only
+	Noul          *float64 // noul only
+	Legend        Obj      // score only; raw criterion values
+	Probabilities Probs    // choice and score
+	Confidence    float64
+	Action        Action
 }
+
+func (a Answer) MarshalJSON() ([]byte, error) // per-Type key set, no omitempty
 
 type Usage struct {
 	InputTokens  int `json:"input_tokens"`
@@ -262,7 +257,7 @@ func WithHFToken(tok string) Option     // default: $HF_TOKEN
 func WithSubfolder(sub string) Option
 func WithCacheDir(dir string) Option    // default: $LAYA_CACHE or os.UserCacheDir()/laya
 func WithLimits(maxLen, headMaxLen int) Option
-func WithBackend(b runtime.Backend) Option // test doubles / alternative runtimes
+func WithBackend(b backend.Backend) Option // public leaf package (PLAN D9): test doubles, alternative runtimes
 func WithLogger(l *slog.Logger) Option
 
 // ---------------------------------------------------------------- router
@@ -274,12 +269,21 @@ type ModelSpec struct {
 
 func (s ModelSpec) String() string // reproduces router._repo_str
 
+// Detection is emitted inside the routing payload, so ScriptProfile's key order
+// is observable there. It is ordered (encounter order, latin last — the order
+// lang.detect_script must already track for invariant #56), not a map.
+// PLAN Task 2.2.7.
 type Detection struct {
-	Script           string             `json:"script"`
-	ScriptProfile    map[string]float64 `json:"script_profile"`
-	Language         *string            `json:"language"`
-	IsEnglish        bool               `json:"is_english"`
-	NonLatinFraction float64            `json:"non_latin_fraction"`
+	Script           string         `json:"script"`
+	ScriptProfile    []ScriptShare  `json:"script_profile"` // marshals as an ordered object
+	Language         *string        `json:"language"`
+	IsEnglish        bool           `json:"is_english"`
+	NonLatinFraction float64        `json:"non_latin_fraction"`
+}
+
+type ScriptShare struct {
+	Script   string
+	Fraction float64
 }
 
 // RouteDecision always serialises all five keys; nil pointers become null,
@@ -304,7 +308,10 @@ func NewRouter(opts ...RouterOption) (*Router, error)
 func (r *Router) Route(state State, qs Questions, ro ...RouteOption) (RouteDecision, error)
 
 func (r *Router) Predict(ctx context.Context, state State, qs Questions, ro ...RouteOption) (*Result, error)
+func (r *Router) SystemOne(ctx context.Context, state State, qs Questions, ro ...RouteOption) (*Result, error) // alias, router.py:311
 func (r *Router) Load(ctx context.Context, name string) (*Agent, error)
+func (r *Router) MaxLoaded() int
+func (r *Router) SetMaxLoaded(n int) // clamped to >= 1; the upstream tests mutate it after construction
 func (r *Router) Attach(name string, a *Agent) error
 func (r *Router) Preload(ctx context.Context, names ...string) error
 func (r *Router) Unload(names ...string)
@@ -335,7 +342,8 @@ var (
 	ErrCheckpointNotFound      = errors.New("laya: checkpoint not found")
 	ErrIncompatibleCheckpoint  = errors.New("laya: incompatible checkpoint")
 	ErrOptionsExceedHeadBudget = errors.New("laya: question options exceed head_max_len")
-	ErrEmptyQuestions          = errors.New("laya: no questions")
+	ErrEmptyQuestions          = errors.New("laya: no questions")          // Python: TypeError from collate_items returning None
+	ErrDuplicateQuestionID     = errors.New("laya: duplicate question id") // Python: impossible in a dict
 )
 
 // OptionBudgetError names the offending question, replacing Python's
@@ -357,18 +365,18 @@ func (e *OptionBudgetError) Unwrap() error // ErrOptionsExceedHeadBudget
 
 ### 3.5 The dynamic-typing decisions, and what I propose
 
-| Python                                                                                            | The ambiguity                                                                     | Go decision                                                                                                                                                                                                                                                                 |
-| ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `criteria` on `choice`: `dict[str, Any]` **or** `list[str]` (agent.py:233-234)                    | list means "bare labels"; dict values may be `None`/`""` (bare) or any JSON value | `[]ChoiceOption{Key, Desc any}` + a `Labels("a","b")` helper. One representation, order preserved, both forms expressible                                                                                                                                                   |
-| `criteria` on `score`: `list[Any]`                                                                | may hold strings, dicts, numbers, even `None` (test_criteria.py:92)               | `[]Criterion` where `Criterion = any`                                                                                                                                                                                                                                       |
-| `criteria` on `noul`: `dict` with `"true"`/`"false"`, or absent                                   | ordering is fixed (false=0, true=1) regardless of dict order                      | explicit `True`/`False` fields — removes the possibility of getting the index order wrong                                                                                                                                                                                   |
-| `state`: `str \| dict \| list`                                                                    | serialized one way for the prompt, flattened another way for detection            | `State` interface with `TextState`/`ObjState`/`ListState`. Rejected `any` + reflection: it makes both behaviours implicit and makes `Obj` ordering easy to lose                                                                                                             |
-| criterion value: anything (`dict`, `list`, `int`, `bool`, `float`, `None`, unserialisable object) | `render_criterion` JSON-encodes with `default=str`                                | `Criterion = any`; encoder mirrors `json.dumps`, and falls back to `fmt.Sprintf("%v", v)` for anything `encoding/json` refuses (matching `default=str`)                                                                                                                     |
-| `instructions`: `str` or anything (agent.py:236-237)                                              | non-str is `json.dumps`'d with `ensure_ascii=True` (unlike everything else)       | `Ins string` only. Callers serialise themselves. Document the dropped edge case                                                                                                                                                                                             |
-| dict iteration order                                                                              | drives prompt bytes, probabilities key order, and two tie-breaks                  | `Obj`/`Probs`/`Questions`/`AnswerSet` ordered slices; `map` only where order is provably unobservable (`Detection.ScriptProfile`, which Python emits from a dict built in a fixed order — a map here is a _deliberate, documented_ deviation, or use `Obj` for byte-parity) |
-| `RouteDecision.repo`: `str` normally, tuple on one branch (router.py:266)                         | inconsistent                                                                      | always `string`. Document the deviation                                                                                                                                                                                                                                     |
-| `RouteDecision` is a `dict` subclass                                                              | users index it _and_ use `.model`                                                 | a struct with JSON tags; add `func (d RouteDecision) Map() Obj` for anyone who wants the dict                                                                                                                                                                               |
-| `Router.models` values: `str` or `(repo, sub)` tuple/list                                         | `_split` normalises                                                               | `ModelSpec{Repo, Subfolder}`; `WithModels(map[string]ModelSpec)`. Add `ModelSpecFromString(s)` for the local-path override that test_router.py:230 relies on                                                                                                                |
-| `legend` values: raw criteria                                                                     | can be dicts                                                                      | `Obj` with `any` values                                                                                                                                                                                                                                                     |
+| Python                                                                                            | The ambiguity                                                                     | Go decision                                                                                                                                                                                                                              |
+| ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `criteria` on `choice`: `dict[str, Any]` **or** `list[str]` (agent.py:233-234)                    | list means "bare labels"; dict values may be `None`/`""` (bare) or any JSON value | `[]ChoiceOption{Key, Desc any}` + a `Labels("a","b")` helper. One representation, order preserved, both forms expressible                                                                                                                |
+| `criteria` on `score`: `list[Any]`                                                                | may hold strings, dicts, numbers, even `None` (test_criteria.py:92)               | `[]Criterion` where `Criterion = any`                                                                                                                                                                                                    |
+| `criteria` on `noul`: `dict` with `"true"`/`"false"`, or absent                                   | ordering is fixed (false=0, true=1) regardless of dict order                      | explicit `True`/`False` fields — removes the possibility of getting the index order wrong                                                                                                                                                |
+| `state`: `str \| dict \| list`                                                                    | serialized one way for the prompt, flattened another way for detection            | `State` interface with `TextState`/`ObjState`/`ListState`. Rejected `any` + reflection: it makes both behaviours implicit and makes `Obj` ordering easy to lose                                                                          |
+| criterion value: anything (`dict`, `list`, `int`, `bool`, `float`, `None`, unserialisable object) | `render_criterion` JSON-encodes with `default=str`                                | `Criterion = any`; encoder mirrors `json.dumps`, and falls back to `fmt.Sprintf("%v", v)` for anything `encoding/json` refuses (matching `default=str`)                                                                                  |
+| `instructions`: `str` or anything (agent.py:236-237)                                              | non-str is `json.dumps`'d with `ensure_ascii=True` (unlike everything else)       | `Ins string` only. Callers serialise themselves. Document the dropped edge case                                                                                                                                                          |
+| dict iteration order                                                                              | drives prompt bytes, probabilities key order, and two tie-breaks                  | `Obj`/`Probs`/`Questions`/`AnswerSet`/`Detection.ScriptProfile` ordered slices. No Go `map` anywhere the order reaches JSON — `script_profile` sits inside the emitted `routing` payload, so it was never unobservable (PLAN Task 2.2.7) |
+| `RouteDecision.repo`: `str` normally, tuple on one branch (router.py:266)                         | inconsistent                                                                      | always `string`. Document the deviation                                                                                                                                                                                                  |
+| `RouteDecision` is a `dict` subclass                                                              | users index it _and_ use `.model`                                                 | a struct with JSON tags; add `func (d RouteDecision) Map() Obj` for anyone who wants the dict                                                                                                                                            |
+| `Router.models` values: `str` or `(repo, sub)` tuple/list                                         | `_split` normalises                                                               | `ModelSpec{Repo, Subfolder}`; `WithModels(map[string]ModelSpec)`. Add `ModelSpecFromString(s)` for the local-path override that test_router.py:230 relies on                                                                             |
+| `legend` values: raw criteria                                                                     | can be dicts                                                                      | `Obj` with `any` values                                                                                                                                                                                                                  |
 
 ---
