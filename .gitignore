@@ -45,3 +45,19 @@ credentials.json
 # terminal transcripts dumped by the CLI (they quote whatever was pasted, including tokens)
 [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*-local-command-*.txt
 *-local-command-*.txt
+
+# Go build and coverage artefacts
+/bin/
+coverage.txt
+coverage.html
+*.test
+*.out
+
+# The isolated Python reference environment (PLAN.md task 1.1). Its pinned versions
+# live in scripts/requirements-ref.txt, which IS committed -- the venv itself is not.
+.venv-ref/
+
+# Model artefacts: downloaded checkpoints and ONNX exports are large and reproducible.
+*.onnx
+*.safetensors
+/models/

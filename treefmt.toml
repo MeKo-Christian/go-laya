@@ -1,0 +1,57 @@
+# House formatting config. Run with `just fmt` (or `treefmt --allow-missing-formatter`),
+# which is what CI checks via `just fmt-check`.
+#
+# Markdown is formatted by prettier only. markdownlint runs as a separate *checker*
+# (never with --fix): prettier >=3.9 and markdownlint --fix disagree on markdown often
+# enough that chaining both as formatters can fail to converge under --fail-on-change.
+
+[global]
+excludes = [
+  "go.sum",
+  "go.mod",
+  "LICENSE",
+  "NOTICE",
+  "**/.gitignore",
+  # Frozen upstream Python. It is the parity reference; reformatting it would make
+  # every diff against upstream unreadable.
+  "original/**",
+  # Binary and generated artefacts.
+  "*.png",
+  "*.svg",
+  "*.onnx",
+  "*.safetensors",
+  "coverage.txt",
+  "coverage.html",
+]
+
+### Go
+
+[formatter.gofumpt]
+command = "gofumpt"
+options = ["-w"]
+includes = ["*.go"]
+
+[formatter.gci]
+command = "gci"
+options = ["write", "-s", "standard", "-s", "default", "-s", "localmodule"]
+includes = ["*.go"]
+priority = 1 # run after gofumpt
+
+### Markdown, YAML, JSON
+
+[formatter.prettier]
+command = "prettier"
+options = ["-w"]
+includes = ["*.md", "*.yaml", "*.yml", "*.json"]
+
+### Shell
+
+[formatter.shfmt]
+command = "shfmt"
+options = ["-s", "-w"]
+includes = ["*.sh"]
+
+[formatter.shellcheck]
+command = "shellcheck"
+includes = ["*.sh"]
+priority = 1 # run after shfmt

@@ -1,0 +1,116 @@
+# golangci-lint configuration, schema v2 (golangci-lint >= 2.x).
+#
+# Start from everything, then disable what does not earn its keep here. Where the two
+# in-house Go repos (algo-fft, go-pocket-tts) disagree, the choice is noted.
+
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: all
+  disable:
+    - depguard # no import allowlist to maintain yet
+    - dupl # table-driven parity tests are deliberate near-duplicates
+    - err113 # parse/validation errors carry dynamic context; sentinels live in errors.go
+    - exhaustruct # option structs rely on meaningful zero values
+    - gochecknoglobals # package-level tables (scripts, stopwords, presets) are the design
+    - gochecknoinits
+    - godoclint # revive's `exported` rule already enforces GoDoc on the public API
+    - gomoddirectives # a `replace` is expected for the vendored tokenizer (PLAN.md task 4.3)
+    - gomodguard # deprecated in 2.12 in favour of gomodguard_v2, which `default: all` enables
+    - ireturn
+    - lll # line length is prettier's and gofumpt's business, not a linter's
+    - mnd # token budgets and byte offsets are magic numbers by nature
+    - musttag
+    - nlreturn
+    - noinlineerr # `if err := f(); err != nil` is idiomatic Go
+    - nonamedreturns
+    - paralleltest # t.Parallel() is opted into per test
+    - testpackage # parity tests need access to unexported internals
+    - tparallel
+    - varnamelen # tensor/index math reads better as i, j, k, d, n
+    - wsl
+    - wsl_v5
+  enable:
+    - revive
+
+  settings:
+    # Prompt assembly and route precedence are linear decision sequences; the default
+    # max of 10 forces artificial splits.
+    cyclop:
+      max-complexity: 20
+
+    funlen:
+      lines: 100
+      statements: 80
+
+    # gosec stays ON: laya downloads checkpoints from the Hub, so the supply-chain
+    # surface (PLAN.md R7) is real. G115 is int-conversion noise on tensor indexing.
+    gosec:
+      excludes:
+        - G115
+
+    revive:
+      rules:
+        - name: file-length-limit
+          arguments:
+            - max: 1500
+              skip-comments: false
+              skip-blank-lines: false
+        - name: exported
+
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - builtin$
+      # Frozen upstream Python reference; contains no Go, but keep the ratchet.
+      - ^original/
+    rules:
+      # The exported-doc requirement targets the public API surface only.
+      - linters: [revive]
+        path: ^(internal|cmd)/
+        text: "^exported:"
+      # Tests favour exhaustive tables and inline literals over factored helpers.
+      - linters:
+          - cyclop
+          - dupl
+          - forcetypeassert
+          - funlen
+          - goconst
+          - gocognit
+          - gosec
+          - maintidx
+          - noctx
+          - thelper
+          - usetesting
+          - wrapcheck
+        path: _test\.go
+      # Internal packages return their own errors; wrapping is the public API's job.
+      - linters: [wrapcheck]
+        path: ^internal/
+
+severity:
+  default: warn
+  rules:
+    - linters: [exhaustive, godox]
+      severity: info
+
+formatters:
+  # gofumpt only. Import grouping belongs to gci via treefmt (see treefmt.toml);
+  # enabling goimports here as well would leave the two fighting over the grouping.
+  enable:
+    - gofumpt
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - ^original/
