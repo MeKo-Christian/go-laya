@@ -96,6 +96,11 @@ bench-onnx reps="5" out="build/bench-onnx.txt":
 corpus python=".venv-ref/bin/python":
     {{python}} scripts/build_corpus.py --out {{justfile_directory()}}/build/corpus
 
+# Task 4.5.3: run the corpus through the Python oracle, recording every pipeline
+# stage. Needs the checkpoints; writes build/corpus/stages_{en,ml}.jsonl.gz.
+dump-stages python=".venv-ref/bin/python":
+    {{python}} scripts/dump_stages.py \
+        --corpus {{justfile_directory()}}/build/corpus/corpus.jsonl
 
 
 # Report known vulnerabilities in the dependency graph
