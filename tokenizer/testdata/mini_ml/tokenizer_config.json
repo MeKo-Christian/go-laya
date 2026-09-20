@@ -1,0 +1,8 @@
+{
+  "cls_token": "<bos>",
+  "sep_token": "<eos>",
+  "pad_token": "<pad>",
+  "mask_token": "<mask>",
+  "unk_token": "<unk>",
+  "tokenizer_class": "PreTrainedTokenizerFast"
+}

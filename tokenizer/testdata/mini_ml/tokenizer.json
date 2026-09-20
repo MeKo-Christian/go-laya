@@ -1,0 +1,179 @@
+{
+  "version": "1.0",
+  "truncation": null,
+  "padding": null,
+  "added_tokens": [
+    {
+      "id": 0,
+      "content": "<pad>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1,
+      "content": "<eos>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 2,
+      "content": "<bos>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 3,
+      "content": "<unk>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 4,
+      "content": "<mask>",
+      "single_word": false,
+      "lstrip": true,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 5,
+      "content": "\n",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": false
+    },
+    {
+      "id": 6,
+      "content": "\t\t",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": false
+    },
+    {
+      "id": 8,
+      "content": "▁▁",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": false
+    },
+    {
+      "id": 17,
+      "content": "<start_of_turn>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": false
+    },
+    {
+      "id": 18,
+      "content": "<end_of_turn>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": false
+    },
+    {
+      "id": 19,
+      "content": "<unused0>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": false
+    }
+  ],
+  "normalizer": {
+    "type": "Replace",
+    "pattern": {
+      "String": " "
+    },
+    "content": "▁"
+  },
+  "pre_tokenizer": {
+    "type": "Metaspace",
+    "replacement": "▁",
+    "prepend_scheme": "always",
+    "split": true
+  },
+  "post_processor": null,
+  "decoder": null,
+  "model": {
+    "type": "BPE",
+    "dropout": null,
+    "unk_token": "<unk>",
+    "continuing_subword_prefix": null,
+    "end_of_word_suffix": null,
+    "fuse_unk": true,
+    "byte_fallback": true,
+    "ignore_merges": false,
+    "vocab": {
+      "<pad>": 0,
+      "<eos>": 1,
+      "<bos>": 2,
+      "<unk>": 3,
+      "<mask>": 4,
+      "\n": 5,
+      "\t\t": 6,
+      "▁": 7,
+      "▁▁": 8,
+      "a": 9,
+      "b": 10,
+      "x": 11,
+      "y": 12,
+      "▁a": 13,
+      "▁b": 14,
+      "▁x": 15,
+      "▁ab": 16,
+      "<start_of_turn>": 17,
+      "<end_of_turn>": 18,
+      "<unused0>": 19,
+      "<0x00>": 20,
+      "<0x01>": 21,
+      "<0x02>": 22,
+      "<0x03>": 23,
+      "<0x04>": 24,
+      "<0x05>": 25,
+      "<0x06>": 26,
+      "<0x07>": 27,
+      "<0x08>": 28,
+      "<0x09>": 29,
+      "<0x0A>": 30,
+      "<0x0B>": 31,
+      "<0x0C>": 32,
+      "<0x0D>": 33,
+      "<0x0E>": 34,
+      "<0x0F>": 35,
+      "<0x80>": 36,
+      "<0x8B>": 37,
+      "<0xA0>": 38,
+      "<0xF0>": 39
+    },
+    "merges": [
+      ["▁", "a"],
+      ["▁", "b"],
+      ["▁", "x"],
+      ["▁a", "b"]
+    ]
+  }
+}
