@@ -862,8 +862,8 @@ numbers, although §8's "within 1e-4 of PyTorch" depends on exactly that.
 
 - [ ] **1.7.1** Regenerate `logits.jsonl` with the collated batch per case — `input_ids`,
       `attention_mask`, `marker_pos`, `marker_mask`, `qtype` — exactly what `collate_items` returns.
-- [ ] **1.7.2** Every header gains a `compute` block: `{device: cpu, dtype: float32, attn: sdpa,
-    torch_threads: 1}` (`dump_python_parity.py:1006,1014`).
+- [ ] **1.7.2** Every header gains a `compute` block (`dump_python_parity.py:1006,1014`):
+      `{device: cpu, dtype: float32, attn: sdpa, torch_threads: 1}`.
 - [ ] **1.7.3** `TestGoldenProvenance` asserts `compute`; the mismatch path is exercised against a
       corrupted copy, as 1.4.3 did.
 - [ ] **1.7.4** One reviewed regeneration diff (R6); nothing else in the eight files may change.
@@ -1099,12 +1099,12 @@ Two pipelines only — `typed-decisions`' `tokenizer.json` is byte-identical to 
       optional U+0020 + `IsLetter` run; + `IsNumber` run; + other run; else a whitespace run that gives
       back its last char when the run has length ≥ 2 and does not reach the segment end — that is
       `\s+(?!\S)` followed by `\s+`. Plus the `bytes_to_unicode` table. Acceptance:
-      `'   x'` EN → `['ĠâĢ', 'ĥ', 'âĢĥ', 'x']`; `'a' + '\t'*26 + 'b'` → `[a, ĉ×8, ĉ×8, ĉ×4,
-    ĉ×5, ĉ, b]`; `"DON'T"` → `[DON, ', T]`.
+      `'   x'` EN → `['ĠâĢ', 'ĥ', 'âĢĥ', 'x']`; `"DON'T"` → `[DON, ', T]`;
+      `'a' + '\t'*26 + 'b'` → `[a, ĉ×8, ĉ×8, ĉ×4, ĉ×5, ĉ, b]`.
 - [ ] **4.3.5** **Metaspace** `prepend_scheme:always`, `split:true`: per segment, `Replace` then
       prepend `▁` iff `!strings.HasPrefix(seg, "▁")`, then split `MergedWithNext`. Acceptance:
-      `'<start_of_turn>user\nhi<end_of_turn>'` → `['<start_of_turn>', '▁user', '\n', '▁hi',
-    '<end_of_turn>']`; `'   \n   '` → seven tokens.
+      `'   \n   '` → seven tokens, and `'<start_of_turn>user\nhi<end_of_turn>'` →
+      `['<start_of_turn>', '▁user', '\n', '▁hi', '<end_of_turn>']`.
 - [ ] **4.3.6** **BPE.** Port `merge_word` — per-char vocab lookup; byte fallback emits `<0xXX>` per
       char **before** merging, and only if every byte is in the vocab; `fuse_unk` — and `merge_all` (a
       heap ordered by rank then position, with stale-entry skip). Every merge maps to a `newID` resolved
