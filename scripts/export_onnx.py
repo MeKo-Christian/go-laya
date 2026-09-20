@@ -328,7 +328,9 @@ def compare_with_ort(onnx_path: Path, model: nn.Module, inputs: tuple) -> dict[s
     }
 
 
-def dump_fixture(onnx_path: Path, model: nn.Module, ckpt: Checkpoint, out_path: Path) -> dict[str, Any]:
+def dump_fixture(
+    onnx_path: Path, model: nn.Module, ckpt: Checkpoint, out_path: Path
+) -> dict[str, Any]:
     """Freeze one forward pass so the Go spike can assert against it (PLAN.md S2.1).
 
     Stores *both* runtimes' outputs on purpose. Go loads the graph through whatever
@@ -431,7 +433,9 @@ def run_one(
         report["eager_vs_sdpa"] = check_attention_equivalence(model, inputs)
         print(f"eager vs sdpa max abs diff: {report['eager_vs_sdpa']}", flush=True)
         report["fused_vs_reference_head"] = check_fastpath_equivalence(model, inputs)
-        print(f"fused vs reference head max abs diff: {report['fused_vs_reference_head']}", flush=True)
+        print(
+            f"fused vs reference head max abs diff: {report['fused_vs_reference_head']}", flush=True
+        )
 
     out_path = out_dir / f"laya-{ckpt.name}{suffix}.onnx"
     report["exporter"] = "dynamo" if dynamo else "torchscript"
@@ -460,8 +464,12 @@ def run_one(
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--checkpoint", choices=[c.name for c in CHECKPOINTS], action="append", default=[])
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument(
+        "--checkpoint", choices=[c.name for c in CHECKPOINTS], action="append", default=[]
+    )
     ap.add_argument("--all", action="store_true", help="export all three checkpoints (S1.5)")
     ap.add_argument(
         "--models-root",
@@ -471,7 +479,9 @@ def main() -> int:
     )
     ap.add_argument("--out", type=Path, default=REPO_ROOT / "build" / "onnx")
     ap.add_argument("--no-check-attn", dest="check_attn", action="store_false")
-    ap.add_argument("--reuse", action="store_true", help="skip the export if the .onnx is already there")
+    ap.add_argument(
+        "--reuse", action="store_true", help="skip the export if the .onnx is already there"
+    )
     ap.add_argument(
         "--dynamo",
         action="store_true",
@@ -488,8 +498,10 @@ def main() -> int:
     )
     args = ap.parse_args()
 
-    selected = CHECKPOINTS if args.all or not args.checkpoint else tuple(
-        c for c in CHECKPOINTS if c.name in args.checkpoint
+    selected = (
+        CHECKPOINTS
+        if args.all or not args.checkpoint
+        else tuple(c for c in CHECKPOINTS if c.name in args.checkpoint)
     )
 
     if args.fixture is not None and len(selected) != 1:
@@ -503,8 +515,15 @@ def main() -> int:
         try:
             reports.append(
                 run_one(
-                    ckpt, args.models_root, args.out, args.check_attn,
-                    args.reuse, args.dynamo, args.suffix, args.opset, args.fixture,
+                    ckpt,
+                    args.models_root,
+                    args.out,
+                    args.check_attn,
+                    args.reuse,
+                    args.dynamo,
+                    args.suffix,
+                    args.opset,
+                    args.fixture,
                 )
             )
         except Exception as exc:  # a spike records how it failed; it does not hide it
