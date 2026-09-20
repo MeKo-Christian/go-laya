@@ -32,6 +32,11 @@ fmt:
 fmt-check:
     treefmt --allow-missing-formatter --fail-on-change
 
+# Lint the Python reference harness (checker only -- `ruff format` runs under treefmt).
+# scripts/ only: original/ is the frozen parity reference and is never touched.
+lint-py:
+    ruff check scripts/
+
 # Lint Markdown (checker only -- prettier owns Markdown formatting, see treefmt.toml)
 lint-md:
     markdownlint '**/*.md' --ignore original --ignore models --ignore node_modules
@@ -83,7 +88,7 @@ vuln:
 check: test lint cover
 
 # What CI runs
-ci: fmt-check lint-md test-race lint check-tidy
+ci: fmt-check lint-md lint-py test-race lint check-tidy
 
 # lint-fix then fmt
 fix:

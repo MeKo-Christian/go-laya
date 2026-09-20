@@ -1,0 +1,34 @@
+# Python formatting and linting for the reference harness in `scripts/`.
+#
+# `scripts/` is the one part of the tree nothing checked: `original/**` is excluded
+# from treefmt on purpose (it is the parity reference and reformatting it would make
+# every diff against upstream unreadable), and everything else here is Go. That was
+# fine while `scripts/` was empty and is not now -- PLAN.md task 1.5.
+#
+# `ruff format` runs under treefmt. `ruff check` does not: it runs as a separate
+# checker via `just lint-py`, for the same reason markdownlint is not chained as a
+# formatter -- see the comment at the top of treefmt.toml.
+
+# The harness was hand-wrapped between 88 and 107 columns. 100 is the setting that
+# moves the fewest lines while still being enforced rather than aspirational.
+line-length = 100
+target-version = "py312"
+
+# Frozen upstream, and the two reference virtualenvs (task 1.1 / task 1.6).
+extend-exclude = ["original", ".venv-ref", ".venv-ref4"]
+
+[lint]
+# E/F pycodestyle+pyflakes, B bugbear, I import order, UP pyupgrade. Deliberately not
+# `select = ["ALL"]`: a new rule in a new ruff release would then turn green into red
+# without a commit in this repo, which is the same trap `.golangci.yml`'s pinned
+# version comment in ci.yml calls out for `default: all`.
+select = ["E", "F", "B", "I", "UP"]
+
+[format]
+docstring-code-format = true
+
+[lint.isort]
+# `laya` is the frozen upstream in original/, reached via a sys.path.insert rather than
+# an install, so ruff would otherwise group it with third-party packages. Keeping it in
+# its own block is what makes the two-stage import in build_decision_model readable.
+known-first-party = ["laya"]
