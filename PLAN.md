@@ -22,23 +22,24 @@ safetensors backend landing later behind the same interface.
 Tick a box only when the work is committed and `just check` is green. `[~]` means started but
 not finished; keep it rare. A milestone is done when every task box under it is ticked.
 
-| Milestone                                                              | Delivers                                         | Status               |
-| ---------------------------------------------------------------------- | ------------------------------------------------ | -------------------- |
-| [M0 — Scaffolding](#m0--scaffolding)                                   | Go module, tooling, CI, frozen Python, `Version` | ✅ 5/6 (0.1 skipped) |
-| [Spikes S1–S3](#3-spikes--do-these-before-writing-library-code)        | ONNX export, binding choice, latency floor       | 🟢 S1–S3 done        |
-| [M1 — Reference harness](#m1--the-python-reference-harness)            | `testdata/*.jsonl` golden vectors                | ✅ done              |
-| [M2 — Tier-1 core](#m2--tier-1-core-no-ml-runtime-620-lines-of-python) | `jsonx`, `lang`, `mailtext`, `presets`, render   | ⬜ not started       |
-| [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ⬜ not started       |
-| [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | ⬜ not started       |
-| [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ⬜ not started       |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | ⬜ not started       |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started       |
-| [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred          |
+| Milestone                                                              | Delivers                                         | Status                         |
+| ---------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------ |
+| [M0 — Scaffolding](#m0--scaffolding)                                   | Go module, tooling, CI, frozen Python, `Version` | ✅ 5/6 (0.1 skipped)           |
+| [Spikes S1–S3](#3-spikes--do-these-before-writing-library-code)        | ONNX export, binding choice, latency floor       | 🟢 S1–S3 done                  |
+| [M1 — Reference harness](#m1--the-python-reference-harness)            | `testdata/*.jsonl` golden vectors                | ✅ done                        |
+| [M2 — Tier-1 core](#m2--tier-1-core-no-ml-runtime-620-lines-of-python) | `jsonx`, `lang`, `mailtext`, `presets`, render   | 🟢 2.1–2.4 done; 2.5.4 partial |
+| [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ⬜ not started                 |
+| [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | ⬜ not started                 |
+| [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ⬜ not started                 |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | ⬜ not started                 |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started                 |
+| [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred                    |
 
 **Critical path:** M1 ✅ → M2 (`jsonx` first) → M4 → M5 → M6 → M7, with M3 off the path. _(Reordered
 on the 2026-09-20 review.)_ M2 goes before M4 because M5 needs `jsonx`, M3 needs `lang`, and M2 has
-no unknowns left — it does not get cheaper by waiting, and M4's shape (D7) is now settled. Before M2,
-two fixture regenerations — Task 1.7 and Task 4.4.12 — are cheapest while no Go consumer exists. M3
+no unknowns left — it does not get cheaper by waiting, and M4's shape (D10) is now settled. Tasks 1.7
+and 4.4.12 were taken first for that reason and are **done** (2026-09-20): both rewrite `testdata/`,
+so no Go work that reads it could run alongside them. M3
 depends only on `lang` and fills the idle time during M4's differential runs.
 
 ---
@@ -54,9 +55,11 @@ depends only on `lang` and fills the idle time during M4's differential runs.
 | D5  | **`shota3506/onnxruntime-purego` for ONNX, pinned to `8db8bd7`; every `*Value` closed explicitly**        | Spike S2. The CGO-free path holds: `CGO_ENABLED=0 go build ./...` passes and the S1 export runs through the binding, agreeing with the Python ORT run to 3.8e-06. R5's `runtime.AddCleanup` panic is fixed upstream (PR #11, merged 2026-03-15); `go-pocket-tts` is pinned two commits short of it. The cost is stated rather than hidden: the binding carries **no tags at all**, so the pin is a pseudo-version of the untagged HEAD of a 31-star library whose README says "APIs may change without notice", and a live data race remains on the finalizer path. `yalue/onnxruntime_go` (719 stars, v1.36.0, cgo) stays the fallback, and D1's `Backend` seam is what keeps the swap contained.                                                                                                    |
 | D6  | **CPU is a batch deployment; no quantization by default; `IntraOpNumThreads` is the physical core count** | Spike S3. Measured through the shipped binding on a 15 W laptop: 0.6–1.9 s per question at the default 512-token `max_len`, 9–43× upstream's 33 ms on a T4. Two measured surprises drive the decision rather than the headline number: **batching does not amortise on CPU** (per-question cost is flat, where the T4 falls 4.6×), and **all hardware threads is the wrong setting** (every checkpoint peaks at 8 of 12 and then loses 12–26%). So go-laya ships CPU as the default, documents it as a background workload, and treats a GPU execution provider as the answer for interactive use. int8 stays off the default path until Task 6.9 measures ECE and Brier, not accuracy (R4).                                                                                                          |
 | D7  | **The reference environment stays on transformers 5.17.0; 4.x is unsafe for this port**                   | Task 1.6, measured rather than assumed. The two ModernBERT-large checkpoints are bit-identical across the major, but 4.57.6 silently mis-parses mmBERT's `rope_parameters.sliding_attention.rope_theta` (160000) and substitutes its own default of 10000.0, so every sliding-attention layer runs on the wrong RoPE frequencies — logits off by 6.96, act_logits by 1879. Correcting that one value makes 4.57.6 bit-identical, so this is a parsing bug, not a numerics difference. English is unaffected only because its sliding `rope_theta` genuinely is 10000.0. This **inverts** Task 1.6.2, which presumed 4.x was the safer pin. Upstream's declared `transformers>=4.45.0` floor is therefore wrong twice over: it predates ModernBERT (4.48) and it admits versions that mis-load mmBERT. |
-| D7  | **Purpose-built pure-Go tokenizer; no vendored fork**                                                     | Review of 2026-09-20. Task 4.3 had planned to vendor `gomlx/go-huggingface`'s `hftokenizer` and fix three bugs. The stages it gets wrong are exactly the ones laya needs (added-token semantics, Metaspace prepend, byte fallback); the parts it gets right (JSON loader, merge loop, byte table) are the easy ~250 lines; and the in-house byte-fallback code §1.5 pointed at does not exist. Two pipelines, ~750 production lines, every semantic pinned by golden corpus before code (Task 4.4.12). gomlx stays a reference to read, never to vendor; `daulet/tokenizers` stays R1's CGO fallback. D2 holds: the build remains `CGO_ENABLED=0` end to end.                                                                                                                                         |
+| D10 | **Purpose-built pure-Go tokenizer; no vendored fork**                                                     | Review of 2026-09-20. Task 4.3 had planned to vendor `gomlx/go-huggingface`'s `hftokenizer` and fix three bugs. The stages it gets wrong are exactly the ones laya needs (added-token semantics, Metaspace prepend, byte fallback); the parts it gets right (JSON loader, merge loop, byte table) are the easy ~250 lines; and the in-house byte-fallback code §1.5 pointed at does not exist. Two pipelines, ~750 production lines, every semantic pinned by golden corpus before code (Task 4.4.12). gomlx stays a reference to read, never to vendor; `daulet/tokenizers` stays R1's CGO fallback. D2 holds: the build remains `CGO_ENABLED=0` end to end.                                                                                                                                         |
 | D8  | **M8 is a zero-shared-library backend, not a speed play**                                                 | Review of 2026-09-20. S3 measured ORT-CPU as bandwidth-bound (1→8 threads = 2.1×, batching flat) and the FLOP estimate puts a pure-Go forward at ~12 s against ORT's 1.7 s, so the old Task 8.9 ("beat the S3 floor") was unreachable by construction. What a pure-Go backend does buy is deployment with no `.so` at all: it solves Tasks 6.6 and 6.7 (runtime pinning, Windows, wasm) by construction. Post-1.0, behind the same `backend` interface, and it no longer shapes near-term wording (the `temperature` dtype, invariants #35–38).                                                                                                                                                                                                                                                       |
 | D9  | **`backend` is a public leaf package**                                                                    | Review of 2026-09-20. D5's "swap to `yalue/onnxruntime_go`" seam is only real for users if `Backend` and `Batch` are importable, and `docs/API.md`'s `WithBackend` took an internal type. `backend/` holds the interface and the batch struct with zero dependencies; `internal/backend/onnx/` holds the ORT implementation. Under purego nothing "links ONNX symbols" — the binding `dlopen`s at `Open` — so the §8 no-ML-dependency check is `go list -deps ./lang ./mailtext ./presets ./backend` containing no `onnxruntime-purego`. The root package is allowed to depend on the binding.                                                                                                                                                                                                        |
+| D11 | **The question types live in a leaf `question/`, re-exported at the root**                                | Review of 2026-09-20 (M2). §2 put `question.go` at the root, but Task 2.4.2 makes `presets` import those types and D9's own check requires `go list -deps ./presets` to stay free of the ONNX binding — which D9 equally allows the **root** package to pull in. Root-resident types put every preset one import edge from the runtime, so the check would start failing the moment M6 lands, for a reason nothing in M2 would explain. The types move to `question/`; the root file holds **type aliases only**, so `laya.ChoiceQuestion` is the same type under the documented name and the public API is unchanged.                                                                                                                                                                                |
+| D12 | **`jsonx.Marshal` is the outer encoder wherever Python parity matters**                                   | Review of 2026-09-20 (M2). `encoding/json` runs `compact()` over whatever a `MarshalJSON` returns, so passing a `jsonx.Obj` through `json.Marshal` — directly, or by embedding it in a struct `json.Marshal` handles — strips the `", "` and `": "` separators again and silently undoes `jsonx`. A `MarshalJSON` that only ever reaches `encoding/json` is decoration. This is why Task 2.2.7's acceptance ("`json.Marshal(RouteDecision)` byte-equal to Python") is unreachable as written, and it constrains every later emitter: Task 7.3's byte comparison, `Answer.MarshalJSON`, `Probs`, `RouteDecision`. Pinned by `TestEncodingJSONCompactsMarshalerOutput`.                                                                                                                                 |
 
 **D2 has a consequence that needs resolving in Spike S2:** `yalue/onnxruntime_go` requires CGO (it
 `dlopen`s the shared library _through_ cgo). A CGO-free tokenizer paired with a CGO ONNX binding
@@ -193,7 +196,7 @@ exactly two pipelines.
 Struck on review (2026-09-20): `internal/tokenizer/sentencepiece_bytes.go` was listed here as
 "byte-fallback handling". It is a temp-file wrapper around a SentencePiece UNIGRAM library and contains
 no byte-fallback logic; go-pocket-tts has no `tokenizer.json` loader, no BPE and no normalizers at all,
-so M4 starts from zero in-house code (D7). Note also that go-pocket-tts carries no `LICENSE` file — same
+so M4 starts from zero in-house code (D10). Note also that go-pocket-tts carries no `LICENSE` file — same
 author, so lifting is fine in practice, but record the provenance in `NOTICE` when M8 does it.
 
 These make Milestone M8 (the pure-Go native backend) far more tractable than a from-scratch estimate suggests.
@@ -208,17 +211,19 @@ go-laya/
   justfile  treefmt.toml  .golangci.yml
   PLAN.md  README.md  LICENSE  NOTICE
   laya.go        Agent, Open, SystemOne, Result/Answer
-  question.go    Question interface + Choice/Score/Noul
+  question.go    type aliases re-exporting question/ (D11); no types of its own
   router.go      Router, RouteDecision, model registry, LRU
   options.go     functional options
   errors.go      sentinel errors
   lang/          script + language detection      (public, zero deps)
   mailtext/      email cleaning                   (public, zero deps)
   presets/       the five question presets        (public, zero deps)
-  jsonx/         ordered JSON with Python byte-parity
-  tokenizer/     Tokenizer interface + purpose-built pure-Go tokenizer.json loader (D7)
+  jsonx/         ordered JSON with Python byte-parity -- the outer encoder (D12)
+  question/      Question interface + Choice/Score/Noul, a leaf so presets stays ONNX-free (D11)
+  tokenizer/     Tokenizer interface + purpose-built pure-Go tokenizer.json loader (D10)
   backend/       Backend interface + Batch -- public leaf, zero deps (D9)
   internal/prompt/   render_options, render_criterion, build_sequence, collate
+  internal/golden/   the testdata/ corpus loader, shared by every package that asserts against it
   internal/calib/    softmax, entropy confidence, temperature, py-round, ECE
   internal/hub/      HF resolve + local cache
   internal/backend/onnx/  ONNX Runtime implementation; absorbs internal/onnxspike in M6 (Task 6.10)
@@ -234,7 +239,8 @@ go-laya/
 wants routing or email cleaning never loads ONNX Runtime. That is the biggest structural win over the
 Python layout, where `import laya` drags in torch. Under purego nothing is _linked_ — the binding
 `dlopen`s the library inside `Open` — so the testable form of the claim is
-`go list -deps ./lang ./mailtext ./presets ./backend` containing no `onnxruntime-purego` (D9); the root
+`go list -deps ./lang ./mailtext ./presets ./backend` containing no `onnxruntime-purego` (D9) — in
+practice also `./jsonx` and `./question`, which M2 added below `presets` (D11); the root
 package may depend on the binding.
 
 ---
@@ -860,13 +866,30 @@ Task 5.3 (`Collate`) has nothing to assert against short of a full forward pass,
 (6.1.2) cannot key on tensors. And no header says which device / dtype / attention produced the
 numbers, although §8's "within 1e-4 of PyTorch" depends on exactly that.
 
-- [ ] **1.7.1** Regenerate `logits.jsonl` with the collated batch per case — `input_ids`,
+- [x] **1.7.1** Regenerate `logits.jsonl` with the collated batch per case — `input_ids`,
       `attention_mask`, `marker_pos`, `marker_mask`, `qtype` — exactly what `collate_items` returns.
-- [ ] **1.7.2** Every header gains a `compute` block (`dump_python_parity.py:1006,1014`):
+      (2026-09-20) — the five tensors the forward consumes, through the existing `tensor_rec`.
+      `collate_items` returns two more that are left out on purpose: `label` is a constant `[-1,
+  -1, -1]` because no item here carries one, and `meta` after its key filter restates `qtype`.
+      37 KB to 110 KB, and purely additive — no pre-existing value moved.
+- [x] **1.7.2** Every header gains a `compute` block (`dump_python_parity.py:1006,1014`):
       `{device: cpu, dtype: float32, attn: sdpa, torch_threads: 1}`.
-- [ ] **1.7.3** `TestGoldenProvenance` asserts `compute`; the mismatch path is exercised against a
+      (2026-09-20) — in `header()`, so all eight files carry it, including the six that never
+      import torch: a header whose shape depends on which fixture it heads is one no single test
+      can check. `:1006` and `:1014` turned out to be the _source_ of the facts
+      (`set_num_threads(1)`, `attn="sdpa"`) rather than insertion points; `dtype` comes from
+      `export_onnx.py:154`'s `model.float().eval()`.
+- [x] **1.7.3** `TestGoldenProvenance` asserts `compute`; the mismatch path is exercised against a
       corrupted copy, as 1.4.3 did.
-- [ ] **1.7.4** One reviewed regeneration diff (R6); nothing else in the eight files may change.
+      (2026-09-20) — and the corrupted-copy test 1.4.3 refers to **did not exist** — it was done by
+      hand against a scratch copy and discarded. So `checkProvenance` now returns its violations
+      instead of calling `t.Error`, and six corruptions drive it: bumped version, changed `attn`,
+      changed `device`, missing block, removed header, empty file. Each asserts the failure _names
+      the cause_.
+- [x] **1.7.4** One reviewed regeneration diff (R6); nothing else in the eight files may change.
+      (2026-09-20) — the seven non-logits files changed on line 1 only, and no pre-existing value
+      in `logits.jsonl` moved. Two independent full regenerations are byte-identical on all eight,
+      so 1.3.7's determinism holds over the new tensors too.
 
 ### M2 — Tier-1 core (no ML runtime, ~620 lines of Python)
 
@@ -879,76 +902,167 @@ keys**, and it **HTML-escapes** `<`, `>`, `&` by default. The Python code feeds
 `json.dumps(state, ensure_ascii=False)` straight into the tokenizer, so any of the three changes the
 bytes the model sees.
 
-- [ ] **2.1.1** Create `jsonx/jsonx.go`, `jsonx/jsonx_test.go`.
-- [ ] **2.1.2** `type Obj []Field` with `Field{Key string; Value any}` — an _ordered_ object.
-- [ ] **2.1.3** `Obj.MarshalJSON` reproduces `json.dumps(x, ensure_ascii=False)`: separators `", "` and
+- [x] **2.1.1** Create `jsonx/jsonx.go`, `jsonx/jsonx_test.go`.
+      (2026-09-20) — plus `jsonx/number.go` for `Round4`/`Repr`; same package, split for
+      readability.
+- [x] **2.1.2** `type Obj []Field` with `Field{Key string; Value any}` — an _ordered_ object.
+      (2026-09-20) — with `Get`, and an `UnmarshalJSON` the box list does not have — see the new
+      2.1.9.
+- [x] **2.1.3** `Obj.MarshalJSON` reproduces `json.dumps(x, ensure_ascii=False)`: separators `", "` and
       `": "`, no key sorting, no HTML escaping, non-ASCII emitted literally.
-- [ ] **2.1.4** `Compact(v any) string` reproduces
+      (2026-09-20) — a hand-written encoder, not a wrapper: post-processing stdlib output would
+      corrupt any string containing a comma or a colon. Two divergences beyond the three in #18
+      turned up and are in neither the invariant nor the task: Go escapes **U+2028/U+2029** for
+      JSONP safety where Python emits them literally, and Go writes `\u0008` where Python writes
+      `\b`.
+- [x] **2.1.4** `Compact(v any) string` reproduces
       `json.dumps(v, ensure_ascii=False, separators=(", ", ": "), default=str)`, falling back to
       `fmt.Sprintf("%v", v)` for anything `encoding/json` refuses (Python's `default=str`).
-- [ ] **2.1.5** `Round4(x float64) float64` — **Python's `round()` is half-to-even on the exact binary
+      (2026-09-20) — `Compact` and `Marshal` share one encoder and differ only in the fallback,
+      which is the real relationship: `render_criterion` passes the separators explicitly and
+      `serialize_state` relies on Python's defaults being the same two. A Go **map is refused**
+      (`ErrUnorderedMap`) rather than sorted — sorting would emit bytes that look right and are
+      not, which is the failure this package exists to prevent.
+- [x] **2.1.5** `Round4(x float64) float64` — **Python's `round()` is half-to-even on the exact binary
       double; Go's `math.Round` is half-away-from-zero.** Implement as
       `strconv.ParseFloat(strconv.FormatFloat(x, 'f', 4, 64), 64)`.
-- [ ] **2.1.6** Tie-case tests for `Round4`: `0.00125`, `2.5e-5`, plus negatives and values that are
+      (2026-09-20) — format-and-reparse, as the box specifies.
+- [x] **2.1.6** Tie-case tests for `Round4`: `0.00125`, `2.5e-5`, plus negatives and values that are
       exactly representable.
-- [ ] **2.1.7** Float formatting matches Python's `repr` for the values that reach JSON (shortest
+      (2026-09-20) — all 26 cases of `testdata/round4.jsonl`, including `-2.5e-05 → -0.0`; `==` is
+      true for `-0.0` against `0.0`, so the sign has its own `math.Signbit` assertion.
+- [x] **2.1.7** Float formatting matches Python's `repr` for the values that reach JSON (shortest
       round-trip), including `-0`, very small and very large magnitudes.
-- [ ] **2.1.8** Table test against `testdata/render.jsonl` — byte-for-byte (invariant #18).
+      (2026-09-20) — bigger than expected. Go and Python disagree on **four of five** sampled
+      values: Python writes `1.0`, `1000000000000000.0`, `1e+16`, `1e-05`, `-0.0` where
+      `encoding/json` writes `1`, `1000000000000000`, `10000000000000000`, `0.00001`, `0`. `Repr`
+      reimplements CPython's rule — shortest round-trip digits, exponential only when the decimal
+      point falls at or before -4 or past 16, always a fractional part — and is asserted against
+      `round4.jsonl`'s `input_repr`/`output_repr` columns.
+- [x] **2.1.8** Table test against `testdata/render.jsonl` — byte-for-byte (invariant #18).
+      (2026-09-20) — 25 of the 41 cases (`render_criterion` and `serialize_state`); the 16
+      `render_options` cases are Task 2.5's. 62 subtests, and they were confirmed to discriminate
+      by sabotaging the `.0` rule and watching the golden cases fail.
+- [x] **2.1.9** _(new, 2026-09-20)_ `Obj.UnmarshalJSON` and `Decode`, order-preserving, numbers as
+      `json.Number`. Not in the box list and load-bearing: `render.jsonl` records its **inputs** as
+      objects whose key order _is_ the assertion (`state/dict-unsorted-keys` is
+      `{"z": 1, "a": 2, "m": 3}`), so a loader going through `map[string]any` destroys exactly what
+      those cases check, and one through `float64` turns every `3` in the corpus into `3.0`.
+      `internal/golden` is the shared loader; the corpus lives once at the repo root and several
+      packages assert against the same file.
 
 **Task 2.2: `lang`.** Port `original/laya/lang.py` verbatim. Invariants §5 items 54–65.
 
 Go-specific traps:
 
-- [ ] **2.2.1** `detect_script`'s tie-break depends on Python dict _encounter_ order, with
+- [x] **2.2.1** `detect_script`'s tie-break depends on Python dict _encounter_ order, with
       `counts["latin"]` assigned **after** the loop. Go map iteration is randomized — use an explicit
       ordered counter or the result is nondeterministic (invariant #56).
-- [ ] **2.2.2** `_STOP`'s insertion order (fr, de, es, pt, it, nl) is the language tie-break. Use an
+      (2026-09-20) — an ordered counter, with `latin` appended after the loop so an exact tie still
+      goes to the first non-Latin script encountered.
+- [x] **2.2.2** `_STOP`'s insertion order (fr, de, es, pt, it, nl) is the language tie-break. Use an
       ordered slice (invariant #63).
-- [ ] **2.2.3** Python's `[^\W\d_]+` is Unicode-aware; Go RE2's `\w` is ASCII-only. Split on
+      (2026-09-20) — an ordered slice.
+- [x] **2.2.3** Python's `[^\W\d_]+` is Unicode-aware; Go RE2's `\w` is ASCII-only. Split on
       `unicode.IsLetter` instead.
-- [ ] **2.2.4** `_SCRIPT_RANGES` order is load-bearing (hangul before kana before han), first match
+      (2026-09-20) — `unicode.IsLetter`. Documented edge, not fixed: `[^\W\d_]+` also admits the
+      non-decimal numerics Python's `\w` covers (`½`, `Ⅷ`), where splitting on `IsLetter` breaks a
+      run Python joins. Nothing in laya's corpus reaches it.
+- [x] **2.2.4** `_SCRIPT_RANGES` order is load-bearing (hangul before kana before han), first match
       wins.
-- [ ] **2.2.5** Port all 14 script cases, 7 `is_english` cases, 6 language-guess cases and 5 flattening
+      (2026-09-20) — first match wins, order preserved.
+- [x] **2.2.5** Port all 14 script cases, 7 `is_english` cases, 6 language-guess cases and 5 flattening
       cases from `original/tests/test_router.py:29-86`.
-- [ ] **2.2.6** A determinism test: the same input run 1000× (or with `-count=10`) gives the same
+      (2026-09-20) — all 14 script, 7 `is_english`, 6 language-guess and 5 flattening cases.
+- [x] **2.2.6** A determinism test: the same input run 1000× (or with `-count=10`) gives the same
       script/language — the only way the map-order trap shows up.
-- [ ] **2.2.7** _(new, 2026-09-20, review)_ `Detection.ScriptProfile` is **ordered** (`jsonx.Obj` or a
+      (2026-09-20) — `-count=10`, and mutation-checked: swapping the profile order and the
+      stop-word tie-break produced 12 failures, so the ordering assertions bite.
+- [x] **2.2.7** _(new, 2026-09-20, review)_ `Detection.ScriptProfile` is **ordered** (`jsonx.Obj` or a
       `[]ScriptShare`), in encounter order with `latin` last — the same order #56 already forces
       `detect_script` to track. It is emitted inside `routing.detection`, where a sorted Go map would be
       observable (`test_local_e2e.py:211` asserts the payload serialises), so it is not a deviation and
       comes off the 7.5.3 list. Acceptance: `json.Marshal(RouteDecision)` byte-equal to Python for the
       detection-path router cases.
+      (2026-09-20) — done, but **the box states the wrong function's ordering** and is corrected
+      above: the emitted profile comes from `script_profile`, which seeds `counts = {"latin": 0}`
+      (`lang.py:116`), so `latin` is **first** and vanishes at zero. `latin` last is
+      `detect_script`'s order (#56). Both are asserted separately because they genuinely differ.
+      The stated acceptance is also unreachable as written — `encoding/json` compacts a
+      `MarshalJSON`'s output and strips Python's separators — so parity runs through
+      `jsonx.Marshal(d.Map())` (D12); the `RouteDecision` half stays M3's.
 
 **Task 2.3: `mailtext`.** Port `original/laya/email.py`. Invariants §5 items 66–74.
 
-- [ ] **2.3.1** Port the cleaning pipeline into `mailtext/`.
-- [ ] **2.3.2** Do **not** port `email.email_questions` — it is a dead byte-identical duplicate of
+- [x] **2.3.1** Port the cleaning pipeline into `mailtext/`.
+      (2026-09-20) — `original/laya/email.py:23-53` only.
+- [x] **2.3.2** Do **not** port `email.email_questions` — it is a dead byte-identical duplicate of
       `presets.email_questions`; port only the presets one (Task 2.4).
-- [ ] **2.3.3** Write the tests this port deserves — the upstream code is currently untested; cover
+      (2026-09-20) — not ported; its two fixture cases are asserted by Task 2.4 instead, which is
+      what makes them useful.
+- [x] **2.3.3** Write the tests this port deserves — the upstream code is currently untested; cover
       quoted replies, signature blocks, forwarded headers, CRLF and unicode whitespace.
+      (2026-09-20) — all 19 `clean_email_body` and 5 `email_state` golden cases, plus the three
+      concrete instances of #74's generic `\w`/`\s` hazard, each pinned by a named test and
+      mutation-checked: the signature marker's `[\w ,!.]*` matches `Beste Grüße` in Python and
+      would not under RE2's ASCII `\w`; `str.strip()` strips **U+001C–U+001F**, which Go's
+      `unicode.IsSpace` does not; and truncation counts code points. Also recorded against #73:
+      `state.update()` **replaces in place**, so an extra `from` overrides the sender's value but
+      keeps its position.
 
 **Task 2.4: `presets`.** Port all five preset constructors from `original/laya/presets.py`. Pure data.
 
-- [ ] **2.4.1** Port all five constructors into `presets/`.
-- [ ] **2.4.2** Add the shape test upstream never had: every preset round-trips through question
+- [x] **2.4.1** Port all five constructors into `presets/`.
+      (2026-09-20) — verbatim, including `categories or {...}` — an empty taxonomy is falsy in
+      Python and selects the defaults, so "a choice question with no options" is not expressible
+      upstream and is not made expressible here.
+- [x] **2.4.2** Add the shape test upstream never had: every preset round-trips through question
       validation.
-- [ ] **2.4.3** Assert option order is preserved exactly — the option index is the answer index.
+      (2026-09-20) — and better than a shape test for one of the five: `testdata/mailtext.jsonl`
+      carries `email_questions`' two recorded cases, and 2.3.2 establishes the copy they came from
+      is byte-identical to the presets one, so the email preset is asserted **byte-for-byte against
+      the Python**. The other four are shape-tested as the box intends.
+- [x] **2.4.3** Assert option order is preserved exactly — the option index is the answer index.
+      (2026-09-20) — four presets asserted positionally. Also `All()` rebuilds per call:
+      `Questions` is a slice, so a shared one would let one caller mutate what the next sees — a
+      trap Python's fresh dict does not have.
 
 **Task 2.5: `question.go` + `internal/prompt/render.go`.** `render_options` / `render_criterion`.
 Invariants §5 items 14–18.
 
-- [ ] **2.5.1** `Question` interface + `Choice`/`Score`/`Noul` types (§7, `docs/API.md`). The Go type
+- [x] **2.5.1** `Question` interface + `Choice`/`Score`/`Noul` types (§7, `docs/API.md`). The Go type
       design collapses Python's dict-or-list `criteria` into `[]ChoiceOption`.
-- [ ] **2.5.2** `render_options` / `render_criterion` / `serialize_state` in `internal/prompt/render.go`,
+      (2026-09-20) — in `question/` with root aliases rather than at the root, per D11.
+- [x] **2.5.2** `render_options` / `render_criterion` / `serialize_state` in `internal/prompt/render.go`,
       on top of `jsonx`.
-- [ ] **2.5.3** Port `original/tests/test_criteria.py:33-100` as a table test.
+      (2026-09-20) — on `jsonx.Compact` (#17) and `jsonx.Marshal` (#18); no encoding reimplemented.
+      Two layers — see the note under this task.
+- [x] **2.5.3** Port `original/tests/test_criteria.py:33-100` as a table test.
+      (2026-09-20) — ported as a table, plus the `:96-100` round-trip.
 - [ ] **2.5.4** **Drop** `test_criteria.py:103-116`, which uses `inspect.getsource` to assert five
       string literals are present in `Agent.__init__`; replace it with a behavioural test on the Go
       device-fallback policy.
+      (2026-09-20) — **partial: the drop is done; the behavioural replacement is not.** There is no
+      Go device-fallback policy to test — `Agent` is M7 — and inventing one just to have something
+      to assert would be worse than the test that was removed. M7 owns the replacement.
+
+- [ ] **2.5.5** _(new, 2026-09-20)_ **Deviation to close, not a bug in 2.5.** `render_options` is
+      ported over Python's loose internal `{t, ins, crit}` shape (that is what the corpus records,
+      and what `options/score/dict-criteria` needs — `enumerate` on a dict walks its keys, which
+      `ScoreQuestion{Levels}` cannot express). Where upstream **raises** on a `crit` of the wrong
+      shape — `crit.items()` on a non-dict for choice, `crit.get` on a list for noul
+      (`common.py:42`, the `AttributeError` already noted under 1.3) — the Go renderer returns the
+      empty or default option list instead. Unreachable through the public types, but M5 and M7
+      build `prompt.Internal` directly, and a silently wrong option list is exactly the
+      plausible-answer failure §M1 exists to prevent. The Go port of `_to_internal`
+      (`agent.py:229-238`) must reject those shapes at the boundary where Python raises.
 
 **Exit criteria**
 
-- [ ] `just check` green; commit after each task.
+- [x] `just check` green; commit after each task. (2026-09-20) — `just ci` exit 0 (it is the
+      superset: `fmt-check lint-md lint-py test-race lint check-tidy`), plus
+      `go list -deps ./lang ./mailtext ./presets ./jsonx ./question | grep -c onnxruntime` = 0,
+      all five cross-builds, and the suite green with Python stripped from `PATH`.
 
 ### M3 — Router (pure, no weights, no network)
 
@@ -1057,7 +1171,7 @@ type Tokenizer interface {
 - [ ] **4.2.4** Assert the resolved ids for both checkpoints against §1.4's table (EN: UNK 50280,
       CLS 50281, SEP 50282, PAD 50283, MASK 50284 · ML: PAD 0, EOS/SEP 1, BOS/CLS 2, UNK 3, MASK 4).
 
-**Task 4.3: Purpose-built pure-Go tokenizer, `tokenizer/`.** _(rewritten 2026-09-20 on review; D7)_
+**Task 4.3: Purpose-built pure-Go tokenizer, `tokenizer/`.** _(rewritten 2026-09-20 on review; D10)_
 Two pipelines only — `typed-decisions`' `tokenizer.json` is byte-identical to English's. Estimate
 ~750 production lines (loader 200, added-token matcher 150, normalizers 40, ByteLevel scanner + table
 120, Metaspace 40, BPE 150, glue 50) plus ~500 test lines.
@@ -1145,7 +1259,7 @@ Required cases:
       and cannot be: Python writes `\ud800` and Go's decoder yields U+FFFD, so the vector would
       assert against a corrupted input. 4.4.9's "decide and document the boundary" is therefore
       settled the other way — sanitize at the API edge and test that Go-side, without a vector.
-- [ ] **4.4.12** _(new, 2026-09-20, review)_ **Corpus v2 — the first M4 commit, before any Go code.**
+- [x] **4.4.12** _(new, 2026-09-20, review)_ **Corpus v2 — the first M4 commit, before any Go code.**
       The 53 cases per checkpoint contain **zero byte-fallback cases**: every ML emoji/script case is a
       single-char vocab entry, while `'a𠀋b'` → `['▁a', '<0xF0>', '<0xA0>', '<0x80>', '<0x8B>', 'b']`
       is pinned by nothing. Regenerate `tokenizer_{en,ml}.jsonl` (reviewed diff, R6) adding ~45 probes:
@@ -1155,6 +1269,11 @@ Required cases:
       tab runs of 2 and 26; newline runs of 2/3/32; literal `▁▁`; NUL/SOH/DEL; digits. In the dumper,
       token strings come from `convert_ids_to_tokens`, never `Encoding.tokens` (which returns the
       lstripped slice, e.g. `'  [MASK]'`).
+      (2026-09-20) — 42 probes, 53 to 95 cases per checkpoint, nothing removed, and a second
+      regeneration is byte-identical. The case the box was written for reproduces exactly: `'a𠀋b'`
+      on multilingual gives `['▁a', '<0xF0>', '<0xA0>', '<0x80>', '<0x8B>', '▁b']`. The
+      `convert_ids_to_tokens` clause was **already satisfied** at `dump_python_parity.py:275,277` —
+      a constraint to preserve, not a bug to fix.
 
 **Task 4.5: Fuzz + differential.**
 
@@ -1509,16 +1628,16 @@ The four that cause silent wrong answers rather than loud failures, and therefor
 
 ## 6. Risks
 
-| #   | Risk                                                                                                                                                                                                                                                                                                             | Mitigation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| R1  | **Pure-Go tokenizer drift.** Marker positions are token indices, so one off-by-one silently corrupts every decision. Both candidate libraries had demonstrable bugs on exactly laya's paths, which is why D7 uses neither.                                                                                       | The `Tokenizer` interface (Task 4.1) keeps the decision reversible. Golden corpus v2 (4.4.12) + fuzz + a 100k-line differential run gate M5. If parity cannot be reached, `daulet/tokenizers` (CGO, wraps the same Rust crate Python uses — parity by construction) is a one-day swap. _(2026-09-20)_ With D7 the residual risk is Unicode-version skew between Go's `unicode` tables / `x/text` NFC and Oniguruma's; only 4.5.3 can find it, and the fix is a pinned table, not a different strategy. If Task 4.3 exceeds ~1.5k lines or a week, re-read gomlx for the dragging stage rather than vendoring it. |
-| R2  | **`torch.onnx.export` fails on ModernBERT-large.** transformers#35545 is still open; no ModernBERT-large ONNX is published anywhere.                                                                                                                                                                             | Spike S1 up front. `sevenreasons/laya-onnx-fp16` unblocks development while our exporter is fixed.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| R3  | **CPU latency ≫ the README's 33 ms.** _(2026-09-20, S3)_ Confirmed and quantified: 0.6–1.9 s per question at the default 512-token `max_len`, 9–43× the T4 figure. Not fatal — it is the fast end of the predicted band — but it rules out the interactive framing upstream's README uses.                       | Measured before anything was promised; `BENCHMARKS.md` now carries the numbers and the hardware, and D6 records the decision. Of the levers listed here, **batching is not one** (measured flat on CPU) and **routing to mmBERT-base cannot be a default** without breaking M7's parity — it becomes opt-in Task 3.4. What is left: int8 (Task 6.9, gated on calibration), a GPU execution provider (Task 6.3.2), and setting `IntraOpNumThreads` correctly, which is free.                                                                                                                                      |
-| R4  | **int8 quantization wrecks calibration.** This model's whole value is calibrated probabilities.                                                                                                                                                                                                                  | Measure ECE and Brier, not accuracy. Never quantize by default.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| R5  | **`onnxruntime-purego` instability.** _(2026-09-20, S2)_ The recorded `AddCleanup` panic is **fixed** upstream. What remains: an unsynchronised `Runtime.Close` racing the GC cleanup path, and a dependency on the untagged HEAD of a 31-star library that says its API may change without notice.              | Close every `*Value` explicitly — that removes the race, and `internal/onnxspike` keeps a reproduction under `LAYA_ONNXSPIKE_FINALIZER=1`. `yalue/onnxruntime_go` remains the fallback behind D1's `Backend` seam, at the cost of CGO. New Task 6.6 pins the runtime itself.                                                                                                                                                                                                                                                                                                                                     |
-| R6  | **Upstream tokenizer/transformers version drift** silently changes golden vectors. _(2026-09-20, M1)_ Real, and now measured: transformers 4.57.6 moves `multilingual`'s logits by 6.96 against the pin (D7). The tokenizer half is clean — `tokenizers` 0.22.2 and 0.23.2 produce identical ids on every probe. | `TestGoldenProvenance` (Task 1.4) reads the header of every `testdata/*.jsonl` and fails the suite on a mismatch; all three of its failure modes were exercised rather than assumed. `scripts/requirements-ref.txt` stays pinned, regeneration is byte-identical, and the diff is reviewed. `scripts/crosscheck_transformers.py` is how the next pin bump gets checked instead of hoped about.                                                                                                                                                                                                                   |
-| R7  | **Supply chain.** laya downloads checkpoints from the Hub; `laya.Open("someone/their-model")` must not be RCE.                                                                                                                                                                                                   | Carry the upstream security policy over (Task 0.4): verify ONNX/safetensors headers, ETag/sha checks, no `os/exec` or `encoding/gob` on downloaded artifacts.                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| R8  | **Licensing.** This is a derivative of an Apache-2.0 work.                                                                                                                                                                                                                                                       | Preserve `LICENSE`, add `NOTICE` with the original copyright and a statement of modification (Task 0.3). Weights are Apache-2.0 and ungated.                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| #   | Risk                                                                                                                                                                                                                                                                                                             | Mitigation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R1  | **Pure-Go tokenizer drift.** Marker positions are token indices, so one off-by-one silently corrupts every decision. Both candidate libraries had demonstrable bugs on exactly laya's paths, which is why D10 uses neither.                                                                                      | The `Tokenizer` interface (Task 4.1) keeps the decision reversible. Golden corpus v2 (4.4.12) + fuzz + a 100k-line differential run gate M5. If parity cannot be reached, `daulet/tokenizers` (CGO, wraps the same Rust crate Python uses — parity by construction) is a one-day swap. _(2026-09-20)_ With D10 the residual risk is Unicode-version skew between Go's `unicode` tables / `x/text` NFC and Oniguruma's; only 4.5.3 can find it, and the fix is a pinned table, not a different strategy. If Task 4.3 exceeds ~1.5k lines or a week, re-read gomlx for the dragging stage rather than vendoring it. |
+| R2  | **`torch.onnx.export` fails on ModernBERT-large.** transformers#35545 is still open; no ModernBERT-large ONNX is published anywhere.                                                                                                                                                                             | Spike S1 up front. `sevenreasons/laya-onnx-fp16` unblocks development while our exporter is fixed.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| R3  | **CPU latency ≫ the README's 33 ms.** _(2026-09-20, S3)_ Confirmed and quantified: 0.6–1.9 s per question at the default 512-token `max_len`, 9–43× the T4 figure. Not fatal — it is the fast end of the predicted band — but it rules out the interactive framing upstream's README uses.                       | Measured before anything was promised; `BENCHMARKS.md` now carries the numbers and the hardware, and D6 records the decision. Of the levers listed here, **batching is not one** (measured flat on CPU) and **routing to mmBERT-base cannot be a default** without breaking M7's parity — it becomes opt-in Task 3.4. What is left: int8 (Task 6.9, gated on calibration), a GPU execution provider (Task 6.3.2), and setting `IntraOpNumThreads` correctly, which is free.                                                                                                                                       |
+| R4  | **int8 quantization wrecks calibration.** This model's whole value is calibrated probabilities.                                                                                                                                                                                                                  | Measure ECE and Brier, not accuracy. Never quantize by default.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| R5  | **`onnxruntime-purego` instability.** _(2026-09-20, S2)_ The recorded `AddCleanup` panic is **fixed** upstream. What remains: an unsynchronised `Runtime.Close` racing the GC cleanup path, and a dependency on the untagged HEAD of a 31-star library that says its API may change without notice.              | Close every `*Value` explicitly — that removes the race, and `internal/onnxspike` keeps a reproduction under `LAYA_ONNXSPIKE_FINALIZER=1`. `yalue/onnxruntime_go` remains the fallback behind D1's `Backend` seam, at the cost of CGO. New Task 6.6 pins the runtime itself.                                                                                                                                                                                                                                                                                                                                      |
+| R6  | **Upstream tokenizer/transformers version drift** silently changes golden vectors. _(2026-09-20, M1)_ Real, and now measured: transformers 4.57.6 moves `multilingual`'s logits by 6.96 against the pin (D7). The tokenizer half is clean — `tokenizers` 0.22.2 and 0.23.2 produce identical ids on every probe. | `TestGoldenProvenance` (Task 1.4) reads the header of every `testdata/*.jsonl` and fails the suite on a mismatch; all three of its failure modes were exercised rather than assumed. `scripts/requirements-ref.txt` stays pinned, regeneration is byte-identical, and the diff is reviewed. `scripts/crosscheck_transformers.py` is how the next pin bump gets checked instead of hoped about.                                                                                                                                                                                                                    |
+| R7  | **Supply chain.** laya downloads checkpoints from the Hub; `laya.Open("someone/their-model")` must not be RCE.                                                                                                                                                                                                   | Carry the upstream security policy over (Task 0.4): verify ONNX/safetensors headers, ETag/sha checks, no `os/exec` or `encoding/gob` on downloaded artifacts.                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| R8  | **Licensing.** This is a derivative of an Apache-2.0 work.                                                                                                                                                                                                                                                       | Preserve `LICENSE`, add `NOTICE` with the original copyright and a statement of modification (Task 0.3). Weights are Apache-2.0 and ungated.                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 ---
 

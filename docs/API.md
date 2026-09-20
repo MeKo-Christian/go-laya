@@ -59,9 +59,16 @@
 ### 3.3 Package layout
 
 See `PLAN.md` §2 — the single owner of the layout. In short: module `github.com/MeKo-Christian/go-laya`;
-public `lang/`, `mailtext/`, `presets/`, `jsonx/`, `tokenizer/` and `backend/` (D9: the `Backend`
-interface and `Batch` struct, zero dependencies); `internal/prompt`, `internal/calib`, `internal/hub`,
-`internal/backend/onnx`. The `Obj` type below lives in `jsonx/`, not at the root.
+public `lang/`, `mailtext/`, `presets/`, `jsonx/`, `question/`, `tokenizer/` and `backend/` (D9: the
+`Backend` interface and `Batch` struct, zero dependencies); `internal/prompt`, `internal/calib`,
+`internal/hub`, `internal/backend/onnx`, `internal/golden`. The `Obj` type below lives in `jsonx/`,
+not at the root.
+
+The code block below is headed `package laya`, and since 2026-09-20 that is true only through
+aliases: the question types live in `question/` and the root re-exports them (`type Question =
+question.Question`), so that `presets` can build questions without `go list -deps ./presets`
+reaching the ONNX binding. See PLAN D11. `laya.ChoiceQuestion` still names the same type it always
+did.
 
 ### 3.4 Concrete Go type definitions
 
@@ -147,6 +154,13 @@ type ChoiceQuestion struct {
 
 func Labels(keys ...string) []ChoiceOption // sugar for the list form
 
+// ScoreQuestion's Levels deliberately cannot express one shape upstream allows:
+// a score question whose `criteria` is a dict, which render_options enumerates
+// by key ({"low": 1, "high": 2} -> ["level 0: low", "level 1: high"], recorded
+// as testdata/render.jsonl's options/score/dict-criteria). That case is reachable
+// only through internal/prompt's loose {t, ins, crit} shape, which is where it is
+// tested. Widening Levels to admit it would put a Python-only ambiguity into the
+// Go API for no caller's benefit; see PLAN Task 2.5.
 type ScoreQuestion struct {
 	Ins    string
 	Levels []Criterion // level 0 .. n-1
@@ -270,12 +284,21 @@ type ModelSpec struct {
 func (s ModelSpec) String() string // reproduces router._repo_str
 
 // Detection is emitted inside the routing payload, so ScriptProfile's key order
-// is observable there. It is ordered (encounter order, latin last — the order
-// lang.detect_script must already track for invariant #56), not a map.
-// PLAN Task 2.2.7.
+// is observable there. It is ordered, not a map.
+//
+// Corrected 2026-09-20 (M2): the order is latin FIRST, then the other scripts in
+// text-encounter order, with zero counts dropped. That is script_profile's order
+// (lang.py:116 seeds counts with {"latin": 0}). "latin last" is detect_script's
+// order (invariant #56) and belongs to a different function; the two genuinely
+// differ and cannot be collapsed. PLAN Task 2.2.7 carried the same error.
+//
+// The struct tags below are illustrative: the implementation carries a
+// MarshalJSON, which makes them dead. Byte-parity with Python goes through
+// jsonx.Marshal(d.Map()), because encoding/json compacts a MarshalJSON's output
+// and would strip Python's ", " and ": " separators (PLAN D12).
 type Detection struct {
 	Script           string         `json:"script"`
-	ScriptProfile    []ScriptShare  `json:"script_profile"` // marshals as an ordered object
+	ScriptProfile    Profile        `json:"script_profile"` // []ScriptShare, marshals as an ordered object
 	Language         *string        `json:"language"`
 	IsEnglish        bool           `json:"is_english"`
 	NonLatinFraction float64        `json:"non_latin_fraction"`
