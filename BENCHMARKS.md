@@ -12,13 +12,14 @@ Every checkpoint answered **byte-identical questions** in each run (fixed seed).
 
 ## Headline
 
-|                                   | Laya        | Jev (published) |
-| --------------------------------- | ----------- | --------------- |
-| typed-decisions (2,000 decisions) | **0.766**   | 0.727           |
-| AG News (4 labels)                | **0.953**   | 0.910           |
-| DAIR Emotion (6 labels)           | **0.600**   | 0.480           |
-| ECE after temperature fitting     | **0.081**   | 0.246           |
-| p50 latency, 1 question (T4)      | **32.8 ms** | 236-276 ms      |
+|                                                              | Laya        | Jev (published) |
+| ------------------------------------------------------------ | ----------- | --------------- |
+| typed-decisions (2,000 decisions)                            | **0.766**   | 0.727           |
+| AG News (4 labels)                                           | **0.953**   | 0.910           |
+| DAIR Emotion (6 labels)                                      | **0.600**   | 0.480           |
+| ECE after temperature fitting                                | **0.081**   | 0.246           |
+| p50 latency, 1 question — T4 _(upstream, not measured here)_ | **32.8 ms** | 236-276 ms      |
+| p50 latency, 1 question — CPU _(measured here, 512 tokens)_  | 0.63–1.9 s  | —               |
 
 ---
 
@@ -158,7 +159,106 @@ banking77 is the one clear loss, and it is architectural: a choice question's op
 
 ---
 
-## Speed (Tesla T4)
+## Speed — CPU, measured here
+
+The T4 table below is upstream's. This one is ours, and it is the number that matters for a Go port
+whose whole premise (D2) is a dependency-free binary you can drop on a server.
+
+**Hardware.** 12th Gen Intel Core i7-1255U — 2 P-cores + 8 E-cores, 12 hardware threads, 15 W
+nominal, `powersave` governor, 31 GB RAM, Linux 6.8. This is a laptop, and a thermally limited one:
+treat every number here as the **floor**, not as what a server does.
+
+**Stack.** ONNX Runtime 1.23.0 via `github.com/shota3506/onnxruntime-purego`, `CPUExecutionProvider`,
+fp32, `CGO_ENABLED=0`, Go 1.26. The graphs are `scripts/export_onnx.py --all --dynamo` output
+(PLAN.md S1). Reproduce with `just bench-onnx`.
+
+**Method.** Three full sweeps, five timed iterations per cell after one discarded warm-up, p50 and
+p90 recorded per cell. The tables report the **minimum p50 across the three sweeps** — the
+least-throttled estimate, and the one that is hardest on the conclusion drawn below. That is not a
+formality: run-to-run variation reached **2×** on the worst cell, so no single figure here is good to
+better than about ±20%.
+
+### One question — batch 1, 4 options, 8 threads
+
+| tokens | `laya` (english) | `laya-multilingual` | `laya-typed-decisions` |
+| ------ | ---------------- | ------------------- | ---------------------- |
+| 128    | 374 ms           | **160 ms**          | 406 ms                 |
+| 256    | 914 ms           | **355 ms**          | 862 ms                 |
+| 512    | 1691 ms          | **645 ms**          | 1856 ms                |
+| 1024   | —                | **1484 ms**         | 3962 ms                |
+
+512 is `agent.py:256`'s default `max_len`, so the 512 row is what a caller who does not tune anything
+will see. `laya` has no 1024 row because 512 is its trained context.
+
+### Thread scaling — batch 1, 512 tokens, 4 options
+
+| `IntraOpNumThreads` | `laya`      | `laya-multilingual` | `laya-typed-decisions` |
+| ------------------- | ----------- | ------------------- | ---------------------- |
+| 1                   | 3660 ms     | 1332 ms             | 3730 ms                |
+| 2                   | 2052 ms     | 813 ms              | 2226 ms                |
+| 4                   | 1871 ms     | 706 ms              | 1937 ms                |
+| 6                   | 1866 ms     | 681 ms              | 2030 ms                |
+| 8                   | **1691 ms** | **631 ms**          | **1720 ms**            |
+| 12                  | 2269 ms     | 845 ms              | 2130 ms                |
+
+Two things to take from this. **All twelve threads is the wrong setting** — every checkpoint peaks at
+8 and then loses 12–26%, because only 2 of the 10 cores here have SMT siblings and ORT contends for
+them. And **1 → 8 threads buys 2.1–2.2×, not 8×**: this is memory-bandwidth-bound long before it runs
+out of cores, so throwing a bigger core count at it will not close the gap to a GPU.
+
+### Batching does not amortise on CPU
+
+| shape (questions × tokens) | `laya`            | `laya-multilingual` | `laya-typed-decisions` |
+| -------------------------- | ----------------- | ------------------- | ---------------------- |
+| 1 × 128                    | 374 ms (374/q)    | 160 ms (160/q)      | 406 ms (406/q)         |
+| 8 × 128                    | 2975 ms (372/q)   | 1129 ms (141/q)     | 3289 ms (411/q)        |
+| 1 × 512                    | 1691 ms (1691/q)  | 645 ms (645/q)      | 1856 ms (1856/q)       |
+| 8 × 512                    | 14846 ms (1856/q) | 4988 ms (624/q)     | 15689 ms (1961/q)      |
+
+On a T4, going from 1 question to 10 takes `laya-multilingual` from 32.8 ms to 7.2 ms per question —
+a 4.6× win from filling the device. **On CPU that win does not exist**: per-question cost is flat to
+within noise, because one question at 512 tokens already saturates the cores. Batch for throughput
+accounting if you like; do not batch expecting latency per answer to improve.
+
+The option count is a non-factor: at `k=20` instead of `k=4`, 512 tokens, the three checkpoints
+measured 1718 / 583 / 1649 ms — inside the run-to-run noise of the `k=4` cells. The encoder runs over
+tokens; the head runs over options, and the head is small.
+
+### Loading a checkpoint
+
+| checkpoint             | session load | resident after load |
+| ---------------------- | ------------ | ------------------- |
+| `laya`                 | 2.1 s        | 1423 MiB            |
+| `laya-multilingual`    | 1.5 s        | 488 MiB             |
+| `laya-typed-decisions` | 3.2 s        | 1423 MiB            |
+
+Upstream measures a "7.4 s median reload on CPU" and warns that `max_loaded=1` rebuilds a model on
+every language switch. Building an ORT session from an already-downloaded ONNX file is cheaper than
+that — but at 1.4 GB resident apiece, holding all three costs about 3.3 GB, which is the real
+constraint on raising `max_loaded`.
+
+### What this means
+
+**CPU inference is 9–43× slower than the T4 figure, and that range is honest rather than evasive:**
+upstream never states the sequence length behind its 33 ms, so the multiple depends on which row you
+compare. At 128 tokens `laya-multilingual` is 160 ms against 32.8 ms (4.9×); at its default 512-token
+`max_len`, `laya` is 1691 ms against 39.5 ms (43×).
+
+So, plainly:
+
+- **Sub-second per question is reachable only on `laya-multilingual` (mmBERT-base) at short
+  sequences.** Both ModernBERT-large checkpoints are 1.7 s and up at default settings.
+- **This is a batch and background workload on CPU**, not an interactive one. Anything with a human
+  waiting on it wants a GPU execution provider.
+- **Set `IntraOpNumThreads` to the physical core count, not the thread count.** It is free, and it is
+  worth 12–26%.
+- The levers left — int8 dynamic quantization, and offering the cheaper checkpoint deliberately — are
+  tracked as PLAN.md Tasks 6.9 and 3.4. Neither is applied by default, and int8 will not be until its
+  effect on ECE and Brier is measured: calibrated probabilities are the product.
+
+---
+
+## Speed (Tesla T4) — upstream's published figures, not measured here
 
 | questions per call | laya     | laya-multilingual |
 | ------------------ | -------- | ----------------- |
@@ -169,7 +269,7 @@ banking77 is the one clear loss, and it is architectural: a choice question's op
 
 103–332 questions/sec batched. Jev independently measured at 236-276 ms p50, so Laya answers one question roughly **6–7× faster**.
 
-### Calibration
+## Calibration
 
 |                     | as shipped | temperature refit |
 | ------------------- | ---------- | ----------------- |
@@ -178,7 +278,7 @@ banking77 is the one clear loss, and it is architectural: a choice question's op
 
 Both ship over-confident; `laya-multilingual` ships with no fitted temperatures at all. Refitting one temperature per (question type, option count) on held-out data is the single highest-value fix available, and takes ECE below Jev's measured 0.246.
 
-### Option-order robustness
+## Option-order robustness
 
 How often the answer changes when the options are permuted. Jev measured at 0.13.
 
@@ -194,6 +294,7 @@ At 20 options both are less order-stable than Jev — worth fixing with more agg
 
 ## Limits, stated plainly
 
+- **CPU is 9–43× slower than the headline 33 ms** — 0.6–1.9 s per question at the default 512-token `max_len`, measured on a 15 W laptop. Batching does not amortise it.
 - **Near chance on typed-decisions zero-shot** — the 0.766 belongs to the fine-tuned checkpoint, on that benchmark's own training split.
 - **Moderation does not hold up on held-out data** (0.530, macro-F1 0.400).
 - **Keep `choice` questions under ~20 options.**
