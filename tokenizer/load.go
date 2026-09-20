@@ -25,6 +25,15 @@ const (
 	fileTokenizerConfig = "tokenizer_config.json"
 )
 
+// maxTokenID is the largest id a tokenizer.json may declare. indexVocab
+// allocates a dense table of highest+1 strings, so without a ceiling the
+// allocation is a function of one number in the file rather than of the file's
+// size: a two-kilobyte checkpoint declaring 2147483647 asks for 32 GB, and one
+// declaring more than that wraps the int32 conversion. The largest vocabulary
+// in production is multilingual's 256000; this leaves sixteen times that and
+// caps the table at about 67 MB.
+const maxTokenID = 1 << 22
+
 // merge is one BPE merge rule. newID is resolved at load, so applying a merge
 // can never fail to find its result -- HF rejects a merge whose concatenation
 // is absent from the vocabulary (MergeTokenOutOfVocabulary) and so does Open.
@@ -105,6 +114,9 @@ func build(doc *tokenizerJSON, cfg *tokenizerConfigJSON) (*HF, error) {
 	if err := validate(doc); err != nil {
 		return nil, err
 	}
+	if err := validateIDs(doc); err != nil {
+		return nil, err
+	}
 
 	t := &HF{
 		vocab:        doc.Model.Vocab,
@@ -161,6 +173,26 @@ func isJSONNull(raw json.RawMessage) bool {
 	return len(raw) == 0 || string(raw) == "null"
 }
 
+// validateIDs bounds every id before anything indexes or sizes a table with
+// one. It runs before indexVocab because that is the amplifier: it turns the
+// single largest id in the file into an allocation, and a negative one into a
+// slice write at a negative index.
+func validateIDs(doc *tokenizerJSON) error {
+	for tok, id := range doc.Model.Vocab {
+		if id < 0 || int64(id) > maxTokenID {
+			return fmt.Errorf("%w: vocabulary entry %q has id %d, outside [0, %d]",
+				ErrUnsupported, tok, id, maxTokenID)
+		}
+	}
+	for _, a := range doc.AddedTokens {
+		if a.ID < 0 || a.ID > maxTokenID {
+			return fmt.Errorf("%w: added token %q has id %d, outside [0, %d]",
+				ErrUnsupported, a.Content, a.ID, maxTokenID)
+		}
+	}
+	return nil
+}
+
 func buildNormalizer(s *stageJSON) (normalizer, error) {
 	if s == nil {
 		return nil, fmt.Errorf("%w: no normalizer declared", ErrUnsupported)
@@ -196,6 +228,12 @@ func buildPreTokenizer(s *stageJSON) (preTokenizer, error) {
 	case "Metaspace":
 		if s.PrependScheme != "always" {
 			return nil, fmt.Errorf("%w: Metaspace prepend_scheme %q", ErrUnsupported, s.PrependScheme)
+		}
+		if s.Replacement == "" {
+			// splitMergedWithNext searches for the replacement and advances by
+			// its length, so an empty one is an infinite loop on the first
+			// Encode rather than a load error.
+			return nil, fmt.Errorf("%w: Metaspace with an empty replacement", ErrUnsupported)
 		}
 		return metaspace{replacement: s.Replacement, prependAlways: true, split: s.Split}, nil
 	default:
@@ -243,6 +281,9 @@ func buildMerges(pairs [][2]string, vocab map[string]int32) (map[[2]int32]merge,
 // the 50368 the encoder config declares. Multilingual hides this -- all 249 of
 // its added tokens are already inside model.vocab -- which is exactly why it
 // needs asserting on English.
+//
+// validateIDs has already bounded every id to [0, maxTokenID], so neither the
+// indexing below nor highest+1 can go out of range.
 func (t *HF) indexVocab() {
 	highest := int32(-1)
 	for _, id := range t.vocab {

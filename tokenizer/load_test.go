@@ -3,6 +3,7 @@ package tokenizer
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -109,6 +110,62 @@ func TestOpenAcceptsDeadStages(t *testing.T) {
 
 	if _, err := Open(dir); err != nil {
 		t.Errorf("Open rejected a checkpoint for stages it never runs: %v", err)
+	}
+}
+
+// TestOpenRefusesMalformedIDs. Every id in tokenizer.json indexes indexVocab's
+// dense table directly, and Open parses a file that may have come off the Hub
+// -- AGENTS.md names the deserialization path as the attack surface. Left
+// unchecked, a negative id panics on the slice write, an id near MaxInt32 makes
+// a two-kilobyte file allocate tens of gigabytes, and one past MaxInt32 wraps
+// the int32 conversion into some other token's slot.
+func TestOpenRefusesMalformedIDs(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		mutate func(m map[string]any)
+	}{
+		{"negative vocabulary id", func(m map[string]any) {
+			m["model"].(map[string]any)["vocab"].(map[string]any)["zz"] = -1
+		}},
+		{"negative added-token id", func(m map[string]any) {
+			m["added_tokens"].([]any)[0].(map[string]any)["id"] = -1
+		}},
+		{"vocabulary id past the ceiling", func(m map[string]any) {
+			m["model"].(map[string]any)["vocab"].(map[string]any)["zz"] = maxTokenID + 1
+		}},
+		{"added-token id past MaxInt32", func(m map[string]any) {
+			m["added_tokens"].([]any)[0].(map[string]any)["id"] = int64(math.MaxInt32) + 1
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := mutatedFixture(t, "mini_en", c.mutate)
+
+			_, err := Open(dir)
+			if err == nil {
+				t.Fatalf("Open accepted a tokenizer.json with a %s", c.name)
+			}
+			if !errors.Is(err, ErrUnsupported) {
+				t.Errorf("Open: %v, want it to wrap ErrUnsupported", err)
+			}
+		})
+	}
+}
+
+// TestOpenRefusesEmptyMetaspaceReplacement. splitMergedWithNext scans for the
+// replacement and never advances when it is empty, so accepting one turns the
+// first Encode into an infinite loop instead of a load error. The guard belongs
+// at load because that is where the file is still in hand to name.
+func TestOpenRefusesEmptyMetaspaceReplacement(t *testing.T) {
+	dir := mutatedFixture(t, "mini_ml", func(m map[string]any) {
+		m["pre_tokenizer"].(map[string]any)["replacement"] = ""
+	})
+
+	_, err := Open(dir)
+	if err == nil {
+		t.Fatal("Open accepted a Metaspace with an empty replacement")
+	}
+	if !errors.Is(err, ErrUnsupported) {
+		t.Errorf("Open: %v, want it to wrap ErrUnsupported", err)
 	}
 }
 
