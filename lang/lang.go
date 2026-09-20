@@ -55,9 +55,10 @@ type scriptBlock struct {
 // earlier block also covers (lang.py:17-42, invariant #55).
 //
 // Replacing the 24 names with 24 constants would make this unreadable as the
-// transcription it is, which is the only thing it is for.
-//
-//nolint:goconst // transcribed data table, see above
+// transcription it is, which is the only thing it is for. goconst no longer
+// needs suppressing here -- it stopped counting the parity tests' copies of
+// these names when .golangci.yml set ignore-tests -- but the reasoning stands
+// if it ever fires again.
 var scriptRanges = []scriptBlock{
 	{"greek", []codeRange{{0x0370, 0x03FF}, {0x1F00, 0x1FFF}}},
 	{"cyrillic", []codeRange{{0x0400, 0x052F}, {0x2DE0, 0x2DFF}, {0xA640, 0xA69F}}},

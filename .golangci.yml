@@ -46,6 +46,14 @@ linters:
       lines: 100
       statements: 80
 
+    # goconst already has its findings in _test.go excluded below, but it still
+    # *counts* occurrences there, so a literal repeated across a table test gets
+    # reported against the one production line that also uses it. Parity tests
+    # repeat upstream's strings by construction -- that is what makes them
+    # auditable -- so the count has to come from production code alone.
+    goconst:
+      ignore-tests: true
+
     # gosec stays ON: laya downloads checkpoints from the Hub, so the supply-chain
     # surface (PLAN.md R7) is real. G115 is int-conversion noise on tensor indexing.
     gosec:

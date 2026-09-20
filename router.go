@@ -4,9 +4,12 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/MeKo-Christian/go-laya/jsonx"
+	"github.com/MeKo-Christian/go-laya/lang"
 	"github.com/MeKo-Christian/go-laya/question"
 )
 
@@ -91,10 +94,6 @@ func copyModels(src map[string]ModelSpec) map[string]ModelSpec {
 // modelAliases is _ALIASES (router.py:65-70): the names people are likely to
 // type. The lookup is a single pass, not transitive -- every value here is
 // already canonical.
-// constant per key would add indirection to a table whose whole value is that
-// it can be diffed against router.py:65-70 at a glance.
-//
-//nolint:goconst // alias keys are upstream data reproduced verbatim; a
 var modelAliases = map[string]string{
 	"en":                   ModelEnglish,
 	"laya":                 ModelEnglish,
@@ -261,4 +260,210 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// Router lazily loads laya checkpoints and sends each request to the right
+// one. It is router.Router (router.py:122-314).
+//
+// Route is pure: it never loads or runs anything, never touches the network,
+// and needs no context. That is upstream's own claim about it
+// (test_router.py:1) and it is what makes the whole decision layer testable
+// without weights.
+//
+// Unlike Python's, this Router is safe for concurrent use. Upstream's is not,
+// and a Go server would reach for one from several goroutines on the first
+// day.
+//
+// # Cost
+//
+// Routing is by language, as upstream, not by cost. Spike S3 measured
+// laya-multilingual at 2.2-2.7x the speed of either ModernBERT-large
+// checkpoint and the only one that answers in under a second on CPU; the
+// per-checkpoint numbers are in BENCHMARKS.md. There is deliberately no
+// cost-biased routing option (PLAN.md task 3.4.1): changing the default would
+// break the end-to-end parity M7 asserts, and a caller who wants the cheap
+// checkpoint can say so with ForModel("multilingual").
+type Router struct {
+	mu sync.Mutex
+
+	models            map[string]ModelSpec
+	defaultModel      string
+	autoTaskDetection bool
+}
+
+// NewRouter builds a Router. With no options it is upstream's default: the
+// bundle registry, "english" as the fallback, and no automatic workflow
+// detection.
+func NewRouter(opts ...RouterOption) (*Router, error) {
+	cfg := routerConfig{defaultModel: ModelEnglish}
+	for _, opt := range opts {
+		if err := opt(&cfg); err != nil {
+			return nil, err
+		}
+	}
+
+	models := DefaultModels()
+	if cfg.standaloneRepos {
+		models = StandaloneModels()
+	}
+	maps.Copy(models, cfg.overrides)
+
+	return &Router{
+		models:            models,
+		defaultModel:      cfg.defaultModel,
+		autoTaskDetection: cfg.autoTaskDetection,
+	}, nil
+}
+
+// Route decides which checkpoint to use, without loading or running anything.
+//
+// Precedence (invariant #39): explicit model, then explicit task, then a
+// detected workflow if WithAutoTaskDetection is on, then explicit language,
+// then the script and language of the state, and failing all of those the
+// configured default.
+//
+// state is `any` rather than a narrower type because that is what lang.Analyse
+// takes and what M2 already shipped: a string is the document itself, and a
+// map, slice or struct is flattened by lang.StateText before detection.
+func (r *Router) Route(state any, qs Questions, opts ...RouteOption) (RouteDecision, error) {
+	var req routeRequest
+	for _, opt := range opts {
+		opt(&req)
+	}
+
+	if req.model != nil {
+		return r.decideByName(*req.model, "explicit model="+jsonx.ReprString(*req.model))
+	}
+	if req.task != nil {
+		return r.decideByName(taskToModelName(*req.task), "explicit task="+jsonx.ReprString(*req.task))
+	}
+
+	// Computed here, before the remaining branches, exactly as upstream does
+	// at router.py:264 -- which is why it reaches the lang and detection
+	// payloads even when it did not decide anything (invariant #45).
+	name, matched := MatchTypedDecisionsWorkflow(qs)
+	if matched && r.autoTaskDetection {
+		return r.decideByWorkflow(name), nil
+	}
+
+	var workflow *string
+	if matched {
+		workflow = &name
+	}
+
+	if req.lang != nil {
+		return r.decideByLang(*req.lang, workflow), nil
+	}
+	return r.decideByDetection(state, workflow), nil
+}
+
+// taskToModelName is router.py:260's inline conditional: the two spellings of
+// the typed-decisions task map to the checkpoint, and every other task string
+// is handed to NormalizeModelName as if it were a model name -- so ForTask("en")
+// is legal and yields english (invariant #41).
+func taskToModelName(task string) string {
+	if strings.ReplaceAll(strings.ToLower(task), "-", "_") == "typed_decisions" {
+		return ModelTypedDecisions
+	}
+	return task
+}
+
+func (r *Router) decideByName(name, reason string) (RouteDecision, error) {
+	key, err := NormalizeModelName(name)
+	if err != nil {
+		return RouteDecision{}, err
+	}
+	return RouteDecision{Model: key, Repo: r.spec(key).String(), Reason: reason}, nil
+}
+
+// decideByWorkflow is router.py:265-268. Upstream hard-codes the model name
+// here rather than normalising it, and -- alone among the five branches --
+// passes the spec through unconverted, so `repo` comes out as a JSON array on
+// the bundle path. This port always emits the string (invariant #46, task
+// 3.1.4); the deviation is listed in the README.
+func (r *Router) decideByWorkflow(name string) RouteDecision {
+	return RouteDecision{
+		Model:    ModelTypedDecisions,
+		Repo:     r.spec(ModelTypedDecisions).String(),
+		Reason:   "question ids match the " + jsonx.ReprString(name) + " typed-decisions workflow",
+		Workflow: &name,
+	}
+}
+
+// decideByLang is router.py:270-273. Two outcomes only: this branch never
+// reaches typed-decisions, whatever the tag.
+func (r *Router) decideByLang(code string, workflow *string) RouteDecision {
+	key := ModelMultilingual
+	primary, _, _ := strings.Cut(strings.ToLower(code), "-")
+	switch primary {
+	case "en", "eng", "english":
+		key = ModelEnglish
+	}
+
+	return RouteDecision{
+		Model:    key,
+		Repo:     r.spec(key).String(),
+		Reason:   "explicit lang=" + jsonx.ReprString(code),
+		Workflow: workflow,
+	}
+}
+
+// decideByDetection is router.py:275-290, the branch that actually looks at the
+// state. The "unknown" test has to come first: analyse reports is_english true
+// for a state with no letters, so testing English-ness first would send digits
+// to the English checkpoint instead of the configured default.
+func (r *Router) decideByDetection(state any, workflow *string) RouteDecision {
+	det := lang.Analyse(state)
+
+	var key, reason string
+	switch {
+	case det.Script == "unknown":
+		key = r.defaultModel
+		reason = "no letters detected in state; using default (" + key + ")"
+	case det.Script != "latin":
+		key = ModelMultilingual
+		reason = "non-Latin script (" + det.Script + ", " + percent(det.NonLatinFraction) +
+			"% of letters); the English checkpoint cannot read it"
+	case !det.IsEnglish:
+		key = ModelMultilingual
+		reason = "Latin script but language looks like " + reprLanguage(det.Language) + ", not English"
+	default:
+		key = ModelEnglish
+		reason = "English Latin text"
+	}
+
+	return RouteDecision{
+		Model:     key,
+		Repo:      r.spec(key).String(),
+		Reason:    reason,
+		Detection: &det,
+		Workflow:  workflow,
+	}
+}
+
+// percent renders Python's "%.0f" of 100 * fraction. Both languages round the
+// decimal representation half-to-even, so 0.5 renders as "0" and 1.5 as "2";
+// Go's math.Round would be half-away-from-zero and disagree on exactly those
+// values (the same trap as jsonx.Round4, invariant #29).
+func percent(fraction float64) string {
+	return strconv.FormatFloat(100*fraction, 'f', 0, 64)
+}
+
+// reprLanguage is `%r` of det["language"]. The nil case is unreachable from
+// this branch -- analyse sets is_english true whenever the Latin guess is
+// undecided, so a nil language never gets here -- but Python would print None
+// and silently emitting the empty string would be worse than saying so.
+func reprLanguage(code *string) string {
+	if code == nil {
+		return "None"
+	}
+	return jsonx.ReprString(*code)
+}
+
+// spec is the registry entry for a canonical name. Every name NormalizeModelName
+// returns is present: an override replaces an entry, it never removes one.
+func (r *Router) spec(key string) ModelSpec {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.models[key]
 }
