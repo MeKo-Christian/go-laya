@@ -1,0 +1,50 @@
+go-laya
+Copyright 2026 Christian Budde
+
+This product includes software developed by Convai Innovations.
+
+------------------------------------------------------------------------------
+Derivative work notice (Apache License 2.0, Section 4)
+------------------------------------------------------------------------------
+
+This repository is a derivative of:
+
+    laya - Fast, non-autoregressive System 1 decision engine
+    https://github.com/NandhaKishorM/laya
+    Copyright (c) Convai Innovations
+    Licensed under the Apache License, Version 2.0
+
+    Derived from upstream version 0.3.4, commit
+    d113dcaf2fa9c8b2ba30b87b0c07ec0eeb1f33ea.
+
+The full Apache License 2.0 text is in LICENSE at the root of this repository.
+
+Statement of modification
+-------------------------
+
+1. The upstream Python implementation has been relocated, unmodified, to
+   `original/`. It is retained as the parity reference that the Go port is
+   tested against and as the source of the golden test vectors under
+   `testdata/`. It is not built, published or installed by this repository.
+
+2. The library has been reimplemented in Go. The Go code is an independent
+   implementation written against the observable behaviour of the Python
+   original; it reproduces that behaviour deliberately, including its edge
+   cases, so that the two agree byte-for-byte on prompts and within 1e-4 on
+   probabilities.
+
+3. The Go port is inference only. The reinforcement-learning training math in
+   the upstream package -- `proper_reward`, `td_lambda_targets` and
+   `collate_items` -- has no Go counterpart and is not ported.
+
+4. Several upstream inconsistencies are reproduced on purpose, because
+   matching them is the point of a parity port, and several are deliberately
+   not reproduced. Both sets are enumerated in `docs/INVARIANTS.md` and
+   `PLAN.md`.
+
+Model weights
+-------------
+
+The checkpoints this software loads are published separately by Convai
+Innovations at https://huggingface.co/convaiinnovations/laya under the
+Apache License 2.0. They are not redistributed here.
