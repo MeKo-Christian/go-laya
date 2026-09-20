@@ -269,6 +269,103 @@ def tokenizer_cases(mask_token: str) -> list[tuple[str, str]]:
     ]:
         cases.append((f"script/{n}", t))
 
+    # ---------------------------------------------------------------- 4.4.12
+    # Corpus v2, the first M4 commit. The v1 cases above have **zero byte-fallback
+    # coverage**: every emoji and script probe happens to be a single vocab entry on
+    # multilingual, so the `<0xXX>` path -- the one stage most likely to be wrong in a
+    # from-scratch BPE -- was pinned by nothing at all.
+
+    # Byte fallback proper. These four are outside both vocabularies, so multilingual
+    # must decompose them into one `<0xXX>` per UTF-8 byte.
+    for n, t in [
+        ("cjk-ext-b", "a\U0002000b b"),
+        ("emoji-15", "\U0001fae8"),
+        ("math-fraktur", "\U0001d518"),
+        ("tangut", "\U00017000"),
+    ]:
+        cases.append((f"bytefall/{n}", t))
+
+    # Unicode whitespace that is not ASCII space. The pre-tokenizer's \s is
+    # Unicode-aware in Oniguruma and ASCII-only in Go's RE2 (R1), so these are exactly
+    # where a Go scanner silently diverges. Both with and without a leading space,
+    # because that is the `common.py:68` call shape.
+    for n, t in [
+        ("nbsp-run", "a\u00a0\u00a0b"),
+        ("ideographic", "a\u3000b"),
+        ("em-space-run", "a\u2003\u2003b"),
+        ("em-space-lead", "\u2003\u2003b"),
+        ("vertical-tab", "a\vb"),
+        ("next-line", "a\u0085b"),
+        ("line-sep", "a\u2028b"),
+        ("ogham", "a\u1680b"),
+    ]:
+        cases.append((f"uws/{n}", t))
+
+    # Contractions: the ByteLevel pattern splits "DON'T" into [DON, ', T] on the
+    # straight quote, and the curly apostrophe is a different codepoint entirely.
+    for n, t in [
+        ("dont-upper", "DON'T"),
+        ("dont-lower", "don't"),
+        ("curly", "don\u2019t"),
+        ("possessive", "the user's invoice"),
+        ("ll-ve-re", "we'll they've you're it's I'm"),
+    ]:
+        cases.append((f"contract/{n}", t))
+
+    # Added tokens directly adjacent to text, with no separating space. An added token
+    # is matched before normalisation, so adjacency is where the split goes wrong.
+    for n, t in [
+        ("no-space-before", "x<unused0>"),
+        ("no-space-after", "<unused0>x"),
+        ("both-sides", "x<unused0>y"),
+        ("doubled", "<unused0><unused0>"),
+        ("in-json", '{"k": "<unused0>"}'),
+    ]:
+        cases.append((f"adj/{n}", t))
+
+    # The mask literal's lstrip behaviour. `convert_ids_to_tokens` is what the dumper
+    # records precisely because `Encoding.tokens` would return the lstripped slice
+    # ("  [MASK]") and hide this.
+    for n, t in [
+        ("two-spaces-before", f"  {mask_token}"),
+        ("text-then-mask", f"spam {mask_token}"),
+        ("mask-then-text", f"{mask_token} spam"),
+        ("mask-doubled", f"{mask_token}{mask_token}"),
+    ]:
+        cases.append((f"masklstrip/{n}", t))
+
+    # Space runs past the added-token table. English has whitespace added tokens for
+    # runs of 2..24 only, so 25 and up must fall back to the merge loop -- 48 and 49
+    # straddle two table-width boundaries.
+    for n in (48, 49):
+        cases.append((f"ws/run-{n}", "a" + " " * n + "b"))
+
+    # Tab and newline runs. The give-back rule in the ByteLevel pattern (a whitespace
+    # run hands its last character to the following token) only shows up on runs.
+    for n in (2, 26):
+        cases.append((f"ws/tab-run-{n:02d}", "a" + "\t" * n + "b"))
+    for n in (2, 3, 32):
+        cases.append((f"ws/nl-run-{n:02d}", "a" + "\n" * n + "b"))
+
+    # A literal U+2581 in user text, which collides with the Metaspace replacement
+    # character multilingual uses for a space.
+    cases.append(("lit/metaspace", "a\u2581\u2581b"))
+    cases.append(("lit/metaspace-bare", "\u2581"))
+
+    # C0 controls that are not whitespace.
+    for n, t in [("nul", "a\x00b"), ("soh", "a\x01b"), ("del", "a\x7fb")]:
+        cases.append((f"ctrl/{n}", t))
+
+    # Digits: BPE splits number runs by merge rank, and laya's states are full of
+    # invoice numbers and amounts.
+    for n, t in [
+        ("short", "42"),
+        ("long", "1234567890"),
+        ("mixed", "invoice 4411 for 1.50 EUR"),
+        ("leading-zero", "007"),
+    ]:
+        cases.append((f"digit/{n}", t))
+
     # Ordinary prose, so the corpus is not entirely pathological.
     cases.append(("prose/en", "I was charged twice for invoice 4411, please refund it today."))
     cases.append(("prose/de", "Ich wurde zweimal für Rechnung 4411 belastet."))
