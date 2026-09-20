@@ -22,18 +22,18 @@ safetensors backend landing later behind the same interface.
 Tick a box only when the work is committed and `just check` is green. `[~]` means started but
 not finished; keep it rare. A milestone is done when every task box under it is ticked.
 
-| Milestone                                                              | Delivers                                         | Status                 |
-| ---------------------------------------------------------------------- | ------------------------------------------------ | ---------------------- |
-| [M0 — Scaffolding](#m0--scaffolding)                                   | Go module, tooling, CI, frozen Python, `Version` | ✅ 5/6 (0.1 skipped)   |
-| [Spikes S1–S3](#3-spikes--do-these-before-writing-library-code)        | ONNX export, binding choice, latency floor       | 🟡 S1+S2 done, S3 open |
-| [M1 — Reference harness](#m1--the-python-reference-harness)            | `testdata/*.jsonl` golden vectors                | 🟡 1.1–1.2 done        |
-| [M2 — Tier-1 core](#m2--tier-1-core-no-ml-runtime-620-lines-of-python) | `jsonx`, `lang`, `mailtext`, `presets`, render   | ⬜ not started         |
-| [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ⬜ not started         |
-| [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | ⬜ not started         |
-| [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ⬜ not started         |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | ⬜ not started         |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started         |
-| [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred            |
+| Milestone                                                              | Delivers                                         | Status               |
+| ---------------------------------------------------------------------- | ------------------------------------------------ | -------------------- |
+| [M0 — Scaffolding](#m0--scaffolding)                                   | Go module, tooling, CI, frozen Python, `Version` | ✅ 5/6 (0.1 skipped) |
+| [Spikes S1–S3](#3-spikes--do-these-before-writing-library-code)        | ONNX export, binding choice, latency floor       | 🟢 S1–S3 done        |
+| [M1 — Reference harness](#m1--the-python-reference-harness)            | `testdata/*.jsonl` golden vectors                | 🟡 1.1–1.2 done      |
+| [M2 — Tier-1 core](#m2--tier-1-core-no-ml-runtime-620-lines-of-python) | `jsonx`, `lang`, `mailtext`, `presets`, render   | ⬜ not started       |
+| [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ⬜ not started       |
+| [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | ⬜ not started       |
+| [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ⬜ not started       |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | ⬜ not started       |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started       |
+| [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred          |
 
 **Critical path:** S1 → S2 → M1 → M4 → M5 → M6 → M7. M2 and M3 are independent of every spike and of
 the tokenizer, so they can proceed in parallel with the spikes and are the fastest route to something
@@ -43,13 +43,14 @@ useful (see the M3 milestone check).
 
 ## 0. Decisions already made
 
-| #   | Decision                                                                                           | Rationale                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| --- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D1  | **ONNX first, pure-Go native backend later**, both behind a `Backend` interface                    | The entire `DecisionModel.forward` is one static graph — no KV cache, no loop, no control flow — so it exports to a single ONNX file and there is exactly _one_ numerics-parity surface to test. Reimplementing ModernBERT (RoPE, alternating local/global attention, GeGLU) up front is weeks of work before anything runs. In-house precedent: `yalue/onnxruntime_go` in `pogo`, `FlashSR`, `go-autoresearch`, `Emanetics`.                                                                                                                                                                                                                                                                      |
-| D2  | **Pure-Go tokenizer, no CGO**                                                                      | User decision. Keeps the build CGO-free and cross-compilable. This is the single largest correctness risk in the port (see §6 R1) and is therefore front-loaded: golden corpus before implementation.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| D3  | **Inference only**                                                                                 | `proper_reward`, `td_lambda_targets` and `collate_items` are RLCD training math a Go port cannot use. Deliberate API narrowing; document it in the README.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| D4  | **Python moves to `original/`**                                                                    | Same pattern as `go-pocket-tts`. Upstream Python is frozen as the parity reference and drives `scripts/dump_python_parity.py`. Also keeps the Apache-2.0 derivative-work attribution honest.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| D5  | **`shota3506/onnxruntime-purego` for ONNX, pinned to `8db8bd7`; every `*Value` closed explicitly** | Spike S2. The CGO-free path holds: `CGO_ENABLED=0 go build ./...` passes and the S1 export runs through the binding, agreeing with the Python ORT run to 3.8e-06. R5's `runtime.AddCleanup` panic is fixed upstream (PR #11, merged 2026-03-15); `go-pocket-tts` is pinned two commits short of it. The cost is stated rather than hidden: the binding carries **no tags at all**, so the pin is a pseudo-version of the untagged HEAD of a 31-star library whose README says "APIs may change without notice", and a live data race remains on the finalizer path. `yalue/onnxruntime_go` (719 stars, v1.36.0, cgo) stays the fallback, and D1's `Backend` seam is what keeps the swap contained. |
+| #   | Decision                                                                                                  | Rationale                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| --- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | **ONNX first, pure-Go native backend later**, both behind a `Backend` interface                           | The entire `DecisionModel.forward` is one static graph — no KV cache, no loop, no control flow — so it exports to a single ONNX file and there is exactly _one_ numerics-parity surface to test. Reimplementing ModernBERT (RoPE, alternating local/global attention, GeGLU) up front is weeks of work before anything runs. In-house precedent: `yalue/onnxruntime_go` in `pogo`, `FlashSR`, `go-autoresearch`, `Emanetics`.                                                                                                                                                                                                                                                                      |
+| D2  | **Pure-Go tokenizer, no CGO**                                                                             | User decision. Keeps the build CGO-free and cross-compilable. This is the single largest correctness risk in the port (see §6 R1) and is therefore front-loaded: golden corpus before implementation.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| D3  | **Inference only**                                                                                        | `proper_reward`, `td_lambda_targets` and `collate_items` are RLCD training math a Go port cannot use. Deliberate API narrowing; document it in the README.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| D4  | **Python moves to `original/`**                                                                           | Same pattern as `go-pocket-tts`. Upstream Python is frozen as the parity reference and drives `scripts/dump_python_parity.py`. Also keeps the Apache-2.0 derivative-work attribution honest.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| D5  | **`shota3506/onnxruntime-purego` for ONNX, pinned to `8db8bd7`; every `*Value` closed explicitly**        | Spike S2. The CGO-free path holds: `CGO_ENABLED=0 go build ./...` passes and the S1 export runs through the binding, agreeing with the Python ORT run to 3.8e-06. R5's `runtime.AddCleanup` panic is fixed upstream (PR #11, merged 2026-03-15); `go-pocket-tts` is pinned two commits short of it. The cost is stated rather than hidden: the binding carries **no tags at all**, so the pin is a pseudo-version of the untagged HEAD of a 31-star library whose README says "APIs may change without notice", and a live data race remains on the finalizer path. `yalue/onnxruntime_go` (719 stars, v1.36.0, cgo) stays the fallback, and D1's `Backend` seam is what keeps the swap contained. |
+| D6  | **CPU is a batch deployment; no quantization by default; `IntraOpNumThreads` is the physical core count** | Spike S3. Measured through the shipped binding on a 15 W laptop: 0.6–1.9 s per question at the default 512-token `max_len`, 9–43× upstream's 33 ms on a T4. Two measured surprises drive the decision rather than the headline number: **batching does not amortise on CPU** (per-question cost is flat, where the T4 falls 4.6×), and **all hardware threads is the wrong setting** (every checkpoint peaks at 8 of 12 and then loses 12–26%). So go-laya ships CPU as the default, documents it as a background workload, and treats a GPU execution provider as the answer for interactive use. int8 stays off the default path until Task 6.9 measures ECE and Brier, not accuracy (R4).       |
 
 **D2 has a consequence that needs resolving in Spike S2:** `yalue/onnxruntime_go` requires CGO (it
 `dlopen`s the shared library _through_ cgo). A CGO-free tokenizer paired with a CGO ONNX binding
@@ -210,7 +211,7 @@ layout, where `import laya` drags in torch.
 
 ## 3. Spikes — do these before writing library code
 
-These can invalidate the plan. Budget 1–2 days total. **Status:** S1 ✅ · S2 ✅ · S3 ⬜
+These can invalidate the plan. Budget 1–2 days total. **Status:** S1 ✅ · S2 ✅ · S3 ✅
 
 ### Spike S1: Does `torch.onnx.export` survive the full `DecisionModel`?
 
@@ -398,20 +399,108 @@ rather than deleted: M6 has to keep satisfying it.
 
 ### Spike S3: Latency on real hardware
 
+> **(2026-09-20) — measured. The estimate was right about the order of magnitude and wrong about
+> which lever matters.** ORT-CPU landed at the fast end of the predicted 0.3–5 s band, so the
+> pure-Go native backend (M8) is not urgent. But two of the things the plan assumed about how to get
+> there turned out to be false, and both are cheap to act on: **all twelve hardware threads is the
+> wrong setting** (every checkpoint peaks at 8 and then loses 12–26%), and **batching does not
+> amortise on CPU at all** — the per-question cost is flat, where on a T4 it falls 4.6×. The
+> deployment shape that follows is not the one upstream's README implies.
+
 FLOP-derived estimate: ≈360 GFLOP for ModernBERT-large at 512 tokens; ≈256 GFLOP for mmBERT-base at 1024. Measured on comparable hardware, gonum `Sgemm` reaches ~27–32 GFLOPS and 2-thread OpenBLAS
 ~54 GFLOPS — which puts a _hand-written_ pure-Go forward pass at roughly **12 s/sequence**, against the
 README's 33 ms on a T4. ORT-CPU with MLAS should land in the 0.3–5 s range depending on cores.
 
-- [ ] **S3.1** Measure ORT-CPU latency per checkpoint at realistic sequence lengths (512 / 1024) and
-      thread counts, on the hardware we actually ship numbers for.
-- [ ] **S3.2** Record the numbers, the hardware and the ORT build in `BENCHMARKS.md` — replacing
-      upstream's T4 figures rather than repeating them.
-- [ ] **S3.3** **Do not write "CPU-first" anywhere in the README until S3.2 exists.**
+- [x] **S3.1** Measure ORT-CPU latency per checkpoint at realistic sequence lengths (512 / 1024) and
+      thread counts, on the hardware we actually ship numbers for. (2026-09-20) — `BenchmarkForward`
+      and `BenchmarkSessionLoad` in `internal/onnxspike/bench_test.go`, driven by `just bench-onnx`,
+      **through the Go binding rather than Python**: the number a caller experiences is the one that
+      counts. Three full sweeps at 5 timed iterations per cell; tables below.
+- [x] **S3.2** Record the numbers, the hardware and the ORT build in `BENCHMARKS.md` — replacing
+      upstream's T4 figures rather than repeating them. (2026-09-20) — new section
+      **"Speed — CPU, measured here"**, naming the CPU, its core layout, the `powersave` governor,
+      ORT 1.23.0 and the binding. Upstream's T4 table is kept but demoted to _"upstream's published
+      figures, not measured here"_, the same convention the file already applies to the Jev columns;
+      the Headline row now carries both numbers, and `## Limits` gains the CPU line.
+- [x] **S3.3** **Do not write "CPU-first" anywhere in the README until S3.2 exists.** (2026-09-20) —
+      `grep -rn -i 'cpu[- ]first' README.md docs/ PLAN.md BENCHMARKS.md AGENTS.md` matches only this
+      line. The prohibition never fired because go-laya has not written its own README yet; it stays
+      a standing constraint on **Task 7.5**, where a sub-item now carries it, and S3.2 has now made
+      the honest claim available.
 - [ ] **S3.4** If too slow: evaluate int8 dynamic quantization (typically 2–4×) and/or defaulting the
       Router to mmBERT-base.
+      **(2026-09-20) — the condition fires, and the work moved rather than shrank.** Neither lever
+      is a quick win, and both are mis-scoped as spike items.
+      _int8_ is inseparable from S3.5's calibration requirement, and that needs a labelled eval set
+      and `internal/calib`, neither of which exists before M1 and Task 7.1 — carried to **Task 6.9**.
+      _"Defaulting the Router to mmBERT-base"_ **conflicts with the port's own mandate**: upstream
+      routes by language, not by cost, and M7 asserts end-to-end parity against Python. Measured,
+      mmBERT-base is worth 2.2–2.7× — real, and only ever available as an **opt-in**. Carried to
+      **Task 3.4**.
 - [ ] **S3.5** If int8 is evaluated, measure **ECE and Brier, not just accuracy** — this model's whole
       selling point is calibrated probabilities, and a calibration regression will not show up in an
       argmax test (R4). Never make quantization the default.
+      **(2026-09-20) — not reachable here; inlined into Task 6.9 as its acceptance criterion** rather
+      than reinterpreted into something this spike could have claimed.
+
+**(2026-09-20) Measured** — `internal/onnxspike`, ORT 1.23.0 through
+`shota3506/onnxruntime-purego`, fp32, `CGO_ENABLED=0`, on a 12th Gen Intel Core i7-1255U (2 P + 8 E
+cores, 12 threads, 15 W, `powersave`). p50 in ms, **minimum across three sweeps** — run-to-run
+variation reached 2× on the worst cell, so nothing here is good to better than about ±20%.
+
+One question, `batch=1`, `k=4`, 8 threads:
+
+| tokens | `english` | `multilingual` | `typed-decisions` |
+| ------ | --------- | -------------- | ----------------- |
+| 128    | 374       | 160            | 406               |
+| 512    | 1691      | 645            | 1856              |
+| 1024   | —         | 1484           | 3962              |
+
+Thread scaling at `batch=1`, 512 tokens:
+
+| threads | `english` | `multilingual` | `typed-decisions` |
+| ------- | --------- | -------------- | ----------------- |
+| 1       | 3660      | 1332           | 3730              |
+| 4       | 1871      | 706            | 1937              |
+| 8       | **1691**  | **631**        | **1720**          |
+| 12      | 2269      | 845            | 2130              |
+
+Four consequences:
+
+1. **CPU is a batch workload, not an interactive one.** 0.6–1.9 s per question at the default
+   `max_len` of 512 (`agent.py:256`), against upstream's 33 ms — 9–43× depending on which row you
+   compare, since upstream never states the sequence length behind its figure. D6 records this.
+2. **`IntraOpNumThreads` must be the physical core count, not the thread count.** All 12 costs
+   12–26% against 8 on a part where only 2 of 10 cores have SMT siblings. Task 6.3 owns the default;
+   it must not be `runtime.NumCPU()`.
+3. **Batching buys nothing.** `8×512` costs 1856 ms/question against `1×512`'s 1691 ms for `english`
+   — flat to within noise, where the T4 table shows 32.8 → 7.2 ms/question over the same move. One
+   question at 512 tokens already saturates the cores. 1 → 8 threads is only 2.1–2.2×, which says the
+   same thing: this is bandwidth-bound well before it is core-bound.
+4. **Holding all three checkpoints costs ~3.3 GB.** Measured resident growth per session: 1423 MiB
+   (`english`), 488 MiB (`multilingual`), 1423 MiB (`typed-decisions`), at 1.5–3.2 s to build a
+   session from an already-downloaded file. That is the real constraint on raising the Router's
+   `max_loaded` (Task 3.2.1), and it is cheaper than upstream's "7.4 s median reload on CPU".
+
+**(2026-09-20) The binding costs nothing — and something is unexplained.** Run back-to-back at the
+same thread count and the same thermal state, `batch=1`, 512 tokens, p50:
+
+| checkpoint     | Go + ORT 1.23.0 | Python + ORT 1.30.0 |
+| -------------- | --------------- | ------------------- |
+| `english`      | 1901 ms         | 5064 ms             |
+| `multilingual` | 751 ms          | 849 ms              |
+
+purego's marshalling is therefore not a cost worth worrying about, which is the question this
+cross-check was for. The 2.7× on `english` is **not** a claim that Go is faster than Python — the
+same ONNX Runtime does the arithmetic in both — and it is not explained: the only known difference
+is the runtime version, since the binding speaks C API 23 only while the reference environment has
+1.30.0. It favours our path, so it threatens no claim here, but a 2.7× gap on ModernBERT-large and
+1.1× on mmBERT-base is a shape worth understanding. **Task 6.8** is where it gets chased.
+
+**Exit criteria**
+
+- [x] Latency measured on real hardware and written down where a reader will find it, before any
+      performance claim is made in go-laya's own name. (2026-09-20)
 
 ---
 
@@ -750,6 +839,21 @@ Invariants §5 items 14–18.
 - [ ] **3.3.2** Port section 1 of `test_local_e2e.py:46-67`, which is pure routing — the file states
       outright "No model weights are loaded: `Router.route` is pure."
 
+**Task 3.4: An opt-in cheaper-checkpoint path for CPU deployments.** _(new, 2026-09-20)_
+Spike S3 suggested "defaulting the Router to mmBERT-base" as a latency lever, and the measurement
+backs the size of it: `laya-multilingual` is **2.2–2.7× faster** than either ModernBERT-large
+checkpoint at every shape, and the only one that answers in under a second. But upstream routes by
+language, not by cost, and M7 asserts end-to-end parity against Python — so **changing the default
+is not available**. This task is the honest version of the lever.
+
+- [ ] **3.4.1** Decide whether go-laya offers a cost-biased routing option at all, or simply
+      documents the measured numbers and lets the caller pass `model=` themselves. Cheapest correct
+      answer wins; do not build an option nobody asked for.
+- [ ] **3.4.2** If it is offered: an explicit functional option, never a changed default, and the
+      parity suite runs with it **off** so Task 7.4 keeps meaning what it says.
+- [ ] **3.4.3** Whatever is decided, `BENCHMARKS.md`'s per-checkpoint numbers are the justification
+      and must be cited, not re-derived.
+
 **Milestone check**
 
 - [ ] `lang` + `mailtext` + `presets` + `Route` is a genuinely useful Go library with zero ML
@@ -982,6 +1086,33 @@ Spike S2 proved one forward pass, on one checkpoint, at one shape. M6 owes the r
 - [ ] **6.8.2** Set the tolerance **per checkpoint** from the measured numbers — S1 recorded
       `multilingual` as an order of magnitude looser than the other two — rather than picking one
       global constant.
+- [ ] **6.8.3** _(new, 2026-09-20)_ Explain the S3 timing gap: at a matched thread count and thermal
+      state the same graph ran 2.7× faster under ORT 1.23.0 from Go than under ORT 1.30.0 from
+      Python on `english`, but only 1.1× faster on `multilingual`. Numerics agreed to 3.8e-06, so
+      this is a kernel-selection or version difference, not a correctness one — but it is the kind of
+      difference that turns into a tolerance surprise when the pinned runtime moves (Task 6.6).
+
+**Task 6.9: int8 dynamic quantization — latency and calibration in one task.** _(new, 2026-09-20)_
+Carries Spike S3.4 and S3.5 forward. S3 measured 0.6–1.9 s per question on CPU and the condition for
+"if too slow" fired, but int8 cannot be evaluated on latency alone: **calibrated probabilities are
+the product**, and a calibration regression does not show up in an argmax test (R4). Splitting the
+two halves is how quantization silently becomes the default somewhere, so they stay one task.
+
+**Gated on M1's harness and Task 7.1 (`internal/calib`)** — a labelled eval set and an ECE/Brier
+implementation must exist first. Do not start it before then, and do not narrow it to the latency
+half when they are late.
+
+- [ ] **6.9.1** `onnxruntime.quantization.quantize_dynamic` over all three exports, in the pinned
+      reference environment (`scripts/requirements-ref.txt`), as a `scripts/` flag rather than a
+      one-off — the artefact must be reproducible like every other export.
+- [ ] **6.9.2** Re-run `just bench-onnx` against the quantized graphs and record the speedup in
+      `BENCHMARKS.md` beside the fp32 numbers, on the same hardware. The plan predicts 2–4×; at
+      0.6–1.9 s fp32 that lands at 0.2–0.9 s, so it changes the throughput story and **not** the
+      "interactive needs a GPU" one. Say so rather than letting the multiple imply otherwise.
+- [ ] **6.9.3** Measure **ECE and Brier** against fp32 on the same inputs, per checkpoint and per
+      question type. This is the acceptance criterion, not a follow-up.
+- [ ] **6.9.4** **int8 is never the default.** Ship it, if at all, as an explicit opt-in whose
+      documentation carries 6.9.3's numbers.
 
 ### M7 — Agent, calibration, end-to-end parity
 
@@ -1030,6 +1161,11 @@ Spike S2 proved one forward pass, on one checkpoint, at one shape. M6 owes the r
 - [ ] **7.5.3** Document the deliberate deviations: no training symbols (D3), `repo` always a string
       (Task 3.1.4), `Detection.ScriptProfile` as a map, `instructions` as `string` only.
 - [ ] **7.5.4** Replace upstream's T4 latency claims with the Spike S3 numbers in `BENCHMARKS.md`.
+      **(2026-09-20) — the `BENCHMARKS.md` half is done by S3.2**; what remains here is the README,
+      which still opens with "33 ms" and repeats it six more times.
+- [ ] **7.5.6** Carry S3.3's standing prohibition: go-laya's own README states the **measured** CPU
+      latency and the fact that batching does not amortise it, and does not describe the port as
+      "CPU-first". S3.2 made the honest claim available; this is where it gets made.
 - [ ] **7.5.5** State the tokenizer/checkpoint revisions the port is verified against.
 
 ### M8 — Pure-Go native backend (after 1.0)
@@ -1081,16 +1217,16 @@ The four that cause silent wrong answers rather than loud failures, and therefor
 
 ## 6. Risks
 
-| #   | Risk                                                                                                                                                                                                                                                                                                | Mitigation                                                                                                                                                                                                                                                                   |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| R1  | **Pure-Go tokenizer drift.** Marker positions are token indices, so one off-by-one silently corrupts every decision. Both candidate libraries have demonstrable bugs on exactly laya's paths.                                                                                                       | The `Tokenizer` interface (Task 4.1) keeps the decision reversible. Golden corpus + fuzz + a 100k-line differential run gate M5. If parity cannot be reached, `daulet/tokenizers` (CGO, wraps the same Rust crate Python uses — parity by construction) is a one-day swap.   |
-| R2  | **`torch.onnx.export` fails on ModernBERT-large.** transformers#35545 is still open; no ModernBERT-large ONNX is published anywhere.                                                                                                                                                                | Spike S1 up front. `sevenreasons/laya-onnx-fp16` unblocks development while our exporter is fixed.                                                                                                                                                                           |
-| R3  | **CPU latency ≫ the README's 33 ms.**                                                                                                                                                                                                                                                               | Spike S3 measures before anything is promised. Levers: int8 dynamic quantization, defaulting the Router to mmBERT-base, GPU execution providers.                                                                                                                             |
-| R4  | **int8 quantization wrecks calibration.** This model's whole value is calibrated probabilities.                                                                                                                                                                                                     | Measure ECE and Brier, not accuracy. Never quantize by default.                                                                                                                                                                                                              |
-| R5  | **`onnxruntime-purego` instability.** _(2026-09-20, S2)_ The recorded `AddCleanup` panic is **fixed** upstream. What remains: an unsynchronised `Runtime.Close` racing the GC cleanup path, and a dependency on the untagged HEAD of a 31-star library that says its API may change without notice. | Close every `*Value` explicitly — that removes the race, and `internal/onnxspike` keeps a reproduction under `LAYA_ONNXSPIKE_FINALIZER=1`. `yalue/onnxruntime_go` remains the fallback behind D1's `Backend` seam, at the cost of CGO. New Task 6.6 pins the runtime itself. |
-| R6  | **Upstream tokenizer/transformers version drift** silently changes golden vectors.                                                                                                                                                                                                                  | `TestGoldenProvenance` (Task 1.4); `scripts/requirements-ref.txt` pinned; regeneration is a reviewed diff.                                                                                                                                                                   |
-| R7  | **Supply chain.** laya downloads checkpoints from the Hub; `laya.Open("someone/their-model")` must not be RCE.                                                                                                                                                                                      | Carry the upstream security policy over (Task 0.4): verify ONNX/safetensors headers, ETag/sha checks, no `os/exec` or `encoding/gob` on downloaded artifacts.                                                                                                                |
-| R8  | **Licensing.** This is a derivative of an Apache-2.0 work.                                                                                                                                                                                                                                          | Preserve `LICENSE`, add `NOTICE` with the original copyright and a statement of modification (Task 0.3). Weights are Apache-2.0 and ungated.                                                                                                                                 |
+| #   | Risk                                                                                                                                                                                                                                                                                                | Mitigation                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R1  | **Pure-Go tokenizer drift.** Marker positions are token indices, so one off-by-one silently corrupts every decision. Both candidate libraries have demonstrable bugs on exactly laya's paths.                                                                                                       | The `Tokenizer` interface (Task 4.1) keeps the decision reversible. Golden corpus + fuzz + a 100k-line differential run gate M5. If parity cannot be reached, `daulet/tokenizers` (CGO, wraps the same Rust crate Python uses — parity by construction) is a one-day swap.                                                                                                                                                                                                  |
+| R2  | **`torch.onnx.export` fails on ModernBERT-large.** transformers#35545 is still open; no ModernBERT-large ONNX is published anywhere.                                                                                                                                                                | Spike S1 up front. `sevenreasons/laya-onnx-fp16` unblocks development while our exporter is fixed.                                                                                                                                                                                                                                                                                                                                                                          |
+| R3  | **CPU latency ≫ the README's 33 ms.** _(2026-09-20, S3)_ Confirmed and quantified: 0.6–1.9 s per question at the default 512-token `max_len`, 9–43× the T4 figure. Not fatal — it is the fast end of the predicted band — but it rules out the interactive framing upstream's README uses.          | Measured before anything was promised; `BENCHMARKS.md` now carries the numbers and the hardware, and D6 records the decision. Of the levers listed here, **batching is not one** (measured flat on CPU) and **routing to mmBERT-base cannot be a default** without breaking M7's parity — it becomes opt-in Task 3.4. What is left: int8 (Task 6.9, gated on calibration), a GPU execution provider (Task 6.3.2), and setting `IntraOpNumThreads` correctly, which is free. |
+| R4  | **int8 quantization wrecks calibration.** This model's whole value is calibrated probabilities.                                                                                                                                                                                                     | Measure ECE and Brier, not accuracy. Never quantize by default.                                                                                                                                                                                                                                                                                                                                                                                                             |
+| R5  | **`onnxruntime-purego` instability.** _(2026-09-20, S2)_ The recorded `AddCleanup` panic is **fixed** upstream. What remains: an unsynchronised `Runtime.Close` racing the GC cleanup path, and a dependency on the untagged HEAD of a 31-star library that says its API may change without notice. | Close every `*Value` explicitly — that removes the race, and `internal/onnxspike` keeps a reproduction under `LAYA_ONNXSPIKE_FINALIZER=1`. `yalue/onnxruntime_go` remains the fallback behind D1's `Backend` seam, at the cost of CGO. New Task 6.6 pins the runtime itself.                                                                                                                                                                                                |
+| R6  | **Upstream tokenizer/transformers version drift** silently changes golden vectors.                                                                                                                                                                                                                  | `TestGoldenProvenance` (Task 1.4); `scripts/requirements-ref.txt` pinned; regeneration is a reviewed diff.                                                                                                                                                                                                                                                                                                                                                                  |
+| R7  | **Supply chain.** laya downloads checkpoints from the Hub; `laya.Open("someone/their-model")` must not be RCE.                                                                                                                                                                                      | Carry the upstream security policy over (Task 0.4): verify ONNX/safetensors headers, ETag/sha checks, no `os/exec` or `encoding/gob` on downloaded artifacts.                                                                                                                                                                                                                                                                                                               |
+| R8  | **Licensing.** This is a derivative of an Apache-2.0 work.                                                                                                                                                                                                                                          | Preserve `LICENSE`, add `NOTICE` with the original copyright and a statement of modification (Task 0.3). Weights are Apache-2.0 and ungated.                                                                                                                                                                                                                                                                                                                                |
 
 ---
 
