@@ -102,6 +102,13 @@ dump-stages python=".venv-ref/bin/python":
     {{python}} scripts/dump_stages.py \
         --corpus {{justfile_directory()}}/build/corpus/corpus.jsonl
 
+# Task 4.5.3: the differential itself. Skips unless both the checkpoints and the
+# stage dumps are present, which is why it is a recipe and not part of `just ci`.
+diff-tokenizer out="build/diff-tokenizer.txt":
+    mkdir -p build
+    LAYA_CORPUS="${LAYA_CORPUS:-{{justfile_directory()}}/build/corpus}" \
+        go test -count=1 -timeout 60m -v -run TestDifferentialCorpus ./tokenizer/ \
+        2>&1 | tee {{out}}
 
 # Report known vulnerabilities in the dependency graph
 vuln:
