@@ -5,13 +5,15 @@ These scripts exist to produce artefacts that _are_ checked in (golden vectors u
 `testdata/`) or that are too large to check in (ONNX exports), from the frozen upstream
 Python in `original/`.
 
-| Script                       | Purpose                                                                                | `PLAN.md` |
-| ---------------------------- | -------------------------------------------------------------------------------------- | --------- |
-| `export_onnx.py`             | Export the whole `DecisionModel` graph (encoder + head) to ONNX                        | Spike S1  |
-| `export_onnx.py --fixture`   | One forward pass with inputs, Python-ORT and PyTorch outputs, for the Go binding tests | Spike S2  |
-| `dump_python_parity.py`      | Generate the golden vectors under `testdata/`                                          | Task 1.3  |
-| `crosscheck_transformers.py` | Diff a transformers 4.x build against the pinned 5.17.0                                | Task 1.6  |
-| `requirements-ref.txt`       | The pinned reference environment — **this file is the contract**                       | Task 1.1  |
+| Script                       | Purpose                                                                                | `PLAN.md`  |
+| ---------------------------- | -------------------------------------------------------------------------------------- | ---------- |
+| `export_onnx.py`             | Export the whole `DecisionModel` graph (encoder + head) to ONNX                        | Spike S1   |
+| `export_onnx.py --fixture`   | One forward pass with inputs, Python-ORT and PyTorch outputs, for the Go binding tests | Spike S2   |
+| `dump_python_parity.py`      | Generate the golden vectors under `testdata/`                                          | Task 1.3   |
+| `crosscheck_transformers.py` | Diff a transformers 4.x build against the pinned 5.17.0                                | Task 1.6   |
+| `build_corpus.py`            | Assemble the ~157k-line tokenizer differential corpus into `build/corpus/`             | Task 4.5.3 |
+| `dump_stages.py`             | Run that corpus through the oracle, recording every pipeline stage                     | Task 4.5.3 |
+| `requirements-ref.txt`       | The pinned reference environment — **this file is the contract**                       | Task 1.1   |
 
 ## Regenerating the golden vectors
 
@@ -40,6 +42,38 @@ drifts would produce a corpus that is internally consistent and wrong.
 
 `testdata/*.jsonl` is excluded from `treefmt` (see `treefmt.toml`): the vectors are
 compared byte-for-byte, so nothing may reflow them.
+
+## The tokenizer differential run
+
+```bash
+just corpus          # build/corpus/corpus.jsonl + MANIFEST.json  (first run downloads)
+just dump-stages     # build/corpus/stages_{en,ml}.jsonl.gz
+just diff-tokenizer  # the comparison; per-stage mismatch table
+```
+
+`PLAN.md` task 4.5.3 asks for a one-off differential over ~100k lines of real
+multilingual corpus with mismatches attributed **per stage**, because the residual
+risk after the golden corpora is Unicode-version skew between Go's tables and
+Oniguruma's (R1) and only a large corpus reaches it.
+
+Five streams, and none of them is decoration:
+
+| stream    | lines   | what it is for                                                            |
+| --------- | ------- | ------------------------------------------------------------------------- |
+| `tatoeba` | 100 000 | real sentences across 427 languages — the "real corpus" half              |
+| `probes`  | 20 000  | every Unicode category boundary, combining marks, `NormalizationTest.txt` |
+| `vocab`   | 20 000  | the multilingual checkpoint's own vocabulary, decoded back to text        |
+| `locale`  | 15 235  | gettext catalogues: a register dense in format specifiers and markup      |
+| `added`   | 5 840   | every added token of both checkpoints in 16 whitespace contexts           |
+
+The `added` stream exists because of a sabotage result, not a hunch: with prose
+alone, disabling `lstrip` in `tokenizer/added.go` left the differential entirely
+green. Natural text never contains `[MASK]`, so a prose-only corpus tests the
+added-token stage exactly zero times while appearing to cover it.
+
+Corpus, dumps and results all live under `build/` and none of it is checked in.
+`testdata/` stays the reviewed 103-case corpus: a defect this run finds earns a
+case there, regenerated through `dump_python_parity.py` as its own diff.
 
 ## Checking the transformers major version
 
