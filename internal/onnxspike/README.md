@@ -1,10 +1,11 @@
-# `internal/onnxspike` — Spike S2
+# `internal/onnxspike` — Spikes S2 and S3
 
 Throwaway. **M6 deletes this package** and replaces it with `internal/backend`.
 
-It answers one question `PLAN.md` D2 left open: can the S1 ONNX export be executed from Go
-**without CGO**, and is `github.com/shota3506/onnxruntime-purego` stable enough to build on
-(risk R5)? See §0 D5 for the answer and §3 S2 for the evidence.
+It answers two questions. **S2:** can the S1 ONNX export be executed from Go **without CGO**, and
+is `github.com/shota3506/onnxruntime-purego` stable enough to build on (risk R5)? **S3:** how long
+does one forward pass actually take on a CPU (risk R3)? See §0 D5 and D6 for the answers, and §3 S2
+and S3 for the evidence.
 
 ## Running it
 
@@ -15,6 +16,7 @@ the pipeline never needs model weights.
 ```bash
 just spike-onnx            # both tests, CGO-free
 just spike-onnx-race 200   # the finalizer hunt, under the race detector
+just bench-onnx            # the S3 latency sweep -- about 20 minutes
 ```
 
 | Input              | Default                                       | Override                                |
@@ -33,6 +35,22 @@ Regenerate `testdata/forward_pass.json` with the pinned reference environment
     --suffix=-dynamo --no-check-attn --fixture internal/onnxspike/testdata/forward_pass.json
 just fmt   # prettier owns the file's layout; the generator's is not the committed one
 ```
+
+## Reading the benchmark
+
+`bench-onnx` is two one-dimensional sweeps sharing a corner rather than a cross product: threads vary
+at one fixed shape, shapes vary at one fixed thread count. A full product runs for hours and the
+extra cells say nothing.
+
+Three details that are not decoration:
+
+- **`-benchtime=5x`, not a duration.** An iteration costs 0.15–20 s here, so letting `go test`
+  calibrate `b.N` against a wall clock either overruns the timeout or returns a single sample.
+- **p50 and p90, not the mean.** Upstream quotes p50, and a 15 W part throttles: the gap between the
+  two is itself a result. Run the sweep more than once — run-to-run variation reached **2×** on the
+  worst cell, which is why `BENCHMARKS.md` reports the minimum across three sweeps rather than one.
+- **`BenchmarkSessionLoad` gets one process per checkpoint.** RSS growth is only meaningful the first
+  time a session is built; a shared process reports the second checkpoint as roughly free.
 
 ## Two things worth knowing before M6 reuses any of this
 
