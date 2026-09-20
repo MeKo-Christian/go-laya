@@ -25,7 +25,7 @@ not finished; keep it rare. A milestone is done when every task box under it is 
 | Milestone                                                              | Delivers                                         | Status                 |
 | ---------------------------------------------------------------------- | ------------------------------------------------ | ---------------------- |
 | [M0 — Scaffolding](#m0--scaffolding)                                   | Go module, tooling, CI, frozen Python, `Version` | ✅ 5/6 (0.1 skipped)   |
-| [Spikes S1–S3](#3-spikes--do-these-before-writing-library-code)        | ONNX export, binding choice, latency floor       | 🟡 S1 done, S2/S3 open |
+| [Spikes S1–S3](#3-spikes--do-these-before-writing-library-code)        | ONNX export, binding choice, latency floor       | 🟡 S1+S2 done, S3 open |
 | [M1 — Reference harness](#m1--the-python-reference-harness)            | `testdata/*.jsonl` golden vectors                | 🟡 1.1–1.2 done        |
 | [M2 — Tier-1 core](#m2--tier-1-core-no-ml-runtime-620-lines-of-python) | `jsonx`, `lang`, `mailtext`, `presets`, render   | ⬜ not started         |
 | [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ⬜ not started         |
@@ -43,12 +43,13 @@ useful (see the M3 milestone check).
 
 ## 0. Decisions already made
 
-| #   | Decision                                                                        | Rationale                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| --- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D1  | **ONNX first, pure-Go native backend later**, both behind a `Backend` interface | The entire `DecisionModel.forward` is one static graph — no KV cache, no loop, no control flow — so it exports to a single ONNX file and there is exactly _one_ numerics-parity surface to test. Reimplementing ModernBERT (RoPE, alternating local/global attention, GeGLU) up front is weeks of work before anything runs. In-house precedent: `yalue/onnxruntime_go` in `pogo`, `FlashSR`, `go-autoresearch`, `Emanetics`. |
-| D2  | **Pure-Go tokenizer, no CGO**                                                   | User decision. Keeps the build CGO-free and cross-compilable. This is the single largest correctness risk in the port (see §6 R1) and is therefore front-loaded: golden corpus before implementation.                                                                                                                                                                                                                         |
-| D3  | **Inference only**                                                              | `proper_reward`, `td_lambda_targets` and `collate_items` are RLCD training math a Go port cannot use. Deliberate API narrowing; document it in the README.                                                                                                                                                                                                                                                                    |
-| D4  | **Python moves to `original/`**                                                 | Same pattern as `go-pocket-tts`. Upstream Python is frozen as the parity reference and drives `scripts/dump_python_parity.py`. Also keeps the Apache-2.0 derivative-work attribution honest.                                                                                                                                                                                                                                  |
+| #   | Decision                                                                                           | Rationale                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| --- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | **ONNX first, pure-Go native backend later**, both behind a `Backend` interface                    | The entire `DecisionModel.forward` is one static graph — no KV cache, no loop, no control flow — so it exports to a single ONNX file and there is exactly _one_ numerics-parity surface to test. Reimplementing ModernBERT (RoPE, alternating local/global attention, GeGLU) up front is weeks of work before anything runs. In-house precedent: `yalue/onnxruntime_go` in `pogo`, `FlashSR`, `go-autoresearch`, `Emanetics`.                                                                                                                                                                                                                                                                      |
+| D2  | **Pure-Go tokenizer, no CGO**                                                                      | User decision. Keeps the build CGO-free and cross-compilable. This is the single largest correctness risk in the port (see §6 R1) and is therefore front-loaded: golden corpus before implementation.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| D3  | **Inference only**                                                                                 | `proper_reward`, `td_lambda_targets` and `collate_items` are RLCD training math a Go port cannot use. Deliberate API narrowing; document it in the README.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| D4  | **Python moves to `original/`**                                                                    | Same pattern as `go-pocket-tts`. Upstream Python is frozen as the parity reference and drives `scripts/dump_python_parity.py`. Also keeps the Apache-2.0 derivative-work attribution honest.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| D5  | **`shota3506/onnxruntime-purego` for ONNX, pinned to `8db8bd7`; every `*Value` closed explicitly** | Spike S2. The CGO-free path holds: `CGO_ENABLED=0 go build ./...` passes and the S1 export runs through the binding, agreeing with the Python ORT run to 3.8e-06. R5's `runtime.AddCleanup` panic is fixed upstream (PR #11, merged 2026-03-15); `go-pocket-tts` is pinned two commits short of it. The cost is stated rather than hidden: the binding carries **no tags at all**, so the pin is a pseudo-version of the untagged HEAD of a 31-star library whose README says "APIs may change without notice", and a live data race remains on the finalizer path. `yalue/onnxruntime_go` (719 stars, v1.36.0, cgo) stays the fallback, and D1's `Backend` seam is what keeps the swap contained. |
 
 **D2 has a consequence that needs resolving in Spike S2:** `yalue/onnxruntime_go` requires CGO (it
 `dlopen`s the shared library _through_ cgo). A CGO-free tokenizer paired with a CGO ONNX binding
@@ -56,6 +57,16 @@ gives up the benefit. `go-pocket-tts` already uses `github.com/shota3506/onnxrun
 is CGO-free — but its own PLAN.md records a real defect: _"local ONNX-backed native parity tests can
 panic inside `onnxruntime-purego` with `runtime.AddCleanup`"_. S2 decides between the two; default to
 purego for consistency with D2, fall back to `yalue/onnxruntime_go` if purego proves unstable.
+
+> **(2026-09-20) — answered, and the recorded defect was only half the story.** The panic
+> `go-pocket-tts` hit is upstream PR #11, and it is fixed. Its pin
+> (`v0.0.0-20251207004809-1c85186598a5`) is the last commit before the fix, and at that pin the
+> **first** `NewTensorValue` call panics outright — so its ONNX path is broken on Go 1.24+ rather
+> than flaky. A _different_ defect survives at the fixed HEAD: the package contains no
+> synchronisation at all, and `Runtime.Close` writes `r.apiFuncs = nil` (`runtime.go:178`) while
+> the GC's cleanup goroutine reads it in `releaseValuePtr` (`value.go:152`). The `!= nil` guard
+> there is a data race on a multi-word struct, not a safety net. It is avoidable — see D5 — but it
+> is a standing reason to keep the `Backend` seam honest.
 
 ---
 
@@ -183,6 +194,7 @@ go-laya/
   internal/calib/    softmax, entropy confidence, temperature, py-round
   internal/hub/      HF resolve + local cache
   internal/backend/  Backend interface, ONNX impl, (later) native impl
+  internal/onnxspike/ Spike S2 only; M6 deletes it
   cmd/laya/          optional CLI
   scripts/dump_python_parity.py
   scripts/export_onnx.py
@@ -198,7 +210,7 @@ layout, where `import laya` drags in torch.
 
 ## 3. Spikes — do these before writing library code
 
-These can invalidate the plan. Budget 1–2 days total. **Status:** S1 ✅ · S2 ⬜ · S3 ⬜
+These can invalidate the plan. Budget 1–2 days total. **Status:** S1 ✅ · S2 ✅ · S3 ⬜
 
 ### Spike S1: Does `torch.onnx.export` survive the full `DecisionModel`?
 
@@ -296,17 +308,93 @@ ourselves or export our own.
 
 ### Spike S2: Which ONNX binding — and does CGO-free hold?
 
-- [ ] **S2.1** Write a throwaway Go program that loads the S1 export and runs one forward pass with
-      `shota3506/onnxruntime-purego`, built with `CGO_ENABLED=0`.
-- [ ] **S2.2** Record whether the `runtime.AddCleanup` panic `go-pocket-tts` hit reproduces — run it
+> **(2026-09-20) — done. Purego holds, but not for the reason the risk register gave.** R5's
+> `runtime.AddCleanup` panic is fixed upstream and was never going to be the deciding factor. The
+> defect that _is_ still live is one nobody had written down: the binding uses **no synchronisation
+> anywhere**, so a `*Value` left to the garbage collector races `Runtime.Close`. Closing every value
+> explicitly removes it entirely, which is what D5 records as a rule rather than a hope.
+>
+> The second surprise is a toolchain one: **`CGO_ENABLED=0 go test -race` is refused** — the race
+> detector needs cgo. The two halves of D2's claim are therefore two separate commands, and S2.1's
+> wording ("built with `CGO_ENABLED=0`") cannot be satisfied in the same run as S2.2's.
+
+- [x] **S2.1** Write a throwaway Go program that loads the S1 export and runs one forward pass with
+      `shota3506/onnxruntime-purego`, built with `CGO_ENABLED=0`. (2026-09-20) — a test package,
+      `internal/onnxspike/`, not a `main`: `-race` in a loop is the only way S2.2's defect shows,
+      and the repo's env-gated test idiom keeps it out of CI. M6 deletes the package.
+      `CGO_ENABLED=0 go test -count=1 -run TestForwardPass ./internal/onnxspike/` → `PASS (1.25s)`,
+      `ONNX Runtime 1.23.0 (C API 23) from /usr/local/lib/libonnxruntime.so`.
+- [x] **S2.2** Record whether the `runtime.AddCleanup` panic `go-pocket-tts` hit reproduces — run it
       under `-race` and in a loop, since it is a finalizer race and will not show on a single pass.
+      (2026-09-20) — **it reproduces at `go-pocket-tts`'s pin and is gone at ours**, but a data race
+      takes its place. See the table below.
 - [ ] **S2.3** If it reproduces, repeat S2.1 with `yalue/onnxruntime_go` and record in this file that
       D2's CGO-free promise covers **the tokenizer only**.
-- [ ] **S2.4** Pin the chosen binding _and_ the ORT shared-library version (R7 requires a pinned ORT);
-      note how the library is located at runtime.
-- [ ] **S2.5** Write the decision, with the evidence, into §0 as D5.
+      **(2026-09-20) — not needed; the condition did not fire.** Left open rather than struck out:
+      the surviving race is a real reason this may still be revisited, and `yalue/onnxruntime_go`
+      was confirmed to be the healthier project on every non-CGO axis — MIT, 719 stars, tagged
+      through v1.36.0, commits in August and September 2026, against an untagged 31-star repo last
+      pushed 2026-03-15. If the swap ever happens, D2's promise narrows to the tokenizer.
+- [x] **S2.4** Pin the chosen binding _and_ the ORT shared-library version (R7 requires a pinned ORT);
+      note how the library is located at runtime. (2026-09-20) — `go list -m all`:
+      `github.com/shota3506/onnxruntime-purego v0.0.0-20260315223538-8db8bd7424b2` and
+      `github.com/ebitengine/purego v0.9.0`. The binding has no tags, so a pseudo-version is the only
+      pin there is. ORT is pinned by C API version, not by file: `supportedAPIVersions = []uint32{23}`
+      is the whole list the binding implements, so it is **ONNX Runtime 1.23.x or nothing** — measured
+      here against `libonnxruntime.so.1.23.0`. Resolution order is `LAYA_ORT_LIB`, then
+      `ORT_LIBRARY_PATH`, then `/usr/local/lib`, `/usr/lib`, `/usr/lib/x86_64-linux-gnu` and the
+      Homebrew paths; a variable that is set but points nowhere is an error, not a fallback.
+      **Acquiring** a pinned `.so` is not solved and is new Task 6.6.
+- [x] **S2.5** Write the decision, with the evidence, into §0 as D5. (2026-09-20)
 
-**Exit criteria:** one forward pass green on the chosen binding, with the CGO answer recorded.
+**(2026-09-20) Measured — `internal/onnxspike`, `english` checkpoint, ORT 1.23.0, fp32,
+`batch=1 seq=16 k=3`.** The fixture holds one input with both the Python-ORT and the PyTorch
+outputs, so the two error sources stay separable. Scaled difference is `|got−want| / max(1, |want|)`,
+because `logits` carries the `-1e4` `masked_fill` sentinel while `act_logits` comes out in the
+thousands.
+
+| Output       | vs Python ORT 1.30.0 | vs PyTorch |
+| ------------ | -------------------- | ---------- |
+| `logits`     | 3.8e-06              | 3.2e-06    |
+| `act_logits` | 2.4e-07              | 1.9e-07    |
+
+Three consequences:
+
+1. **The ORT version skew is a non-event.** The graph was validated in Python under onnxruntime
+   1.30.0 and executed here under 1.23.0; IR 10 / opset 18 sit far inside both. The
+   Go-vs-Python-ORT difference is the same order as the ONNX-vs-PyTorch difference S1 measured.
+2. **`marker_mask` — a `bool` tensor — round-trips correctly.** Nothing in-house had ever passed one
+   through this binding; `go-pocket-tts` only ever used `float32` and `int64`. The check is
+   discriminating rather than decorative: flipping the fixture's one `false` to `true` moves
+   `logits[2]` from `-10000` to `0.688`, a scaled difference of **1.0** against a tolerance of 1e-4.
+3. **The session must be created from a path.** The exports are split into a graph file plus an
+   `.onnx.data` blob that ORT resolves relative to the model path, so `NewSessionFromReader` cannot
+   load them.
+
+**(2026-09-20) The finalizer question, S2.2, in full.**
+
+| Binding commit                   | Scenario                           | Result                                                                                                                     |
+| -------------------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `1c85186598a5` (go-pocket-tts's) | any `NewTensorValue`               | `panic: runtime.AddCleanup: cleanup function closes over ptr, cleanup will never run` on the **first** call, `value.go:35` |
+| `8db8bd7424b2` (ours)            | values closed, `-race -count=500`  | green                                                                                                                      |
+| `8db8bd7424b2` (ours)            | values abandoned, `-race -count=1` | `WARNING: DATA RACE` — `releaseValuePtr` (`value.go:152`) against `Runtime.Close` (`runtime.go:178`)                       |
+
+The panic is deterministic, not intermittent, which means **`go-pocket-tts`'s ONNX path does not
+work at all on Go 1.24+**, not merely in parity tests — its `-skip 'TestParity_.*_VsONNX'` workaround
+hides a hard failure. Worth telling them; it is a one-line `go get` away from being fixed.
+
+The surviving race needs a value that is dropped without `Close`, because `Close` calls
+`cleanup.Stop()` and takes the finalizer out of play. That is why D5 makes explicit closing a rule
+and not a recommendation, and why the reproduction is checked in behind `LAYA_ONNXSPIKE_FINALIZER=1`
+rather than deleted: M6 has to keep satisfying it.
+
+**Exit criteria**
+
+- [x] One forward pass green on the chosen binding, with the CGO answer recorded. (2026-09-20) — and
+      compared against both Python runtimes rather than merely returning two tensors. The CGO answer:
+      `CGO_ENABLED=0 go build ./...` and `CGO_ENABLED=0 go test ./internal/onnxspike/` both pass, so
+      **D2's CGO-free promise survives the ONNX backend**. The one caveat is the toolchain's, not the
+      binding's — `-race` implies cgo, so the race runs are a separate command.
 
 ### Spike S3: Latency on real hardware
 
@@ -862,6 +950,39 @@ and is larger than the ONNX-vs-PyTorch error on the other two checkpoints.
 - [ ] **6.5.3** If it does not, set the M7 parity tolerance from the measured eager-vs-sdpa gap
       **per checkpoint** and say so in the test, rather than picking a round number.
 
+**Task 6.6: Acquire and pin the ONNX Runtime shared library.** _(new, 2026-09-20)_
+R7 requires a pinned runtime, and S2.4 could only pin half of it: `go.mod` pins the binding, and the
+binding pins the _C API version_ (`supportedAPIVersions = []uint32{23}` — 1.23.x or nothing), but
+nothing pins the `.so` itself. No in-house repo solves this; `go-pocket-tts` is bring-your-own
+(`docs/INSTALL.md:9-33`), with the version appearing only in a developer's local settings file.
+
+- [ ] **6.6.1** Decide between documenting a bring-your-own library and shipping a verified
+      download — `pockettts-tools model download-onnx --sha256` is the in-house precedent.
+- [ ] **6.6.2** Verify the resolved library's version at startup rather than inferring it from the
+      filename, and fail with a named error when the C API version does not match.
+- [ ] **6.6.3** Reuse `internal/onnxspike`'s resolution chain: `LAYA_ORT_LIB`, `ORT_LIBRARY_PATH`,
+      then platform candidates; a variable that is set but points nowhere is an error, not a
+      fallback.
+
+**Task 6.7: Decide the Windows and js/wasm story for the ONNX backend.** _(new, 2026-09-20)_
+`release.yml` builds `windows/amd64`, but `go-pocket-tts` stubs purego out on Windows and js/wasm
+entirely (`internal/onnx/runner_windows.go`, `runner_wasm.go`). Spike S2 inherited that constraint
+rather than testing it, so today the honest claim is "untested", not "unsupported".
+
+- [ ] **6.7.1** Establish whether `purego.Dlopen` actually works on Windows with ORT 1.23, or only
+      that nobody has tried.
+- [ ] **6.7.2** Either support it or ship a stub that fails with a named error, and say which in the
+      README. Task 6.3.4's build-tag split is where it belongs.
+
+**Task 6.8: Go-vs-Python ONNX Runtime parity across the whole matrix.** _(new, 2026-09-20)_
+Spike S2 proved one forward pass, on one checkpoint, at one shape. M6 owes the rest.
+
+- [ ] **6.8.1** All three checkpoints at S1's four shapes, against fixtures generated by
+      `scripts/export_onnx.py --fixture`.
+- [ ] **6.8.2** Set the tolerance **per checkpoint** from the measured numbers — S1 recorded
+      `multilingual` as an order of magnitude looser than the other two — rather than picking one
+      global constant.
+
 ### M7 — Agent, calibration, end-to-end parity
 
 **Task 7.1: `internal/calib`.** Invariants §5 items 22–29.
@@ -960,16 +1081,16 @@ The four that cause silent wrong answers rather than loud failures, and therefor
 
 ## 6. Risks
 
-| #   | Risk                                                                                                                                                                                          | Mitigation                                                                                                                                                                                                                                                                 |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| R1  | **Pure-Go tokenizer drift.** Marker positions are token indices, so one off-by-one silently corrupts every decision. Both candidate libraries have demonstrable bugs on exactly laya's paths. | The `Tokenizer` interface (Task 4.1) keeps the decision reversible. Golden corpus + fuzz + a 100k-line differential run gate M5. If parity cannot be reached, `daulet/tokenizers` (CGO, wraps the same Rust crate Python uses — parity by construction) is a one-day swap. |
-| R2  | **`torch.onnx.export` fails on ModernBERT-large.** transformers#35545 is still open; no ModernBERT-large ONNX is published anywhere.                                                          | Spike S1 up front. `sevenreasons/laya-onnx-fp16` unblocks development while our exporter is fixed.                                                                                                                                                                         |
-| R3  | **CPU latency ≫ the README's 33 ms.**                                                                                                                                                         | Spike S3 measures before anything is promised. Levers: int8 dynamic quantization, defaulting the Router to mmBERT-base, GPU execution providers.                                                                                                                           |
-| R4  | **int8 quantization wrecks calibration.** This model's whole value is calibrated probabilities.                                                                                               | Measure ECE and Brier, not accuracy. Never quantize by default.                                                                                                                                                                                                            |
-| R5  | **`onnxruntime-purego` instability** — `go-pocket-tts` hit a `runtime.AddCleanup` panic in parity tests.                                                                                      | Spike S2 reproduces or clears it; `yalue/onnxruntime_go` is the fallback, at the cost of CGO.                                                                                                                                                                              |
-| R6  | **Upstream tokenizer/transformers version drift** silently changes golden vectors.                                                                                                            | `TestGoldenProvenance` (Task 1.4); `scripts/requirements-ref.txt` pinned; regeneration is a reviewed diff.                                                                                                                                                                 |
-| R7  | **Supply chain.** laya downloads checkpoints from the Hub; `laya.Open("someone/their-model")` must not be RCE.                                                                                | Carry the upstream security policy over (Task 0.4): verify ONNX/safetensors headers, ETag/sha checks, no `os/exec` or `encoding/gob` on downloaded artifacts.                                                                                                              |
-| R8  | **Licensing.** This is a derivative of an Apache-2.0 work.                                                                                                                                    | Preserve `LICENSE`, add `NOTICE` with the original copyright and a statement of modification (Task 0.3). Weights are Apache-2.0 and ungated.                                                                                                                               |
+| #   | Risk                                                                                                                                                                                                                                                                                                | Mitigation                                                                                                                                                                                                                                                                   |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R1  | **Pure-Go tokenizer drift.** Marker positions are token indices, so one off-by-one silently corrupts every decision. Both candidate libraries have demonstrable bugs on exactly laya's paths.                                                                                                       | The `Tokenizer` interface (Task 4.1) keeps the decision reversible. Golden corpus + fuzz + a 100k-line differential run gate M5. If parity cannot be reached, `daulet/tokenizers` (CGO, wraps the same Rust crate Python uses — parity by construction) is a one-day swap.   |
+| R2  | **`torch.onnx.export` fails on ModernBERT-large.** transformers#35545 is still open; no ModernBERT-large ONNX is published anywhere.                                                                                                                                                                | Spike S1 up front. `sevenreasons/laya-onnx-fp16` unblocks development while our exporter is fixed.                                                                                                                                                                           |
+| R3  | **CPU latency ≫ the README's 33 ms.**                                                                                                                                                                                                                                                               | Spike S3 measures before anything is promised. Levers: int8 dynamic quantization, defaulting the Router to mmBERT-base, GPU execution providers.                                                                                                                             |
+| R4  | **int8 quantization wrecks calibration.** This model's whole value is calibrated probabilities.                                                                                                                                                                                                     | Measure ECE and Brier, not accuracy. Never quantize by default.                                                                                                                                                                                                              |
+| R5  | **`onnxruntime-purego` instability.** _(2026-09-20, S2)_ The recorded `AddCleanup` panic is **fixed** upstream. What remains: an unsynchronised `Runtime.Close` racing the GC cleanup path, and a dependency on the untagged HEAD of a 31-star library that says its API may change without notice. | Close every `*Value` explicitly — that removes the race, and `internal/onnxspike` keeps a reproduction under `LAYA_ONNXSPIKE_FINALIZER=1`. `yalue/onnxruntime_go` remains the fallback behind D1's `Backend` seam, at the cost of CGO. New Task 6.6 pins the runtime itself. |
+| R6  | **Upstream tokenizer/transformers version drift** silently changes golden vectors.                                                                                                                                                                                                                  | `TestGoldenProvenance` (Task 1.4); `scripts/requirements-ref.txt` pinned; regeneration is a reviewed diff.                                                                                                                                                                   |
+| R7  | **Supply chain.** laya downloads checkpoints from the Hub; `laya.Open("someone/their-model")` must not be RCE.                                                                                                                                                                                      | Carry the upstream security policy over (Task 0.4): verify ONNX/safetensors headers, ETag/sha checks, no `os/exec` or `encoding/gob` on downloaded artifacts.                                                                                                                |
+| R8  | **Licensing.** This is a derivative of an Apache-2.0 work.                                                                                                                                                                                                                                          | Preserve `LICENSE`, add `NOTICE` with the original copyright and a statement of modification (Task 0.3). Weights are Apache-2.0 and ungated.                                                                                                                                 |
 
 ---
 
