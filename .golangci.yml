@@ -52,6 +52,14 @@ linters:
       excludes:
         - G115
 
+    # laya's JSON is snake_case throughout (`act_logits`, `marker_pos`, and every shape in
+    # docs/API.md), and byte-for-byte parity with the Python output is the point of the
+    # port. camelCase tags would be a deviation, not a style preference.
+    tagliatelle:
+      case:
+        rules:
+          json: snake
+
     revive:
       rules:
         - name: file-length-limit
