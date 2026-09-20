@@ -22,11 +22,18 @@ git diff --stat testdata/     # review it; this is never a drive-by
 ```
 
 Eight JSONL files, one header record per file carrying the `transformers` /
-`tokenizers` / `numpy` / `safetensors` versions, the Hub revision and a sha256 of
-each `tokenizer_config.json`. `TestGoldenProvenance` fails the whole suite if a
-header drifts from what the Go port targets (R6).
+`tokenizers` / `numpy` / `safetensors` versions, the Hub revision, a sha256 of
+each `tokenizer_config.json`, and a `compute` block naming the device, dtype,
+attention implementation and thread count the numbers came from.
+`TestGoldenProvenance` fails the whole suite if any of it drifts from what the Go
+port targets (R6) — §8's "within 1e-4 of PyTorch" is a claim about one specific
+run, and D7 is the cautionary case for what a single changed input does to it.
 
 Seven of the eight need no model weights — only `logits.jsonl` loads a checkpoint.
+A full `--all` run takes about three and a half minutes, nearly all of it the
+three checkpoint builds behind `logits.jsonl`; the other seven take some seven
+seconds together, and `--fixture` regenerates one at a time. Peak RSS is about
+3 GB, one checkpoint at a time.
 `--verify-agent` additionally checks the generator's inlined copy of
 `agent.py:294-343` against a real `laya.Agent.system_one` run, because a copy that
 drifts would produce a corpus that is internally consistent and wrong.
