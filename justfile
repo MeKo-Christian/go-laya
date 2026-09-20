@@ -44,7 +44,15 @@ cover:
 # Ensure go.mod/go.sum are tidy
 check-tidy:
     go mod tidy
-    git diff --exit-code go.mod go.sum
+    # Not `git diff --exit-code go.mod go.sum`: that errors out when go.sum does not
+    # exist yet, and it cannot see a go.sum that `go mod tidy` has just created.
+    # --porcelain covers modified, created and deleted alike.
+    if [ -n "$(git status --porcelain -- go.mod go.sum)" ]; then \
+        git status --short -- go.mod go.sum; \
+        git diff -- go.mod go.sum; \
+        echo "go.mod/go.sum are not tidy - run 'go mod tidy' and commit the result"; \
+        exit 1; \
+    fi
 
 # Report known vulnerabilities in the dependency graph
 vuln:
