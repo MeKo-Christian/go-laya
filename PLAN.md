@@ -22,18 +22,18 @@ safetensors backend landing later behind the same interface.
 Tick a box only when the work is committed and `just check` is green. `[~]` means started but
 not finished; keep it rare. A milestone is done when every task box under it is ticked.
 
-| Milestone                                                              | Delivers                                         | Status               |
-| ---------------------------------------------------------------------- | ------------------------------------------------ | -------------------- |
-| [M0 — Scaffolding](#m0--scaffolding)                                   | Go module, tooling, CI, frozen Python, `Version` | ✅ 5/6 (0.1 skipped) |
-| [Spikes S1–S3](#3-spikes--do-these-before-writing-library-code)        | ONNX export, binding choice, latency floor       | ⬜ not started       |
-| [M1 — Reference harness](#m1--the-python-reference-harness)            | `testdata/*.jsonl` golden vectors                | ⬜ not started       |
-| [M2 — Tier-1 core](#m2--tier-1-core-no-ml-runtime-620-lines-of-python) | `jsonx`, `lang`, `mailtext`, `presets`, render   | ⬜ not started       |
-| [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ⬜ not started       |
-| [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | ⬜ not started       |
-| [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ⬜ not started       |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | ⬜ not started       |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started       |
-| [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred          |
+| Milestone                                                              | Delivers                                         | Status                 |
+| ---------------------------------------------------------------------- | ------------------------------------------------ | ---------------------- |
+| [M0 — Scaffolding](#m0--scaffolding)                                   | Go module, tooling, CI, frozen Python, `Version` | ✅ 5/6 (0.1 skipped)   |
+| [Spikes S1–S3](#3-spikes--do-these-before-writing-library-code)        | ONNX export, binding choice, latency floor       | 🟡 S1 done, S2/S3 open |
+| [M1 — Reference harness](#m1--the-python-reference-harness)            | `testdata/*.jsonl` golden vectors                | 🟡 1.1–1.2 done        |
+| [M2 — Tier-1 core](#m2--tier-1-core-no-ml-runtime-620-lines-of-python) | `jsonx`, `lang`, `mailtext`, `presets`, render   | ⬜ not started         |
+| [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ⬜ not started         |
+| [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | ⬜ not started         |
+| [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ⬜ not started         |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | ⬜ not started         |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started         |
+| [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred            |
 
 **Critical path:** S1 → S2 → M1 → M4 → M5 → M6 → M7. M2 and M3 are independent of every spike and of
 the tokenizer, so they can proceed in parallel with the spikes and are the fastest route to something
@@ -198,7 +198,7 @@ layout, where `import laya` drags in torch.
 
 ## 3. Spikes — do these before writing library code
 
-These can invalidate the plan. Budget 1–2 days total. **Status:** S1 ⬜ · S2 ⬜ · S3 ⬜
+These can invalidate the plan. Budget 1–2 days total. **Status:** S1 ✅ · S2 ⬜ · S3 ⬜
 
 ### Spike S1: Does `torch.onnx.export` survive the full `DecisionModel`?
 
@@ -208,23 +208,77 @@ ModernBERT decorates functions with `torch.compile`, which `torch.onnx.export(dy
 (huggingface/transformers#35545, still open). `optimum` works around it with a
 `DisableCompileContextManager` and by forcing `attn_implementation="eager"`.
 
-- [ ] **S1.1** Write `scripts/export_onnx.py`; build the model with `reference_compile=False` **and**
-      `attn_implementation="eager"`.
-- [ ] **S1.2** Export at opset ≥ 17 with dynamic axes `{batch, seq}` for `input_ids`/`attention_mask`
-      and `{batch, k}` for `marker_pos`/`marker_mask`.
-- [ ] **S1.3** Verify the tail exports: `torch.gather`, `topk(2)`, `masked_fill(-1e4)`. Try
-      `dynamo=True` if it does not.
-- [ ] **S1.4** Reproduce the manual head loop (§1.3), not `nn.TransformerEncoder.forward`, and confirm
-      the head FFN activation in the exported graph is **ReLU**.
-- [ ] **S1.5** Repeat for **all three** checkpoints. No ModernBERT-_large_ ONNX exists on
-      `onnx-community` — only base variants are published, so large is unproven.
-- [ ] **S1.6** Record the working export recipe (flags, opset, `torch`/`transformers`/`onnx` versions)
-      in `scripts/export_onnx.py`'s header and in this file.
+> **(2026-09-20) — done. The premise above turned out to be wrong, twice over.**
+> transformers 5.17.0 has no `torch.compile` left in `modeling_modernbert.py` at all —
+> `reference_compile` survives only as a key `ModernBertConfig.to_dict` pops for backwards
+> compatibility — so #35545 never fires and the **encoder traces straight through**. What
+> actually blocks the export is the **decision head**: `nn.TransformerEncoderLayer` dispatches
+> to the fused `aten::_transformer_encoder_layer_fwd` in eval mode, and that op has no ONNX
+> symbolic. `norm_first=True` does not disable it (the fused path takes `norm_first` as an
+> argument); `torch.backends.mha.set_fastpath_enabled(False)` does, and is the first condition
+> `why_not_sparsity_fast_path` tests.
+>
+> The second blocker is worse because it is silent: the legacy TorchScript exporter **freezes
+> the sequence length**. transformers' mask builder resolves a Python `bool` on
+> `attention_mask.shape[-1]` (`masking_utils.py:213`), emits a `TracerWarning`, and carries on.
+> The resulting file loads and runs perfectly at the traced length and fails in ORT at every
+> other one. `dynamo=True` at **opset 18** keeps the axis dynamic. Opset 17 under dynamo
+> produces a graph ORT refuses to load — the 18→17 downconversion leaves `Split` carrying its
+> opset-18 `num_outputs` attribute.
+
+- [x] **S1.1** Write `scripts/export_onnx.py`; build the model with `reference_compile=False` **and**
+      `attn_implementation="eager"`. (2026-09-20) — the exporter replicates `build_model`
+      rather than calling it, because `common.py:129` hardcodes `attn_implementation="sdpa"`.
+      `reference_compile` is set only when the attribute exists, so the script still works
+      against a 4.x reference environment.
+- [x] **S1.2** Export at opset ≥ 17 with dynamic axes `{batch, seq}` for `input_ids`/`attention_mask`
+      and `{batch, k}` for `marker_pos`/`marker_mask`. (2026-09-20) — **opset 18, `dynamo=True`.**
+      Under TorchScript the `seq` axis silently freezes; see the note above.
+- [x] **S1.3** Verify the tail exports: `torch.gather`, `topk(2)`, `masked_fill(-1e4)`. Try
+      `dynamo=True` if it does not. (2026-09-20) — the whole tail exports on both exporters;
+      none of those three ops was ever the problem. `dynamo=True` was needed anyway, for `seq`.
+      It requires `onnxscript`, which was missing from Task 1.1.2's install list.
+- [x] **S1.4** Reproduce the manual head loop (§1.3), not `nn.TransformerEncoder.forward`, and confirm
+      the head FFN activation in the exported graph is **ReLU**. (2026-09-20) — the manual loop
+      comes for free by exporting `DecisionModel.forward` itself. Op counts in the exported
+      graph: `Relu` 2 (the two head layers), `Gelu` 0, `Erf` 30 / 24 (encoder GeGLU + `scorer` + `act_head`), `Tanh` 0. Confirmed on all three.
+- [x] **S1.5** Repeat for **all three** checkpoints. No ModernBERT-_large_ ONNX exists on
+      `onnx-community` — only base variants are published, so large is unproven. (2026-09-20) —
+      all three export and validate; ModernBERT-large is no longer unproven.
+- [x] **S1.6** Record the working export recipe (flags, opset, `torch`/`transformers`/`onnx` versions)
+      in `scripts/export_onnx.py`'s header and in this file. (2026-09-20) — recipe in the script's
+      module docstring and in `scripts/README.md`; measured numbers in the table below.
+
+**(2026-09-20) Measured — `scripts/export_onnx.py --all --dynamo`.** Reference environment
+`python 3.12.4 · torch 2.14.0+cpu · transformers 5.17.0 · onnx 1.23.0 · onnxruntime 1.30.0 ·
+onnxscript 0.7.2`, checkpoints `convaiinnovations/laya @ 1c5edc17a7acd8701df6fc341c0d179f1c62c982`.
+Max abs difference vs PyTorch, fp32, over four input shapes (traced; then a different `seq`,
+`k` and `batch` in turn):
+
+| Checkpoint      | Params (excl. buffers) | File    | `logits` worst | `act_logits` worst | eager vs sdpa (`logits`) |
+| --------------- | ---------------------- | ------- | -------------- | ------------------ | ------------------------ |
+| english         | 421,293,827            | 1688 MB | 6.4e-05        | 2.0e-03            | 1.0e-06                  |
+| multilingual    | 321,908,995            | 1290 MB | **4.9e-04**    | **8.4e-02**        | **5.1e-05**              |
+| typed-decisions | 421,293,827            | 1688 MB | 6.1e-06        | 4.2e-03            | 1.5e-06                  |
+
+Three things in that table are load-bearing later:
+
+1. **`multilingual` is an order of magnitude looser than the other two** on `logits` and two
+   orders on `act_logits`. Any M6/M7 parity tolerance has to be per-checkpoint, not global.
+2. **`act_logits` is always far looser than `logits`.** It sits downstream of a softmax, an
+   entropy and a `topk(2)` difference (`common.py:119-123`), so small logit differences are
+   amplified before `act_head` ever sees them. The `logits` figure is the one that matters for
+   answer parity; `act_logits` only drives the act/abstain head.
+3. **Upstream runs `sdpa`; this exports `eager`** because S1.1 says so. On `multilingual` the
+   two differ by 5.1e-05, which sets a floor on how close the Go port can get to golden vectors
+   generated from the Python. See the new Task 6.5.
 
 **Exit criteria**
 
-- [ ] Three `.onnx` files load in ORT and produce `logits`/`act_logits` for a batch.
-- [ ] Max abs logit diff vs PyTorch recorded per checkpoint.
+- [x] Three `.onnx` files load in ORT and produce `logits`/`act_logits` for a batch.
+      (2026-09-20) — and at three shapes beyond the traced one. A same-shape check passes on
+      the TorchScript export too, which is exactly how a frozen `seq` axis would have reached M6.
+- [x] Max abs logit diff vs PyTorch recorded per checkpoint. (2026-09-20) — see the table above.
 
 **Fallback if export fails:** a third-party export already exists — `sevenreasons/laya-onnx-fp16`
 (Apache-2.0, 846 MB, inputs `input_ids i64[B,S]`, `attention_mask i64[B,S]`, `marker_pos i64[B,K]`,
@@ -235,6 +289,10 @@ ourselves or export our own.
 
 - [ ] **S1.F** (only if S1 fails) Pull the third-party export, verify its I/O signature and logit diff
       ourselves, mark it dev-only in code, and open a tracking issue to replace it.
+      **(2026-09-20) — not needed; S1 succeeded.** Left open rather than struck out: both
+      artefacts were confirmed to exist, ungated and Apache-2.0, but **both cover only the
+      English checkpoint**, so neither would have unblocked `multilingual` or `typed-decisions`.
+      Our own export is also tighter than `sevenreasons/laya-onnx-fp16`'s claimed 0.00416.
 
 ### Spike S2: Which ONNX binding — and does CGO-free hold?
 
@@ -399,11 +457,22 @@ uv pip install transformers safetensors huggingface_hub numpy onnx onnxruntime
 uv pip freeze > scripts/requirements-ref.txt   # the versions ARE part of the contract
 ```
 
-- [ ] **1.1.1** Create `.venv-ref` with Python 3.12 and the CPU torch wheel.
-- [ ] **1.1.2** Install `transformers safetensors huggingface_hub numpy onnx onnxruntime`.
-- [ ] **1.1.3** Freeze to `scripts/requirements-ref.txt` and commit it — the versions are the contract.
-- [ ] **1.1.4** Add `.venv-ref/` to `.gitignore`.
-- [ ] **1.1.5** Document the regeneration command in `scripts/README.md` so it survives the next person.
+- [x] **1.1.1** Create `.venv-ref` with Python 3.12 and the CPU torch wheel. (2026-09-20) —
+      python 3.12.4, torch 2.14.0+cpu.
+- [x] **1.1.2** Install `transformers safetensors huggingface_hub numpy onnx onnxruntime`.
+      (2026-09-20) — **plus `onnxscript`**, which this list is missing and which
+      `torch.onnx.export(dynamo=True)` imports. Spike S1 cannot run without it.
+- [x] **1.1.3** Freeze to `scripts/requirements-ref.txt` and commit it — the versions are the contract.
+      (2026-09-20) — 41 pins. A bare `uv pip freeze` does not produce a restorable lock here:
+      `torch==2.14.0+cpu` is not on PyPI, and uv's default first-index-wins finds plain `torch`
+      there and stops rather than consulting the extra index. The file carries a hand-written
+      header with the extra index, and `--index-strategy unsafe-best-match` has to go on the
+      command line because uv rejects it inside a requirements file. Restore verified into a
+      clean venv, not assumed.
+- [x] **1.1.4** Add `.venv-ref/` to `.gitignore`. (2026-09-20) — already done in M0 Task 0.7.
+- [x] **1.1.5** Document the regeneration command in `scripts/README.md` so it survives the next person.
+      (2026-09-20) — `scripts/README.md`. No template to copy: `../go-pocket-tts/scripts/` has
+      neither a README nor a pinned requirements file.
 
 **Task 1.2: Fetch the checkpoints.** ~2.4 GB, anonymous, no token:
 
@@ -412,11 +481,27 @@ export LAYA_MODELS=${LAYA_MODELS:-$HOME/laya_models}
 python -c "from huggingface_hub import snapshot_download as d; d('convaiinnovations/laya', local_dir='$LAYA_MODELS/laya')"
 ```
 
-- [ ] **1.2.1** Download all three checkpoints to `$LAYA_MODELS` (549 GB free on `/mnt/projekte`).
-- [ ] **1.2.2** Record the resolved commit sha of the Hub repo — golden vectors are only meaningful
-      against a known revision.
-- [ ] **1.2.3** Confirm the three `temperature` dtypes (F32/F32/F16, §1.1) so the loader never
-      hardcodes one.
+- [x] **1.2.1** Download all three checkpoints to `$LAYA_MODELS` (549 GB free on `/mnt/projekte`).
+      (2026-09-20) — 2.3 GB into `./models/laya` (user's call; `/models/` is already gitignored).
+      `model.safetensors` 843 MB / 644 MB / 843 MB.
+- [x] **1.2.2** Record the resolved commit sha of the Hub repo — golden vectors are only meaningful
+      against a known revision. (2026-09-20) — `1c5edc17a7acd8701df6fc341c0d179f1c62c982`, written
+      to `models/PROVENANCE.json` **at download time**. That timing is not incidental:
+      `laya.Agent.__init__` calls `_fix_tokenizer_config` (`original/laya/agent.py:21-46`), which
+      rewrites `tokenizer/tokenizer_config.json` in place, so the local tree stops matching the
+      recorded revision the first time the Python loads a model.
+- [x] **1.2.3** Confirm the three `temperature` dtypes (F32/F32/F16, §1.1) so the loader never
+      hardcodes one. (2026-09-20) — confirmed from the safetensors headers, no torch needed:
+      english F32, multilingual F32, typed-decisions F16. In the first two it is the **only**
+      F32 tensor in the file (1 of 206 / 1 of 170).
+- [x] **1.2.4** _(new)_ Keep the downloaded tree out of the tooling walks. (2026-09-20) —
+      `markdownlint` globs the filesystem, not git, so `just lint-md` started failing on
+      `models/laya/README.md`, which is upstream's file and not ours to fix. `--ignore models`
+      in the `justfile`, `"models/**"` in `treefmt.toml`.
+- [x] **1.2.5** _(new)_ Cover ONNX external data in `.gitignore`. (2026-09-20) — `*.onnx` does
+      **not** match `*.onnx.data`, and the dynamo export of ModernBERT-large is over the 2 GB
+      protobuf limit and splits exactly that way, leaving a 1.7 GB blob untracked and addable.
+      Added `*.onnx.data`, `*.onnx_data` and `/build/`.
 
 **Task 1.3: `scripts/dump_python_parity.py`.** Modelled on `../go-pocket-tts/scripts/dump_python_parity.py`.
 Emits into `testdata/`, and records `transformers.__version__` / `tokenizers.__version__` in every
@@ -444,6 +529,25 @@ parity regresses.
 - [ ] **1.4.1** A Go constant naming the targeted `tokenizers` version.
 - [ ] **1.4.2** `TestGoldenProvenance` reads every `testdata/*.jsonl` header and fails on a mismatch.
 - [ ] **1.4.3** The test also fails if a `testdata` file is missing its header entirely.
+
+**Task 1.5: Lint the harness.** _(new, 2026-09-20)_ `original/**` is excluded from `treefmt`
+and the repo has no Python formatter, so `scripts/*.py` is the one part of the tree nothing
+checks. That was acceptable when `scripts/` was empty and is not now.
+
+- [ ] **1.5.1** Add `ruff format` and `ruff check` to `treefmt.toml` over `scripts/*.py`, leaving
+      `original/**` excluded — reformatting the parity reference would make every diff against
+      upstream unreadable.
+- [ ] **1.5.2** Pin the `ruff` version in CI the way the other formatters are pinned.
+
+**Task 1.6: Cross-check the transformers major version.** _(new, 2026-09-20)_ The reference
+environment resolved to **transformers 5.17.0**. Upstream declares `transformers>=4.45.0` with no
+upper bound, so that is legal, but laya 0.3.4 predates 5.x. `load_state_dict(strict=True)` passing
+proves the _parameter set_ matches; it says nothing about numerics.
+
+- [ ] **1.6.1** Build the same checkpoint under a 4.x environment and diff the logits against
+      5.17.0 on a fixed batch, **before** Task 1.3 freezes any golden vector.
+- [ ] **1.6.2** If they differ beyond float noise, pin the reference environment to the major
+      version upstream was written against and re-freeze `scripts/requirements-ref.txt`.
 
 **Exit criteria**
 
@@ -744,6 +848,19 @@ type Batch struct {
 - [ ] **6.4.3** Fail with a wrapped `ErrIncompatibleCheckpoint` naming what was wrong.
 - [ ] **6.4.4** Validate the ONNX/safetensors header **before** handing the bytes to the runtime, and
       never `os/exec` or `encoding/gob` a downloaded artifact (R7, Task 0.4's deferred item).
+
+**Task 6.5: Decide which attention implementation the shipped export uses.** _(new, 2026-09-20)_
+Spike S1 exports with `attn_implementation="eager"` because S1.1 says to. Upstream runs `sdpa`
+(`original/laya/common.py:134`), and on `multilingual` the two differ by 5.1e-05 in `logits` —
+which is a floor on how close the Go port can get to golden vectors generated from the Python,
+and is larger than the ONNX-vs-PyTorch error on the other two checkpoints.
+
+- [ ] **6.5.1** Try `dynamo=True` with `attn_implementation="sdpa"`; the dynamo exporter may
+      handle `scaled_dot_product_attention` where TorchScript would not.
+- [ ] **6.5.2** If sdpa exports, make it the default and re-measure — the export should match the
+      reference path, not merely be close to it.
+- [ ] **6.5.3** If it does not, set the M7 parity tolerance from the measured eager-vs-sdpa gap
+      **per checkpoint** and say so in the test, rather than picking a round number.
 
 ### M7 — Agent, calibration, end-to-end parity
 
