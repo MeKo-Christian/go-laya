@@ -49,7 +49,11 @@ jobs:
       # manifest audit: it reports only vulnerabilities on code paths this module can
       # actually reach, so it does not fail on a CVE in an unused corner of a dependency.
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        # Pinned like every other tool here: `@latest` was the one unpinned entry in a
+        # workflow whose stated policy is that a new release never turns green into red
+        # without a commit in this repo. Dependabot does not track `go install` lines, so
+        # bump it by hand.
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
       - name: Audit reachable code paths
         run: govulncheck ./...
 

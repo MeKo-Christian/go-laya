@@ -13,6 +13,11 @@
 # moves the fewest lines while still being enforced rather than aspirational.
 line-length = 100
 target-version = "py312"
+# The same version ci.yml installs (RUFF_VERSION). treefmt --fail-on-change compares
+# bytes, so a local ruff that formats differently passes here and fails in CI; better
+# to fail loudly at the first `just fmt`. Upgrade with `uv tool install ruff==0.16.8`
+# or `pip install ruff==0.16.8`.
+required-version = "==0.16.8"
 
 # Frozen upstream, and the two reference virtualenvs (task 1.1 / task 1.6).
 extend-exclude = ["original", ".venv-ref", ".venv-ref4"]
