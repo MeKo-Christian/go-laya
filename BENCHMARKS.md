@@ -178,6 +178,15 @@ least-throttled estimate, and the one that is hardest on the conclusion drawn be
 formality: run-to-run variation reached **2×** on the worst cell, so no single figure here is good to
 better than about ±20%.
 
+**Raw transcripts.** The `go test -bench` output behind these tables is checked in under
+`docs/benchmarks/raw/`, so the numbers are reproducible from the repository rather than from one
+laptop's `build/` directory (PLAN.md §8 forbids inheriting upstream's unreproducible
+`research/results/*.json`). `bench-onnx-sweep-a.txt` and `bench-onnx-sweep-b.txt` are two full sweeps
+with the shape axis at 8 threads; `bench-onnx-threads12.txt` is an earlier sweep with the shape axis at
+12 threads, which is where the "all hardware threads is the wrong setting" finding first showed. The
+third 8-thread sweep's transcript was overwritten by the recipe's default output path before it was
+copied, so only its p50s survive, in the tables.
+
 ### One question — batch 1, 4 options, 8 threads
 
 | tokens | `laya` (english) | `laya-multilingual` | `laya-typed-decisions` |

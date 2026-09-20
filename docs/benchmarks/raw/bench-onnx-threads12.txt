@@ -1,0 +1,107 @@
+goos: linux
+goarch: amd64
+pkg: github.com/MeKo-Christian/go-laya/internal/onnxspike
+cpu: 12th Gen Intel(R) Core(TM) i7-1255U
+BenchmarkForward
+    bench_test.go:231: ONNX Runtime 1.23.0 (C API 23) from /usr/local/lib/libonnxruntime.so, GOMAXPROCS=11
+BenchmarkForward/english
+BenchmarkForward/english/threads=1
+BenchmarkForward/english/threads=1/b1_s512_k4
+BenchmarkForward/english/threads=1/b1_s512_k4-11         	       5	4066889311 ns/op	      3835 p50_ms	      5282 p90_ms
+BenchmarkForward/english/threads=2
+BenchmarkForward/english/threads=2/b1_s512_k4
+BenchmarkForward/english/threads=2/b1_s512_k4-11         	       5	2278453313 ns/op	      2294 p50_ms	      2429 p90_ms
+BenchmarkForward/english/threads=4
+BenchmarkForward/english/threads=4/b1_s512_k4
+BenchmarkForward/english/threads=4/b1_s512_k4-11         	       5	2185463350 ns/op	      2206 p50_ms	      2347 p90_ms
+BenchmarkForward/english/threads=6
+BenchmarkForward/english/threads=6/b1_s512_k4
+BenchmarkForward/english/threads=6/b1_s512_k4-11         	       5	1910725090 ns/op	      1912 p50_ms	      1970 p90_ms
+BenchmarkForward/english/threads=8
+BenchmarkForward/english/threads=8/b1_s512_k4
+BenchmarkForward/english/threads=8/b1_s512_k4-11         	       5	2213810417 ns/op	      2067 p50_ms	      2882 p90_ms
+BenchmarkForward/english/threads=12
+BenchmarkForward/english/threads=12/b1_s128_k4
+BenchmarkForward/english/threads=12/b1_s128_k4-11        	       5	 528819944 ns/op	       516.3 p50_ms	       647.4 p90_ms
+BenchmarkForward/english/threads=12/b1_s256_k4
+BenchmarkForward/english/threads=12/b1_s256_k4-11        	       5	1023398972 ns/op	      1007 p50_ms	      1137 p90_ms
+BenchmarkForward/english/threads=12/b1_s512_k4
+BenchmarkForward/english/threads=12/b1_s512_k4-11        	       5	2538681329 ns/op	      2558 p50_ms	      3567 p90_ms
+BenchmarkForward/english/threads=12/b8_s128_k4
+BenchmarkForward/english/threads=12/b8_s128_k4-11        	       5	5215903933 ns/op	      4607 p50_ms	      8609 p90_ms
+BenchmarkForward/english/threads=12/b8_s512_k4
+BenchmarkForward/english/threads=12/b8_s512_k4-11        	       5	18104054398 ns/op	     16299 p50_ms	     22711 p90_ms
+BenchmarkForward/english/threads=12/b1_s512_k20
+BenchmarkForward/english/threads=12/b1_s512_k20-11       	       5	3606086183 ns/op	      2638 p50_ms	      7207 p90_ms
+BenchmarkForward/multilingual
+BenchmarkForward/multilingual/threads=1
+BenchmarkForward/multilingual/threads=1/b1_s512_k4
+BenchmarkForward/multilingual/threads=1/b1_s512_k4-11    	       5	1634994788 ns/op	      1547 p50_ms	      1949 p90_ms
+BenchmarkForward/multilingual/threads=2
+BenchmarkForward/multilingual/threads=2/b1_s512_k4
+BenchmarkForward/multilingual/threads=2/b1_s512_k4-11    	       5	1323691972 ns/op	      1148 p50_ms	      2344 p90_ms
+BenchmarkForward/multilingual/threads=4
+BenchmarkForward/multilingual/threads=4/b1_s512_k4
+BenchmarkForward/multilingual/threads=4/b1_s512_k4-11    	       5	 878662172 ns/op	       732.1 p50_ms	      1402 p90_ms
+BenchmarkForward/multilingual/threads=6
+BenchmarkForward/multilingual/threads=6/b1_s512_k4
+BenchmarkForward/multilingual/threads=6/b1_s512_k4-11    	       5	 693023677 ns/op	       680.9 p50_ms	       734.2 p90_ms
+BenchmarkForward/multilingual/threads=8
+BenchmarkForward/multilingual/threads=8/b1_s512_k4
+BenchmarkForward/multilingual/threads=8/b1_s512_k4-11    	       5	 631420826 ns/op	       630.9 p50_ms	       671.7 p90_ms
+BenchmarkForward/multilingual/threads=12
+BenchmarkForward/multilingual/threads=12/b1_s128_k4
+BenchmarkForward/multilingual/threads=12/b1_s128_k4-11   	       5	 258546736 ns/op	       249.6 p50_ms	       314.1 p90_ms
+BenchmarkForward/multilingual/threads=12/b1_s256_k4
+BenchmarkForward/multilingual/threads=12/b1_s256_k4-11   	       5	 380840285 ns/op	       391.2 p50_ms	       412.2 p90_ms
+BenchmarkForward/multilingual/threads=12/b1_s512_k4
+BenchmarkForward/multilingual/threads=12/b1_s512_k4-11   	       5	 990414547 ns/op	       979.3 p50_ms	      1042 p90_ms
+BenchmarkForward/multilingual/threads=12/b1_s1024_k4
+BenchmarkForward/multilingual/threads=12/b1_s1024_k4-11  	       5	2063940254 ns/op	      2023 p50_ms	      2357 p90_ms
+BenchmarkForward/multilingual/threads=12/b8_s128_k4
+BenchmarkForward/multilingual/threads=12/b8_s128_k4-11   	       5	2005376847 ns/op	      1888 p50_ms	      2494 p90_ms
+BenchmarkForward/multilingual/threads=12/b8_s512_k4
+BenchmarkForward/multilingual/threads=12/b8_s512_k4-11   	       5	6393927571 ns/op	      6214 p50_ms	      7517 p90_ms
+BenchmarkForward/multilingual/threads=12/b1_s512_k20
+BenchmarkForward/multilingual/threads=12/b1_s512_k20-11  	       5	 861731621 ns/op	       796.1 p50_ms	      1010 p90_ms
+BenchmarkForward/typed-decisions
+BenchmarkForward/typed-decisions/threads=1
+BenchmarkForward/typed-decisions/threads=1/b1_s512_k4
+BenchmarkForward/typed-decisions/threads=1/b1_s512_k4-11 	       5	3816194743 ns/op	      3730 p50_ms	      4199 p90_ms
+BenchmarkForward/typed-decisions/threads=2
+BenchmarkForward/typed-decisions/threads=2/b1_s512_k4
+BenchmarkForward/typed-decisions/threads=2/b1_s512_k4-11 	       5	2353833336 ns/op	      2370 p50_ms	      2571 p90_ms
+BenchmarkForward/typed-decisions/threads=4
+BenchmarkForward/typed-decisions/threads=4/b1_s512_k4
+BenchmarkForward/typed-decisions/threads=4/b1_s512_k4-11 	       5	2751497260 ns/op	      2870 p50_ms	      3215 p90_ms
+BenchmarkForward/typed-decisions/threads=6
+BenchmarkForward/typed-decisions/threads=6/b1_s512_k4
+BenchmarkForward/typed-decisions/threads=6/b1_s512_k4-11 	       5	2058920349 ns/op	      2036 p50_ms	      2217 p90_ms
+BenchmarkForward/typed-decisions/threads=8
+BenchmarkForward/typed-decisions/threads=8/b1_s512_k4
+BenchmarkForward/typed-decisions/threads=8/b1_s512_k4-11 	       5	1729833385 ns/op	      1720 p50_ms	      1814 p90_ms
+BenchmarkForward/typed-decisions/threads=12
+BenchmarkForward/typed-decisions/threads=12/b1_s128_k4
+BenchmarkForward/typed-decisions/threads=12/b1_s128_k4-11         	       5	 738847331 ns/op	       675.9 p50_ms	       918.1 p90_ms
+BenchmarkForward/typed-decisions/threads=12/b1_s256_k4
+BenchmarkForward/typed-decisions/threads=12/b1_s256_k4-11         	       5	1204730331 ns/op	      1204 p50_ms	      1247 p90_ms
+BenchmarkForward/typed-decisions/threads=12/b1_s512_k4
+BenchmarkForward/typed-decisions/threads=12/b1_s512_k4-11         	       5	3027910292 ns/op	      2656 p50_ms	      3960 p90_ms
+BenchmarkForward/typed-decisions/threads=12/b1_s1024_k4
+BenchmarkForward/typed-decisions/threads=12/b1_s1024_k4-11        	       5	4718958684 ns/op	      4651 p50_ms	      4912 p90_ms
+BenchmarkForward/typed-decisions/threads=12/b8_s128_k4
+BenchmarkForward/typed-decisions/threads=12/b8_s128_k4-11         	       5	4864393059 ns/op	      4164 p50_ms	      6529 p90_ms
+BenchmarkForward/typed-decisions/threads=12/b8_s512_k4
+BenchmarkForward/typed-decisions/threads=12/b8_s512_k4-11         	       5	32909524910 ns/op	     23539 p50_ms	     66375 p90_ms
+BenchmarkForward/typed-decisions/threads=12/b1_s512_k20
+BenchmarkForward/typed-decisions/threads=12/b1_s512_k20-11        	       5	3445155096 ns/op	      2994 p50_ms	      4891 p90_ms
+BenchmarkSessionLoad
+    bench_test.go:323: ONNX Runtime 1.23.0 (C API 23) from /usr/local/lib/libonnxruntime.so, GOMAXPROCS=11
+BenchmarkSessionLoad/english
+BenchmarkSessionLoad/english-11                                   	       5	1813409866 ns/op	      1384 rss_MiB
+BenchmarkSessionLoad/multilingual
+BenchmarkSessionLoad/multilingual-11                              	       5	 833373035 ns/op	       477.7 rss_MiB
+BenchmarkSessionLoad/typed-decisions
+BenchmarkSessionLoad/typed-decisions-11                           	       5	1709864012 ns/op	      1411 rss_MiB
+PASS
+ok  	github.com/MeKo-Christian/go-laya/internal/onnxspike	996.925s
