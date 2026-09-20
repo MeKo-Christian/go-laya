@@ -104,6 +104,14 @@ linters:
       # Internal packages return their own errors; wrapping is the public API's job.
       - linters: [wrapcheck]
         path: ^internal/
+      # presets/ is verbatim upstream data: instruction and criterion strings
+      # reproduced from original/laya/presets.py, where changing a word changes
+      # the prompt and therefore the answers. Option keys repeat across the five
+      # taxonomies -- "other" is in three of them -- but they are unrelated
+      # labels that happen to coincide, so folding them into one constant would
+      # invite reuse and make the data harder to audit against upstream.
+      - linters: [goconst]
+        path: ^presets/
 
 severity:
   default: warn
