@@ -72,16 +72,16 @@ Numbered checklist. Each item cites the line that defines it.
 - otherwise → `english`, `"English Latin text"`
 
 45. All five `RouteDecision` keys are always present. `detection` is the `analyse()` result **only** on the detection path and `None` on the model/task/workflow/lang paths; `workflow` is `None` on the model/task paths but carries the detected workflow name on the **lang and detection** paths even though it did not drive the decision (L256-290).
-46. **Deviation to decide:** the auto-workflow branch sets `repo=self.models["typed-decisions"]` — the raw `(repo, subfolder)` tuple — while every other branch uses `_repo_str()` and yields a string (L266 vs L256/261/272/289). Through `json.dumps` this surfaces as a JSON array instead of a string. **Recommendation: always emit the string, and note the deviation in the Go docs.**
+46. **Deviation, decided (2026-09-20, M3: always emit the string):** the auto-workflow branch sets `repo=self.models["typed-decisions"]` — the raw `(repo, subfolder)` tuple — while every other branch uses `_repo_str()` and yields a string (L266 vs L256/261/272/289). Through `json.dumps` this surfaces as a JSON array instead of a string. **Recommendation: always emit the string, and note the deviation in the Go docs.** _Done: `decideByWorkflow` uses `ModelSpec.String()` like every other branch. It is on Task 7.5's README list, and Task 7.6.3 is where a caller first sees it, in `Predict`'s `routing` block._
 47. `_repo_str`: `"repo/sub"` when a subfolder is set, else `"repo"`; a plain string spec passes through unchanged, so a local-path override like `/tmp/ml` survives (L51-54, test_router.py:216-231).
 
 **Router lifecycle (router.py:144-238)**
 
 48. `max_loaded = max(1, int(max_loaded))` (L160).
-49. `_order` is least-recently-used **first**. `load` appends on a miss and touches on a hit; `_evict` pops from the front while `len(_order) > max_loaded`, then reconciles `_agents` against `_order` (L169-195, tests 192-209).
-50. `attach` registers the agent, touches it, and raises `max_loaded` to `len(self._agents)` so the LRU cannot immediately evict it (L197-208, tests 259-270). It accepts aliases.
+49. `_order` is least-recently-used **first**. `load` appends on a miss and touches on a hit; `_evict` pops from the front while `len(_order) > max_loaded`, then reconciles `_agents` against `_order` (L169-195, tests 192-209). _(2026-09-20, M3: Go additionally **closes** the evicted agent — upstream's drop-and-refcount frees nothing here — and has no counterpart for the reconciliation pass, because one map and one slice cannot drift the way two dicts can.)_
+50. `attach` registers the agent, touches it, and raises `max_loaded` to `len(self._agents)` so the LRU cannot immediately evict it (L197-208, tests 259-270). It accepts aliases. _(2026-09-20, M3: **upstream's own test for the raise is vacuous** — `test_router.py:264` checks `max_loaded >= 1` on a cap-1 router holding one attached agent, true however attach behaves. The raise is only observable with a second agent; a port can drop it and leave the whole suite green.)_
 51. `preload` raises `max_loaded` to `max(max_loaded, len(names), len(_agents))` before building, and skips names that are already resident (L218-222).
-52. `unload()` with no argument clears everything; with a name it removes just that one (L225-234).
+52. `unload()` with no argument clears everything; with a name it removes just that one (L225-234). _(2026-09-20, M3: `Unload` closes what it drops and returns an error, where Python returns nothing. Only agents the Router's loader built are closed; an attached one belongs to the caller.)_
 53. `Router.predict` returns the `system_one` payload with `result["routing"] = dict(decision)` added (L305-308); `system_one` is an alias of `predict` (L311).
 
 **`lang` (lang.py)**

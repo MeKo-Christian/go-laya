@@ -277,13 +277,18 @@ func sortedKeys[V any](m map[string]V) []string {
 //
 // # Cost
 //
-// Routing is by language, as upstream, not by cost. Spike S3 measured
-// laya-multilingual at 2.2-2.7x the speed of either ModernBERT-large
-// checkpoint and the only one that answers in under a second on CPU; the
-// per-checkpoint numbers are in BENCHMARKS.md. There is deliberately no
-// cost-biased routing option (PLAN.md task 3.4.1): changing the default would
-// break the end-to-end parity M7 asserts, and a caller who wants the cheap
-// checkpoint can say so with ForModel("multilingual").
+// Routing is by language, as upstream, not by cost -- but the checkpoints do
+// not cost the same. At the 512-token max_len a caller who tunes nothing gets,
+// BENCHMARKS.md measures one CPU question at 645 ms on laya-multilingual
+// against 1691 ms on laya and 1856 ms on laya-typed-decisions, and
+// multilingual is the only one of the three that answers in under a second.
+//
+// There is deliberately no cost-biased routing option (PLAN.md task 3.4.1).
+// Changing the default would break the end-to-end parity M7 asserts, and a
+// caller who wants the cheap checkpoint can already say so with
+// ForModel("multilingual") -- so an option would add a second way to express
+// what one already expresses, and a second thing for the parity suite to hold
+// off.
 type Router struct {
 	mu sync.Mutex
 

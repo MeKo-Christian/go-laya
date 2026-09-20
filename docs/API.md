@@ -281,7 +281,14 @@ type ModelSpec struct {
 	Subfolder string // "" for the repo root
 }
 
-func (s ModelSpec) String() string // reproduces router._repo_str
+func (s ModelSpec) String() string   // reproduces router._repo_str
+func ModelSpecFromString(repo string) ModelSpec // the bare-repo / local-path form
+
+func DefaultModels() map[string]ModelSpec    // copies: the bundle registry
+func StandaloneModels() map[string]ModelSpec // copies: the per-checkpoint repos
+
+func NormalizeModelName(name string) (string, error)           // router.normalise_name
+func MatchTypedDecisionsWorkflow(qs Questions) (string, bool)   // exact id-set equality
 
 // Detection is emitted inside the routing payload, so ScriptProfile's key order
 // is observable there. It is ordered, not a map.
@@ -291,6 +298,10 @@ func (s ModelSpec) String() string // reproduces router._repo_str
 // (lang.py:116 seeds counts with {"latin": 0}). "latin last" is detect_script's
 // order (invariant #56) and belongs to a different function; the two genuinely
 // differ and cannot be collapsed. PLAN Task 2.2.7 carried the same error.
+//
+// Declared in lang and re-exported at the root as `type Detection =
+// lang.Detection` (added 2026-09-20, M3). An alias, not a second struct: lang
+// owns it, and redeclaring would repeat the mistake D11 records.
 //
 // The struct tags below are illustrative: the implementation carries a
 // MarshalJSON, which makes them dead. Byte-parity with Python goes through
@@ -330,27 +341,48 @@ func NewRouter(opts ...RouterOption) (*Router, error)
 // and needs no context.
 func (r *Router) Route(state State, qs Questions, ro ...RouteOption) (RouteDecision, error)
 
-func (r *Router) Predict(ctx context.Context, state State, qs Questions, ro ...RouteOption) (*Result, error)
-func (r *Router) SystemOne(ctx context.Context, state State, qs Questions, ro ...RouteOption) (*Result, error) // alias, router.py:311
-func (r *Router) Load(ctx context.Context, name string) (*Agent, error)
+// Agent is an interface, not a struct, and today carries only Close(). The
+// Router caches agents and must release what it evicts; that is the whole of
+// what it asks of one. M7 widens it with SystemOne (PLAN D13). Corrected
+// 2026-09-20 (M3): this block used to say *Agent, which M3 could not build
+// against because the concrete agent arrives in M6/M7.
+func (r *Router) Load(ctx context.Context, name string) (Agent, error)
 func (r *Router) MaxLoaded() int
 func (r *Router) SetMaxLoaded(n int) // clamped to >= 1; the upstream tests mutate it after construction
-func (r *Router) Attach(name string, a *Agent) error
+func (r *Router) Attach(name string, a Agent) error
 func (r *Router) Preload(ctx context.Context, names ...string) error
-func (r *Router) Unload(names ...string)
 func (r *Router) Loaded() []string // LRU order, least-recent first
+
+// Unload and Close release what they drop -- eviction too. Python drops the
+// agent from two dicts and lets refcounting free it, which in Go frees nothing
+// and leaks an ORT session. Unload therefore returns an error where Python
+// returns nothing (PLAN tasks 3.2.4-3.2.6). Only agents the Router's own loader
+// built are closed; an attached one belongs to the caller.
+func (r *Router) Unload(names ...string) error
 func (r *Router) Close() error
+
+// Deferred to M7 (PLAN Task 7.6): they call agent.system_one, so they need the
+// widened Agent and the Result type.
+func (r *Router) Predict(ctx context.Context, state State, qs Questions, ro ...RouteOption) (*Result, error)
+func (r *Router) SystemOne(ctx context.Context, state State, qs Questions, ro ...RouteOption) (*Result, error) // alias, router.py:311
 
 type RouterOption func(*routerConfig) error
 
 func WithModels(m map[string]ModelSpec) RouterOption
-func WithRouterDevice(d string) RouterOption
-func WithRouterToken(tok string) RouterOption
 func WithMaxLoaded(n int) RouterOption          // clamped to >= 1
 func WithDefaultModel(name string) RouterOption // default "english"
 func WithAutoTaskDetection(on bool) RouterOption
 func WithStandaloneRepos(on bool) RouterOption
-func WithLoader(fn func(context.Context, string, ModelSpec) (*Agent, error)) RouterOption // testability
+
+// WithLoader is required until M6 lands the default loader; without it Load
+// returns ErrNoLoader. It is also the seam the upstream LRU tests need, which
+// monkeypatch Router.load (test_router.py:177).
+func WithLoader(fn func(context.Context, string, ModelSpec) (Agent, error)) RouterOption
+
+// Deferred to M6 (PLAN Task 6.11): they configure the agent builder, and until
+// there is one they would store values nothing reads.
+func WithRouterDevice(d string) RouterOption
+func WithRouterToken(tok string) RouterOption // falls back to $HF_TOKEN
 
 type RouteOption func(*routeRequest)
 

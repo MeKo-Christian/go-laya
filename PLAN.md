@@ -28,7 +28,7 @@ not finished; keep it rare. A milestone is done when every task box under it is 
 | [Spikes S1–S3](#3-spikes--do-these-before-writing-library-code)        | ONNX export, binding choice, latency floor       | 🟢 S1–S3 done                  |
 | [M1 — Reference harness](#m1--the-python-reference-harness)            | `testdata/*.jsonl` golden vectors                | ✅ done                        |
 | [M2 — Tier-1 core](#m2--tier-1-core-no-ml-runtime-620-lines-of-python) | `jsonx`, `lang`, `mailtext`, `presets`, render   | 🟢 2.1–2.4 done; 2.5.4 partial |
-| [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ⬜ not started                 |
+| [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ✅ done                        |
 | [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | 🟡 4.1–4.4 done; 4.5.3 open    |
 | [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ⬜ not started                 |
 | [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | ⬜ not started                 |
@@ -62,6 +62,7 @@ depends only on `lang` and fills the idle time during M4's differential runs.
 | D9  | **`backend` is a public leaf package**                                                                    | Review of 2026-09-20. D5's "swap to `yalue/onnxruntime_go`" seam is only real for users if `Backend` and `Batch` are importable, and `docs/API.md`'s `WithBackend` took an internal type. `backend/` holds the interface and the batch struct with zero dependencies; `internal/backend/onnx/` holds the ORT implementation. Under purego nothing "links ONNX symbols" — the binding `dlopen`s at `Open` — so the §8 no-ML-dependency check is `go list -deps ./lang ./mailtext ./presets ./backend` containing no `onnxruntime-purego`. The root package is allowed to depend on the binding.                                                                                                                                                                                                        |
 | D11 | **The question types live in a leaf `question/`, re-exported at the root**                                | Review of 2026-09-20 (M2). §2 put `question.go` at the root, but Task 2.4.2 makes `presets` import those types and D9's own check requires `go list -deps ./presets` to stay free of the ONNX binding — which D9 equally allows the **root** package to pull in. Root-resident types put every preset one import edge from the runtime, so the check would start failing the moment M6 lands, for a reason nothing in M2 would explain. The types move to `question/`; the root file holds **type aliases only**, so `laya.ChoiceQuestion` is the same type under the documented name and the public API is unchanged.                                                                                                                                                                                |
 | D12 | **`jsonx.Marshal` is the outer encoder wherever Python parity matters**                                   | Review of 2026-09-20 (M2). `encoding/json` runs `compact()` over whatever a `MarshalJSON` returns, so passing a `jsonx.Obj` through `json.Marshal` — directly, or by embedding it in a struct `json.Marshal` handles — strips the `", "` and `": "` separators again and silently undoes `jsonx`. A `MarshalJSON` that only ever reaches `encoding/json` is decoration. This is why Task 2.2.7's acceptance ("`json.Marshal(RouteDecision)` byte-equal to Python") is unreachable as written, and it constrains every later emitter: Task 7.3's byte comparison, `Answer.MarshalJSON`, `Probs`, `RouteDecision`. Pinned by `TestEncodingJSONCompactsMarshalerOutput`.                                                                                                                                 |
+| D13 | **The Router caches an `Agent` interface, widened in M7**                                                 | M3. `docs/API.md` declares `Router.Load`, `Attach` and `WithLoader` in terms of `*Agent`, and `Agent` is an M6/M7 type — so M3 could not be built as written. What the Router actually asks of an agent is _release_: it caches them, evicts the least recently used, and must close what it drops. So `Agent` is an interface carrying `Close() error`, and M7 widens it with `SystemOne`. Upstream's own LRU tests never build a real agent either — `_Stub` at `test_router.py:167-172` is a bare object — so an interface is also what makes them portable, through `WithLoader`. The cost is stated rather than hidden: widening an interface breaks any third-party implementor, which is acceptable pre-1.0 and is why the widening is named here rather than discovered in M7.                |
 
 **D2 has a consequence that needs resolving in Spike S2:** `yalue/onnxruntime_go` requires CGO (it
 `dlopen`s the shared library _through_ cgo). A CGO-free tokenizer paired with a CGO ONNX binding
@@ -248,7 +249,11 @@ go-laya/
 ```
 
 `lang`, `mailtext`, `presets` and `backend` have **no dependency on the runtime**, so a user who only
-wants routing or email cleaning never loads ONNX Runtime. That is the biggest structural win over the
+wants email cleaning or language detection never loads ONNX Runtime. _(2026-09-20, M3: this sentence
+used to say "routing", and routing is the one thing it does not cover. `router.go` is at the root by
+this very layout, and D9 allows the root to depend on the binding, so from M6 a routing-only importer
+gains a build-graph edge to `onnxruntime-purego`. It still never `dlopen`s the library — that happens
+in `Open` — and §8's check never included the root. The claim is narrowed, not the layout.)_ That is the biggest structural win over the
 Python layout, where `import laya` drags in torch. Under purego nothing is _linked_ — the binding
 `dlopen`s the library inside `Open` — so the testable form of the claim is
 `go list -deps ./lang ./mailtext ./presets ./backend` containing no `onnxruntime-purego` (D9) — in
@@ -1078,42 +1083,113 @@ Invariants §5 items 14–18.
 
 ### M3 — Router (pure, no weights, no network)
 
+**Status: done** (2026-09-20). Landed as six commits from `3d7fe08`. Evidence: `just ci` exit 0
+(treefmt clean, markdownlint clean, `go test -race ./...` ok on all ten packages, golangci-lint 0
+issues, check-tidy clean); `go test -race -count=10 .` ok;
+`go list -deps ./lang ./mailtext ./presets ./jsonx ./question` names no `onnxruntime-purego`;
+cross-builds green on linux/{amd64,arm64}, darwin/arm64, windows/amd64 and under `CGO_ENABLED=0`;
+the package's tests pass under `env -i`, so nothing here needs Python or weights. Two pieces of the
+declared router surface are deferred with reasons, to Task 6.11 and Task 7.6.
+
 **Task 3.1: `RouteDecision` + model registry.** Invariants §5 items 39–47.
 
-- [ ] **3.1.1** `RouteDecision` struct with JSON tags plus `Map() Obj` for callers who want the dict.
-- [ ] **3.1.2** The model registry (names → `ModelSpec{repo, subfolder, …}`).
-- [ ] **3.1.3** Port the route precedence and the exact reason strings.
-- [ ] **3.1.4** **Deviation:** `router.py:266` emits `repo` as a raw `(repo, subfolder)` tuple on the
+- [x] **3.1.1** `RouteDecision` struct with JSON tags plus `Map() Obj` for callers who want the dict.
+      (2026-09-20) — five keys always present in Python's insertion order; `MarshalJSON` goes through
+      `jsonx.Marshal` per D12, and `TestRouteDecisionMarshalledByEncodingJSONIsCompacted` pins why it
+      must.
+- [x] **3.1.2** The model registry (names → `ModelSpec{repo, subfolder, …}`). (2026-09-20) —
+      `ModelSpec{Repo, Subfolder}` collapses upstream's tuple-or-string union, so `_split` has no
+      counterpart; `DefaultModels()`/`StandaloneModels()` hand out copies.
+- [x] **3.1.3** Port the route precedence and the exact reason strings. (2026-09-20) — all eight
+      reasons asserted verbatim, and five whole decisions asserted byte-for-byte against
+      `json.dumps` output from the reference environment.
+- [x] **3.1.4** **Deviation:** `router.py:266` emits `repo` as a raw `(repo, subfolder)` tuple on the
       auto-workflow branch while every other branch emits a string via `_repo_str()`. Through
       `json.dumps` that surfaces as a JSON array. **Always emit the string**, and document the
-      deviation in the README (Task 7.5).
-- [ ] **3.1.5** **Reproduce faithfully:** `workflow` is `None` on the model/task paths but carries the
+      deviation in the README (Task 7.5). (2026-09-20) — `decideByWorkflow` uses `ModelSpec.String()`
+      like every other branch; the deviation is recorded in its GoDoc and is on Task 7.5's list.
+- [x] **3.1.5** **Reproduce faithfully:** `workflow` is `None` on the model/task paths but carries the
       detected workflow name on the **lang and detection** paths even though it did not drive the
-      decision.
-- [ ] **3.1.6** _(new, 2026-09-20, review)_ Expose what `original/tests/test_router.py` asserts on, or
+      decision. (2026-09-20) — reproduced, and asserted in both directions by
+      `TestRouteWorkflowLeaksIntoLaterBranches`.
+- [x] **3.1.6** _(new, 2026-09-20, review)_ Expose what `original/tests/test_router.py` asserts on, or
       3.3.1 cannot port "the whole file" without unexported access: `NormalizeModelName` (upstream
       `normalise_name`, including the error on an unknown name), `MatchTypedDecisionsWorkflow`,
       `DefaultModels()` / `StandaloneModels()` (copies), `ModelSpec.String()` for `_repo_str`, and
       `Router.SetMaxLoaded` / `MaxLoaded()` — the upstream tests mutate `max_loaded` after construction
       (`test_router.py:241,249,266`) and `docs/API.md` is constructor-only. Acceptance:
-      `test_router.py:97-110, 176-266, 213-228` port as they are.
+      `test_router.py:97-110, 176-266, 213-228` port as they are. (2026-09-20) — all exported; the
+      three cited spans port unchanged in `router_upstream_test.go`.
+      **Deviation:** `NormalizeModelName`'s error text is Go's own. Upstream interpolates Python list
+      reprs into the message and nothing asserts on it (`test_router.py:109-113` only checks that it
+      raises), so reproducing the formatting would be unpinned cosplay. The error wraps
+      `ErrUnknownModel` and names the valid names and aliases.
+- [x] **3.1.7** _(new, 2026-09-20)_ `jsonx.ReprString`: Python's `str.__repr__`, because six reason
+      strings interpolate `%r` over caller-supplied text (`router.py:256, 261, 267, 272, 285`) and Go
+      has no equivalent. (2026-09-20) — `strconv.Quote` disagrees three ways at once (always
+      double-quotes, emits Go's `\a\b\f\v` where Python emits `\x07\x08\x0c\x0b`, and would escape
+      printable non-ASCII), and each disagreement still reads like a plausible reason. 33 cases
+      pinned against real CPython output, plus the invalid-UTF-8 case Python cannot represent.
+- [x] **3.1.8** _(new, 2026-09-20)_ `ModelSpecFromString`, which `docs/API.md:402`'s decision table
+      promises and its signature block omits. (2026-09-20) — needed by `test_router.py:229-231` and
+      by `test_local_e2e.py:47`, both of which override the registry with local directories and
+      expect the path back unchanged.
 
 **Task 3.2: `Router` + LRU.** Invariants §5 items 48–53.
 
-- [ ] **3.2.1** Port the LRU lifecycle (capacity, eviction order, preload).
-- [ ] **3.2.2** Python's `Router` is not concurrency-safe; Go's must be — `sync.Mutex`, plus a
-      `-race` test that routes and evicts from several goroutines.
-- [ ] **3.2.3** Expose the loader as an injectable hook —
+- [x] **3.2.1** Port the LRU lifecycle (capacity, eviction order, preload). (2026-09-20) — including
+      that `load` appends before it evicts, so at a cap of 1 the newcomer survives; that `attach` and
+      `preload` both raise the cap; and that the cap floors at 1.
+      Upstream's `_evict` reconciliation pass (`router.py:191-195`) has no counterpart: it exists
+      because two Python dicts can drift apart, and one map and one slice maintained together cannot.
+      **Deviation:** `Preload` with no names walks a declared order rather than the registry map.
+      Python walks its models dict, whose order is the `DEFAULT_MODELS` literal; a Go map has none,
+      and `Loaded()` would come back differently on every run. Pinned at `-count=10`.
+- [x] **3.2.2** Python's `Router` is not concurrency-safe; Go's must be — `sync.Mutex`, plus a
+      `-race` test that routes and evicts from several goroutines. (2026-09-20) — the mutex guards
+      the agent cache alone; `models`, `defaultModel` and `autoTaskDetection` are fixed at
+      construction, so `Route` takes no lock and stays as cheap as upstream promises it is.
+      `go test -race -count=10 .` green.
+- [x] **3.2.3** Expose the loader as an injectable hook —
       `WithLoader(func(ctx, name, ModelSpec) (*Agent, error))` — so the upstream LRU/preload tests,
-      which monkeypatch `rr.load`, stay expressible without reflection.
-- [ ] **3.2.4** Eviction closes the evicted agent's backend; assert it, since a leaked ORT session is
-      hundreds of MB.
+      which monkeypatch `rr.load`, stay expressible without reflection. (2026-09-20) — the signature
+      returns `Agent`, the interface of D13, not `*Agent`.
+- [x] **3.2.4** Eviction closes the evicted agent's backend; assert it, since a leaked ORT session is
+      hundreds of MB. (2026-09-20) — **a deviation, and it needs the line:** upstream drops the victim
+      from both dicts and lets refcounting free it, which in Go frees nothing.
+      Releasing is bounded by ownership: the Router closes agents its own loader built and only
+      forgets an attached one. Without that, attaching one checkpoint to two routers would be a
+      double free, and `test_router.py:269` — which asserts the attached sentinel survives — would be
+      asserting a use-after-close.
+- [x] **3.2.5** _(new, 2026-09-20)_ `Attach`, `Unload` and `Loaded`, which 3.2.1 does not name and
+      `test_router.py:206-209, 258-270` asserts on (invariants #50, #52). (2026-09-20) —
+      **Deviation:** `Unload` returns an error where Python returns nothing, for the same reason
+      eviction closes at all: here freeing is a call that can fail.
+- [x] **3.2.6** _(new, 2026-09-20)_ `Router.Close`, which `docs/API.md:342` declares and upstream has
+      no counterpart for. (2026-09-20) — releases every agent the Router built, forgets the rest, and
+      is idempotent.
+- [x] **3.2.7** _(new, 2026-09-20)_ `ErrNoLoader`. Until M6 supplies the default loader there is
+      nothing to build an agent from, and caching a nil agent that panics at first use would be the
+      worst available answer. (2026-09-20) — every upstream LRU test injects a loader anyway.
 
 **Task 3.3: Port the upstream router suite.**
 
-- [ ] **3.3.1** Port the whole of `original/tests/test_router.py` (~90 assertions).
-- [ ] **3.3.2** Port section 1 of `test_local_e2e.py:46-67`, which is pure routing — the file states
-      outright "No model weights are loaded: `Router.route` is pure."
+- [x] **3.3.1** Port the whole of `original/tests/test_router.py` (~90 assertions). (2026-09-20) —
+      98 checks, counted by instrumenting the Python file's own `check()`. **32 of them were already
+      ported by M2** into `lang/lang_test.go` (`detect_script`, `is_english`, `guess_latin_language`,
+      `state_text` — upstream keeps its language tests in the router file); the remaining 66 are in
+      `router_upstream_test.go`. Two have no Go counterpart and say so in place: `decision/is dict`
+      and `lru/cap 1 agents match order` both assert properties of Python's containers that one
+      struct, and one map/slice pair, cannot lose.
+      **Finding: one upstream assertion is vacuous.** `test_router.py:264` checks
+      `ra.max_loaded >= 1` on a cap-1 router holding one attached agent — true however `attach`
+      behaves. Deleting the cap raise left the whole ported suite green, and the sabotage pass is
+      what caught it; invariant #50's actual content now has its own test
+      (`TestRouterAttachRaisesTheCapEnoughToHoldEverything`).
+- [x] **3.3.2** Port section 1 of `test_local_e2e.py:46-67`, which is pure routing — the file states
+      outright "No model weights are loaded: `Router.route` is pure." (2026-09-20) — eleven languages
+      through a local-path registry override, plus an assertion that the router used has no loader at
+      all, so "no weights are loaded" is enforced rather than asserted by comment.
 
 **Task 3.4: An opt-in cheaper-checkpoint path for CPU deployments.** _(new, 2026-09-20)_
 Spike S3 suggested "defaulting the Router to mmBERT-base" as a latency lever, and the measurement
@@ -1122,21 +1198,52 @@ checkpoint at every shape, and the only one that answers in under a second. But 
 language, not by cost, and M7 asserts end-to-end parity against Python — so **changing the default
 is not available**. This task is the honest version of the lever.
 
-- [ ] **3.4.1** Decide whether go-laya offers a cost-biased routing option at all, or simply
+> **(2026-09-20) The 2.2–2.7× above understates it.** Re-derived from `BENCHMARKS.md`'s own tables
+> while citing them for 3.4.3: against `laya-typed-decisions` the ratio is 2.88× at 1×512 and 3.15×
+> at 8×512. The range is right for `laya`; it is low for the typed-decisions checkpoint. The GoDoc
+> therefore cites the measured milliseconds rather than repeating a ratio.
+
+- [x] **3.4.1** Decide whether go-laya offers a cost-biased routing option at all, or simply
       documents the measured numbers and lets the caller pass `model=` themselves. Cheapest correct
-      answer wins; do not build an option nobody asked for.
-- [ ] **3.4.2** If it is offered: an explicit functional option, never a changed default, and the
-      parity suite runs with it **off** so Task 7.4 keeps meaning what it says.
-- [ ] **3.4.3** Whatever is decided, `BENCHMARKS.md`'s per-checkpoint numbers are the justification
-      and must be cited, not re-derived.
+      answer wins; do not build an option nobody asked for. **(2026-09-20) Answered: document only,
+      no option.** `ForModel("multilingual")` already expresses exactly the request, so an option
+      would add a second spelling of one thing and a second switch the parity suite has to hold off.
+- [x] **3.4.2** If it is offered: an explicit functional option, never a changed default, and the
+      parity suite runs with it **off** so Task 7.4 keeps meaning what it says. (2026-09-20) — not
+      applicable: 3.4.1 decided against offering it.
+- [x] **3.4.3** Whatever is decided, `BENCHMARKS.md`'s per-checkpoint numbers are the justification
+      and must be cited, not re-derived. (2026-09-20) — cited in `Router`'s GoDoc: 645 ms against
+      1691 ms and 1856 ms for one question at the default 512-token `max_len`.
+
+**Deferred out of M3, with the reason.** Two pieces of the router surface need types M3 cannot
+define, so they are filed where they can actually be built: the default loader and its
+`WithRouterDevice` / `WithRouterToken` options under **Task 6.11**, and `Router.Predict` /
+`Router.SystemOne` under **Task 7.6**. Neither is reachable from anything upstream tests without
+weights — `test_router.py` never calls `predict`.
 
 **Milestone check**
 
-- [ ] `lang` + `mailtext` + `presets` + `Route` is a genuinely useful Go library with zero ML
-      dependencies, and it covers everything the upstream test suite actually tests.
-- [ ] `go list -deps ./lang ./mailtext ./presets ./backend` contains no `onnxruntime-purego` (the §8
+- [x] `lang` + `mailtext` + `presets` + `Route` is a genuinely useful Go library with zero ML
+      dependencies, and it covers everything the upstream test suite actually tests. (2026-09-20) —
+      covers it: all 98 checks of `test_router.py` are accounted for, 32 in `lang/` and 66 in the
+      root package. **The "zero ML dependencies" half needed correcting**, see the note below.
+- [x] `go list -deps ./lang ./mailtext ./presets ./backend` contains no `onnxruntime-purego` (the §8
       check as D9 words it, run early). Under purego nothing links ORT symbols, so "links no ONNX
-      symbols" was never a testable claim.
+      symbols" was never a testable claim. (2026-09-20) — run as
+      `go list -deps ./lang ./mailtext ./presets ./jsonx ./question`, `backend/` not existing yet:
+      zero matches.
+
+> **(2026-09-20) The zero-ML-dependency claim above named the wrong thing, and §2's prose repeated
+> it.** `Route` lives in `router.go` at the **root** (§2's layout, `docs/API.md`, and D9 all say so),
+> and D9 equally allows the root package to depend on the binding — so from M6 onwards a
+> routing-only importer pulls `onnxruntime-purego` into its module graph. The same collision D11
+> resolved for the question types, one milestone later.
+>
+> **Resolved: the root keeps the Router, and the claim is narrowed to what is true and testable.**
+> Under purego nothing is `dlopen`ed until `Open`, so a caller who only routes still never _loads_
+> ONNX Runtime; what it gains is a build-graph edge. §8's definition of done already scopes the
+> check to `lang`, `mailtext`, `presets` and `backend` — the root was never in it — so §8 was right
+> and the M3 wording and §2's prose were loose. Both corrected.
 
 ### M4 — Pure-Go tokenizer (highest risk)
 
@@ -1539,6 +1646,19 @@ it instead), and `findModel`'s `../../build/onnx` default.
 - [ ] **6.10.1** `just bench-onnx` and the finalizer reproduction run from the new package unchanged.
 - [ ] **6.10.2** `internal/onnxspike/` is gone; `internal/onnxspike/README.md`'s content moves with it.
 
+**Task 6.11: The Router's default agent loader.** _(new, 2026-09-20, from M3)_
+M3 shipped `WithLoader` and `ErrNoLoader`: until a checkpoint can actually be built, a Router has no
+way to make an agent and says so rather than caching a nil one.
+
+- [ ] **6.11.1** A default loader, so `NewRouter()` with no `WithLoader` can load. It is what
+      `router.py:174-178` does inline: build an Agent from the spec's repo, subfolder, device and
+      token.
+- [ ] **6.11.2** `WithRouterDevice` and `WithRouterToken` (`docs/API.md:347-348`), including
+      upstream's `token or os.environ["HF_TOKEN"]` fallback (`router.py:159`). Deferred out of M3
+      because they configure a builder that did not exist; adding them there would have stored two
+      values nothing read.
+- [ ] **6.11.3** Widen `Agent` past `Close() error` only when M7 needs it (D13), not here.
+
 ### M7 — Agent, calibration, end-to-end parity
 
 **Task 7.1: `internal/calib`.** Invariants §5 items 22–29.
@@ -1625,6 +1745,20 @@ it instead), and `findModel`'s `../../build/onnx` default.
       "CPU-first". S3.2 made the honest claim available; this is where it gets made.
 - [ ] **7.5.5** State the tokenizer/checkpoint revisions the port is verified against.
 
+**Task 7.6: `Router.Predict` / `Router.SystemOne`.** _(new, 2026-09-20, from M3)_
+`router.py:293-311`: route, load the chosen checkpoint, run `system_one`, then add the decision under
+a `routing` key. Deferred out of M3 because it needs the widened `Agent` of D13 and the `Result`
+type, neither of which existed there.
+
+- [ ] **7.6.1** Widen `Agent` with `SystemOne`, as D13 says M7 would, and have the concrete agent
+      satisfy it.
+- [ ] **7.6.2** `Predict`, and `SystemOne` as its alias (`router.py:311`).
+- [ ] **7.6.3** `result["routing"] = dict(decision)` (invariant #53). Note the consequence of task
+      3.1.4: upstream's payload carries the raw tuple on the auto-workflow branch, and go-laya's
+      carries the string, so this is where that deviation becomes visible to a caller.
+- [ ] **7.6.4** The `routing` block goes through `jsonx.Marshal` (D12), not `encoding/json`, or the
+      separators are compacted back out of the detection object inside it.
+
 ### M8 — Pure-Go native backend (after 1.0)
 
 Same `backend.Backend` interface, no API change. Implement ModernBERT + mmBERT + the head over
@@ -1705,14 +1839,14 @@ are in **`docs/API.md`**, together with the exact JSON shapes the Python version
 
 The dynamic-typing decisions Python leaves implicit:
 
-| Python                                                      | Go decision                                                                                                                                                                 |
-| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `criteria` on choice: `dict` **or** `list[str]`             | `[]ChoiceOption{Key, Desc any}` + a `Labels("a","b")` helper. One representation, order preserved.                                                                          |
-| `criteria` on noul: dict with `"true"`/`"false"`, or absent | Explicit `True`/`False` fields — removes any chance of getting index order wrong (false=0, true=1 always).                                                                  |
-| `state`: `str \| dict \| list`                              | A `State` interface with `TextState` / `ObjState` / `ListState`. Rejected `any`+reflection: it makes both the serialization and the detection flattening implicit.          |
-| `instructions`: `str` or anything                           | `string` only; callers serialize. Document the dropped edge case (non-str instructions are `json.dumps`'d with `ensure_ascii=True` — the one place laya escapes non-ASCII). |
-| dict iteration order                                        | Ordered slices everywhere it is observable; `map` only where it provably is not.                                                                                            |
-| `RouteDecision` as a `dict` subclass                        | A struct with JSON tags, plus `Map() Obj` for anyone who wants the dict.                                                                                                    |
+| Python                                                      | Go decision                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `criteria` on choice: `dict` **or** `list[str]`             | `[]ChoiceOption{Key, Desc any}` + a `Labels("a","b")` helper. One representation, order preserved.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `criteria` on noul: dict with `"true"`/`"false"`, or absent | Explicit `True`/`False` fields — removes any chance of getting index order wrong (false=0, true=1 always).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `state`: `str \| dict \| list`                              | A `State` interface with `TextState` / `ObjState` / `ListState`. Rejected `any`+reflection: it makes both the serialization and the detection flattening implicit. _(2026-09-20, M3: **out of step with the shipped code.** M2 shipped `lang.Analyse(state any)` and `lang.IsEnglish(state any)` in the public API, and M3's `Route(state any, …)` follows them — so the `any` road was taken twice before this row was revisited. Settle it in M7, where `Agent.SystemOne` is the last and largest caller: either introduce `State` and narrow all three, or record `any` as the decision and strike this row. Do not add a third spelling.)_ |
+| `instructions`: `str` or anything                           | `string` only; callers serialize. Document the dropped edge case (non-str instructions are `json.dumps`'d with `ensure_ascii=True` — the one place laya escapes non-ASCII).                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| dict iteration order                                        | Ordered slices everywhere it is observable; `map` only where it provably is not.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `RouteDecision` as a `dict` subclass                        | A struct with JSON tags, plus `Map() Obj` for anyone who wants the dict.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 ---
 
