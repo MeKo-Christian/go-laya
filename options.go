@@ -1,5 +1,7 @@
 package laya
 
+import "context"
+
 // Functional options for the Router. They mirror the keyword arguments of
 // Python's Router.__init__ (router.py:144-153) and Router.route
 // (router.py:241-248); the names gain a Router/For prefix where the bare word
@@ -12,6 +14,8 @@ type RouterOption func(*routerConfig) error
 
 type routerConfig struct {
 	standaloneRepos   bool
+	maxLoaded         int
+	loader            func(context.Context, string, ModelSpec) (Agent, error)
 	overrides         map[string]ModelSpec
 	defaultModel      string
 	autoTaskDetection bool
@@ -106,4 +110,33 @@ func ForTask(task string) RouteOption {
 // lower-cased and cut at the first "-", so "en-GB" is English (invariant #43).
 func ForLang(code string) RouteOption {
 	return func(r *routeRequest) { r.lang = &code }
+}
+
+// WithMaxLoaded caps how many checkpoints stay resident; the least recently
+// used is evicted past the cap. Clamped to at least 1 (invariant #48), as
+// max(1, int(max_loaded)) is upstream.
+//
+// The default is 1, which is right for a batch job and wrong for anything that
+// alternates languages: a cold load costs seconds and detection costs
+// microseconds, so at 1 an alternating workload reloads on every request. Use
+// Preload for a server.
+func WithMaxLoaded(n int) RouterOption {
+	return func(c *routerConfig) error {
+		c.maxLoaded = max(1, n)
+		return nil
+	}
+}
+
+// WithLoader supplies the function that builds an agent for a checkpoint.
+//
+// It is required until M6 lands the ONNX-backed default; without it Load
+// returns ErrNoLoader. It is also the seam the upstream LRU tests need:
+// they monkeypatch Router.load to avoid building a real checkpoint
+// (test_router.py:177), and an injected loader is how that ports without
+// reflection.
+func WithLoader(fn func(context.Context, string, ModelSpec) (Agent, error)) RouterOption {
+	return func(c *routerConfig) error {
+		c.loader = fn
+		return nil
+	}
 }

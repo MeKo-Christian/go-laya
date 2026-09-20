@@ -1,6 +1,7 @@
 package laya
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"slices"
@@ -286,9 +287,18 @@ func sortedKeys[V any](m map[string]V) []string {
 type Router struct {
 	mu sync.Mutex
 
+	// models, defaultModel and autoTaskDetection are fixed at construction
+	// and never written again, so Route reads them without the lock and
+	// stays as pure and as cheap as upstream promises it is. The mutex
+	// guards the agent cache alone.
 	models            map[string]ModelSpec
 	defaultModel      string
 	autoTaskDetection bool
+
+	loader    func(context.Context, string, ModelSpec) (Agent, error)
+	maxLoaded int
+	agents    map[string]residentAgent
+	order     []string // least recently used first
 }
 
 // NewRouter builds a Router. With no options it is upstream's default: the
@@ -312,6 +322,9 @@ func NewRouter(opts ...RouterOption) (*Router, error) {
 		models:            models,
 		defaultModel:      cfg.defaultModel,
 		autoTaskDetection: cfg.autoTaskDetection,
+		loader:            cfg.loader,
+		maxLoaded:         max(1, cfg.maxLoaded),
+		agents:            map[string]residentAgent{},
 	}, nil
 }
 
@@ -463,7 +476,5 @@ func reprLanguage(code *string) string {
 // spec is the registry entry for a canonical name. Every name NormalizeModelName
 // returns is present: an override replaces an entry, it never removes one.
 func (r *Router) spec(key string) ModelSpec {
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	return r.models[key]
 }
