@@ -235,3 +235,35 @@ func TestCompactFallsBackToString(t *testing.T) {
 		t.Error("Marshal must refuse what Compact stringifies: serialize_state has no default=")
 	}
 }
+
+// TestEncodingJSONCompactsMarshalerOutput pins a hazard that is easy to walk
+// into and impossible to see in a diff: encoding/json runs compact() over
+// whatever a MarshalJSON returns, so routing an Obj through json.Marshal --
+// directly, or by embedding it in a struct that json.Marshal handles -- strips
+// the ", " and ": " separators again and undoes this whole package.
+//
+// The consequence is a rule, not a caveat: jsonx.Marshal has to be the OUTER
+// encoder everywhere Python parity matters. Anything with a MarshalJSON that
+// only ever reaches encoding/json is decorative.
+func TestEncodingJSONCompactsMarshalerOutput(t *testing.T) {
+	o := Obj{{"a", 1}, {"b", 2}}
+
+	ours, err := Marshal(o)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if string(ours) != `{"a": 1, "b": 2}` {
+		t.Fatalf("jsonx.Marshal = %s", ours)
+	}
+
+	theirs, err := json.Marshal(o)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if string(theirs) == string(ours) {
+		t.Skip("encoding/json no longer compacts MarshalJSON output; the rule can be relaxed")
+	}
+	if string(theirs) != `{"a":1,"b":2}` {
+		t.Errorf("json.Marshal = %s, want the compacted form; the hazard has changed shape", theirs)
+	}
+}
