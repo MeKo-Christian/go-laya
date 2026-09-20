@@ -29,14 +29,16 @@ not finished; keep it rare. A milestone is done when every task box under it is 
 | [M1 — Reference harness](#m1--the-python-reference-harness)            | `testdata/*.jsonl` golden vectors                | ✅ done                        |
 | [M2 — Tier-1 core](#m2--tier-1-core-no-ml-runtime-620-lines-of-python) | `jsonx`, `lang`, `mailtext`, `presets`, render   | 🟢 2.1–2.4 done; 2.5.4 partial |
 | [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ⬜ not started                 |
-| [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | ⬜ not started                 |
+| [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | 🟡 4.1–4.4 done; 4.5.3 open    |
 | [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ⬜ not started                 |
 | [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | ⬜ not started                 |
 | [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started                 |
 | [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred                    |
 
 **Critical path:** M1 ✅ → M2 (`jsonx` first) → M4 → M5 → M6 → M7, with M3 off the path. _(Reordered
-on the 2026-09-20 review.)_ M2 goes before M4 because M5 needs `jsonx`, M3 needs `lang`, and M2 has
+on the 2026-09-20 review.)_ _(2026-09-20: M4 was in the event run **in parallel** with M2 from `jsonx`
+onwards. The order above is a scheduling preference, not a dependency — M4 imports nothing from M2
+and the two meet only at M5.)_ M2 goes before M4 because M5 needs `jsonx`, M3 needs `lang`, and M2 has
 no unknowns left — it does not get cheaper by waiting, and M4's shape (D10) is now settled. Tasks 1.7
 and 4.4.12 were taken first for that reason and are **done** (2026-09-20): both rewrite `testdata/`,
 so no Go work that reads it could run alongside them. M3
@@ -155,8 +157,10 @@ Both checkpoints ship `tokenizer/tokenizer.json` + `tokenizer_config.json`, and 
 **English (ModernBERT):** normalizer NFC · pre-tokenizer `ByteLevel{add_prefix_space:false, use_regex:true}` ·
 BPE, vocab 50280, 50009 merges (new array form), `byte_fallback:false`, `unk:null` ·
 116 added tokens, 109 of them non-special with `normalized:true` — 23 runs of **2–24** spaces at ids
-**50254–50276** (the 24-space run is 50254), `|||IP_ADDRESS|||` at id 0, and 85 `[unusedN]` _(corrected
-2026-09-20 from the file itself)_ ·
+**50254–50276** (the 24-space run is 50254), `|||IP_ADDRESS|||` at id 0, `|||EMAIL_ADDRESS|||` at 50277,
+`|||PHONE_NUMBER|||` at 50278, and **83** `[unusedN]` (`[unused0]`..`[unused82]`, ids 50285–50367)
+_(corrected again 2026-09-20 from the file: the earlier "85" double-counted the two extra
+placeholders; 23 + 83 + 7 + 3 = 116 ✓)_ ·
 **UNK 50280, CLS 50281, SEP 50282, PAD 50283, MASK 50284** (mask has `lstrip:true`).
 
 **Multilingual (Gemma/mmBERT):** normalizer `Replace{" " → "▁"}` · pre-tokenizer
@@ -174,6 +178,14 @@ exactly two pipelines.
    so the text already starts with `▁` and HF's `if !starts_with(replacement)` guard **suppresses the
    prepend**: `tok(" x") == tok("x")`. On English (ByteLevel, `add_prefix_space:false`) the leading
    space is real and becomes `Ġ`: `tok(" x") != tok("x")`.
+
+   > ⚠️ _(corrected 2026-09-20, M4)_ The multilingual half holds only when the text does **not** begin
+   > with an added token. When it does, the added-token pre-split isolates the leading `" "` as its own
+   > segment, which `Replace` + Metaspace turn into `▁` = id 235248: `"<2mass>"` → `[5]` but
+   > `" <2mass>"` → `[235248, 5]`. Measured over the corpus, **9 of 103** multilingual cases differ
+   > with a leading space, not zero. The same mechanism gives a mid-word continuation its own `▁`:
+   > `"ab<mask>cd"` → `['▁ab', '<mask>', '▁cd']`.
+
 2. Added tokens are pre-split out of the input **before** normalizer and pre-tokenizer run. Since
    `build_sequence` feeds `serialize_state(state)` — arbitrary user JSON — through the tokenizer,
    indentation runs are realistic input and the 109 whitespace-run added tokens are load-bearing.
@@ -870,7 +882,7 @@ numbers, although §8's "within 1e-4 of PyTorch" depends on exactly that.
       `attention_mask`, `marker_pos`, `marker_mask`, `qtype` — exactly what `collate_items` returns.
       (2026-09-20) — the five tensors the forward consumes, through the existing `tensor_rec`.
       `collate_items` returns two more that are left out on purpose: `label` is a constant `[-1,
-  -1, -1]` because no item here carries one, and `meta` after its key filter restates `qtype`.
+-1, -1]` because no item here carries one, and `meta` after its key filter restates `qtype`.
       37 KB to 110 KB, and purely additive — no pre-existing value moved.
 - [x] **1.7.2** Every header gains a `compute` block (`dump_python_parity.py:1006,1014`):
       `{device: cpu, dtype: float32, attn: sdpa, torch_threads: 1}`.
@@ -1146,29 +1158,29 @@ type Tokenizer interface {
 }
 ```
 
-- [ ] **4.1.1** Define the interface in `tokenizer/`. `build_sequence` then ports 1:1 and stays
+- [x] **4.1.1** Define the interface in `tokenizer/`. `build_sequence` then ports 1:1 and stays
       backend-agnostic, which keeps D2 reversible (R1).
-- [ ] **4.1.2** _(new, 2026-09-20, review)_ `[]int64`, not `[]uint32`: the only consumer is
+- [x] **4.1.2** _(new, 2026-09-20, review)_ `[]int64`, not `[]uint32`: the only consumer is
       `backend.Batch.InputIDs [][]int64` for a graph whose `input_ids` are int64
       (`scripts/export_onnx.py`, `internal/onnxspike/testdata/forward_pass.json`), `build_sequence` is
       pure slice concatenation and should port without width changes, and the golden JSON decodes as
       int64. Vocab and merge tables stay `int32` internally. `Encode` first applies
       `strings.ToValidUTF8(text, "�")` — the 4.4.11 boundary; without it, bytes 0xF5–0xFF would map
       to the 13 EN byte-chars that have no vocab entry and be silently dropped (`unk:null`, §1.4 item 3).
-- [ ] **4.1.3** _(new, 2026-09-20, review)_ The concrete type — not the interface — exposes
+- [x] **4.1.3** _(new, 2026-09-20, review)_ The concrete type — not the interface — exposes
       `IDToToken(id int64) string` and `VocabSize() int64`, for the golden test (which prints id **and**
       token-string diffs) and the 4.5.1 fuzz invariant. No decode path: nothing in inference decodes.
 
 **Task 4.2: Special-token resolution.** ~40 lines.
 
-- [ ] **4.2.1** Read token _strings_ from `tokenizer_config.json`; resolve ids from `tokenizer.json`'s
+- [x] **4.2.1** Read token _strings_ from `tokenizer_config.json`; resolve ids from `tokenizer.json`'s
       `added_tokens` + `model.vocab`.
-- [ ] **4.2.2** Prefer the tokenizer config over the encoder config — `multilingual/encoder/config.json`
+- [x] **4.2.2** Prefer the tokenizer config over the encoder config — `multilingual/encoder/config.json`
       says `cls_token_id: 1` while its tokenizer says `<bos>` = **2**, and 2 is what the weights were
       trained with (§1.2).
-- [ ] **4.2.3** Ignore the Gemma `extra_special_tokens`-as-a-list quirk that `_fix_tokenizer_config`
+- [x] **4.2.3** Ignore the Gemma `extra_special_tokens`-as-a-list quirk that `_fix_tokenizer_config`
       patches around in Python — Go never needs the workaround.
-- [ ] **4.2.4** Assert the resolved ids for both checkpoints against §1.4's table (EN: UNK 50280,
+- [x] **4.2.4** Assert the resolved ids for both checkpoints against §1.4's table (EN: UNK 50280,
       CLS 50281, SEP 50282, PAD 50283, MASK 50284 · ML: PAD 0, EOS/SEP 1, BOS/CLS 2, UNK 3, MASK 4).
 
 **Task 4.3: Purpose-built pure-Go tokenizer, `tokenizer/`.** _(rewritten 2026-09-20 on review; D10)_
@@ -1189,11 +1201,11 @@ Two pipelines only — `typed-decisions`' `tokenizer.json` is byte-identical to 
 > (`.venv-ref`, tokenizers 0.23.2), so every semantic below is pinned by corpus **before** code
 > (Task 4.4.12 is the first M4 commit).
 
-- [ ] **4.3.1** **Loader.** Decode `tokenizer.json` (34 MB for ML; budget < 1 s cold — measure it),
+- [x] **4.3.1** **Loader.** Decode `tokenizer.json` (34 MB for ML; budget < 1 s cold — measure it),
       build `vocab map[string]int32` and `merges map[[2]int32]{rank, newID}`; fail at load if a merge's
       concatenation is missing from the vocab (HF's `MergeTokenOutOfVocabulary`); assert the two
       byte-coverage facts from §1.4 item 3.
-- [ ] **4.3.2** **AddedVocabulary, HF's two phases.** Phase 1 matches `normalized:false` tokens on the
+- [x] **4.3.2** **AddedVocabulary, HF's two phases.** Phase 1 matches `normalized:false` tokens on the
       raw string (all 249 ML tokens, 7 EN specials); phase 2 normalizes each remaining segment and
       matches `normalized:true` tokens (109 EN). Leftmost-longest at each position (a per-position trie
       walk; ≤ 249 patterns, max length 31). `lstrip` extends the match start left over `unicode.IsSpace`
@@ -1204,9 +1216,9 @@ Two pipelines only — `typed-decisions`' `tokenizer.json` is byte-identical to 
       `'a\n<mask>'` ML → `[476, 108, 4]`; `'a [MASK]'` → `[66, 50284]`; `'a​[MASK]'` →
       `[66, 12882, 50284]` (Unicode `White_Space`, not Cf); `'a▁▁b'` ML → `['▁a', '▁▁', '▁b']`;
       `'a' + ' '*49 + 'b'` EN → `[a, 50254, 50254, Ġb]`.
-- [ ] **4.3.3** **Normalizers.** NFC via `golang.org/x/text/unicode/norm` (pure Go, per segment) and
+- [x] **4.3.3** **Normalizers.** NFC via `golang.org/x/text/unicode/norm` (pure Go, per segment) and
       `Replace{String}`. Nothing else is needed by either pipeline; do not port the rest of HF's list.
-- [ ] **4.3.4** **ByteLevel.** A **hand-written rune scanner**, not a regex: HF's pattern
+- [x] **4.3.4** **ByteLevel.** A **hand-written rune scanner**, not a regex: HF's pattern
       `'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+` has a negative
       lookahead RE2 cannot express, and Go's `\s` is ASCII while Oniguruma's is Unicode `White_Space`
       (`'a\xa0\xa0b'` → two separate NBSP tokens). The scanner (~80 lines): try the seven `'x` literals;
@@ -1215,47 +1227,61 @@ Two pipelines only — `typed-decisions`' `tokenizer.json` is byte-identical to 
       `\s+(?!\S)` followed by `\s+`. Plus the `bytes_to_unicode` table. Acceptance:
       `'   x'` EN → `['ĠâĢ', 'ĥ', 'âĢĥ', 'x']`; `"DON'T"` → `[DON, ', T]`;
       `'a' + '\t'*26 + 'b'` → `[a, ĉ×8, ĉ×8, ĉ×4, ĉ×5, ĉ, b]`.
-- [ ] **4.3.5** **Metaspace** `prepend_scheme:always`, `split:true`: per segment, `Replace` then
+- [x] **4.3.5** **Metaspace** `prepend_scheme:always`, `split:true`: per segment, `Replace` then
       prepend `▁` iff `!strings.HasPrefix(seg, "▁")`, then split `MergedWithNext`. Acceptance:
       `'   \n   '` → seven tokens, and `'<start_of_turn>user\nhi<end_of_turn>'` →
       `['<start_of_turn>', '▁user', '\n', '▁hi', '<end_of_turn>']`.
-- [ ] **4.3.6** **BPE.** Port `merge_word` — per-char vocab lookup; byte fallback emits `<0xXX>` per
+- [x] **4.3.6** **BPE.** Port `merge_word` — per-char vocab lookup; byte fallback emits `<0xXX>` per
       char **before** merging, and only if every byte is in the vocab; `fuse_unk` — and `merge_all` (a
       heap ordered by rank then position, with stale-entry skip). Every merge maps to a `newID` resolved
       at load, so a merge can never produce a missing entry. `fuse_unk` is unreachable on both real
       checkpoints (ML's only missing byte token is `<0x09>`, needed only by U+0009, itself in the vocab),
       so it is tested on a synthetic ten-token `tokenizer.json` under `tokenizer/testdata/`. Acceptance:
       `'a\x00b'` ML → `['▁a', '<0x00>', 'b']`; the byte-fallback and tab-run cases above.
-- [ ] **4.3.7** A tests-only RE2 oracle for the scanner (the pattern with `\s` spelled out as the
+- [x] **4.3.7** A tests-only RE2 oracle for the scanner (the pattern with `\s` spelled out as the
       `White_Space` set and the same give-back post-fix) plus a fuzz cross-check scanner-vs-oracle. Two
       implementations agreeing, plus the Python differential, is as close to Oniguruma as Go gets.
-- [ ] **4.3.8** Load time and allocation of `Encode` measured and recorded here; if the 34 MB decode is
+- [x] **4.3.8** Load time and allocation of `Encode` measured and recorded here; if the 34 MB decode is
       slower than an ONNX session load, a streaming decoder is a contained follow-up, not a redesign.
+
+  Measured 2026-09-20 on the S3 laptop, `go test -bench . -benchtime 5x`:
+
+  | Benchmark             |    time | alloc/op | allocs/op |
+  | --------------------- | ------: | -------: | --------: |
+  | `Open/english`        |   68 ms |  19.6 MB |   187,150 |
+  | `Open/multilingual`   | 1178 ms | 207.4 MB | 1,539,697 |
+  | `Encode/english`      |  191 µs |  24.0 kB |       427 |
+  | `Encode/multilingual` |  456 µs |  22.9 kB |       235 |
+
+  `Encode` is a non-issue — `build_sequence` calls it three times per question, so under 2 ms against
+  S3's 0.6–1.9 s forward pass. The multilingual `Open` straddles the budget: 0.6–0.7 s for a single
+  cold open, 1.18 s under repeated load where 207 MB per iteration pressures the allocator. Both are
+  recorded rather than the flattering one. New Task 4.3.9 carries the remedy.
 
 **Task 4.4: Golden corpus, both checkpoints.** Assert **ids and token strings** — an id diff alone tells
 you nothing, `["▁▁","x"]` vs `["▁x"]` tells you exactly which stage broke.
 
 Required cases:
 
-- [ ] **4.4.1** `""`, `" "`, `"  "`, `"\n"`, `"\t"`, `"\r\n"`, `"   \n   "` — consecutive whitespace is
+- [x] **4.4.1** `""`, `" "`, `"  "`, `"\n"`, `"\t"`, `"\r\n"`, `"   \n   "` — consecutive whitespace is
       the most common drift/crash site.
-- [ ] **4.4.2** **`text` and `" " + text` for every case** — this is the `common.py:68` semantic and it
+- [x] **4.4.2** **`text` and `" " + text` for every case** — this is the `common.py:68` semantic and it
       differs between the two checkpoints: on ML the `Replace` normalizer makes `tok(" x") == tok("x")`,
       on EN the leading space becomes `Ġ` and they differ (§1.4).
-- [ ] **4.4.3** Compact JSON exactly as `serialize_state` emits it, with nested braces, escapes,
+- [x] **4.4.3** Compact JSON exactly as `serialize_state` emits it, with nested braces, escapes,
       non-ASCII, long arrays.
-- [ ] **4.4.4** The mask literal (`[MASK]` / `<mask>`) appearing inside user text.
-- [ ] **4.4.5** Every added token bare and mid-sentence: `<unused0>`, `<start_of_turn>`, `<2mass>`,
+- [x] **4.4.4** The mask literal (`[MASK]` / `<mask>`) appearing inside user text.
+- [x] **4.4.5** Every added token bare and mid-sentence: `<unused0>`, `<start_of_turn>`, `<2mass>`,
       `[@BOS@]`, `|||IP_ADDRESS|||`, and runs of 2–24 spaces (EN ids 50254–50276; 24 spaces = 50254).
-- [ ] **4.4.6** Normalization: precomposed vs decomposed `é`, fullwidth `Ａ`, ligature `ﬁ`, NBSP,
+- [x] **4.4.6** Normalization: precomposed vs decomposed `é`, fullwidth `Ａ`, ligature `ﬁ`, NBSP,
       ZWJ/ZWSP, BOM, combining marks. EN normalizes NFC; ML does **not** normalize beyond space→`▁`,
       so these two legitimately differ.
-- [ ] **4.4.7** Emoji with ZWJ sequences, skin tones, flags — these exercise byte fallback on ML.
-- [ ] **4.4.8** Devanagari, Arabic, CJK, Thai, Cyrillic, Korean jamo vs precomposed.
-- [ ] **4.4.9** Lone surrogates / invalid UTF-8 (Go tolerates, Python `str` does not) — decide and
+- [x] **4.4.7** Emoji with ZWJ sequences, skin tones, flags — these exercise byte fallback on ML.
+- [x] **4.4.8** Devanagari, Arabic, CJK, Thai, Cyrillic, Korean jamo vs precomposed.
+- [x] **4.4.9** Lone surrogates / invalid UTF-8 (Go tolerates, Python `str` does not) — decide and
       document the boundary; sanitize at the API edge.
-- [ ] **4.4.10** Both corpora run green: ids **and** token strings identical to Python.
-- [ ] **4.4.11** _(new, 2026-09-20)_ Lone surrogates are **not** in `testdata/tokenizer_*.jsonl`
+- [x] **4.4.10** Both corpora run green: ids **and** token strings identical to Python.
+- [x] **4.4.11** _(new, 2026-09-20)_ Lone surrogates are **not** in `testdata/tokenizer_*.jsonl`
       and cannot be: Python writes `\ud800` and Go's decoder yields U+FFFD, so the vector would
       assert against a corrupted input. 4.4.9's "decide and document the boundary" is therefore
       settled the other way — sanitize at the API edge and test that Go-side, without a vector.
@@ -1275,11 +1301,37 @@ Required cases:
       `convert_ids_to_tokens` clause was **already satisfied** at `dump_python_parity.py:275,277` —
       a constraint to preserve, not a bug to fix.
 
+**Task 4.4.13** _(new, 2026-09-20, M4)_ **Per-stage vectors so CI tests something.**
+`models/` is gitignored, so the corpora above are a local gate; without this, CI ran no tokenizer
+parity assertion at all.
+
+- [x] **4.4.13** `dump_pretok` emits `testdata/pretok_{en,ml}.jsonl`: the normalizer's output and the
+      pre-tokenizer's pieces, from `backend_tokenizer.normalizer.normalize_str` and
+      `.pre_tokenizer.pre_tokenize_str`. Both are pure `str -> str` / `str -> list[str]`, so the Go
+      normalizer, ByteLevel scanner and Metaspace are tested against real Oniguruma output with no
+      checkpoint present. `pre_tokenize_str` is fed the **normalized** text, which is the order
+      `encode` uses. 103 cases each, all green.
+
+**Task 4.4.14** _(new, 2026-09-20, M4)_ **The give-back at a segment boundary.**
+
+- [x] **4.4.14** `\s+(?!\S)`'s lookahead is evaluated inside the added-token segment, so
+      `'a\t\t[unused0]'` keeps its tab run whole while `'a\t\tX'` splits it 1 + 1. Nothing in 4.4.12
+      reached this, and a one-token shift moves every marker after it. Eight `giveback/` probes added,
+      in both bracket spellings: `[unused0]` is an added token on English and plain text on
+      multilingual, `<unused0>` the reverse.
+
+**Task 4.3.9** _(new, 2026-09-20, M4)_ **Streaming the 34 MB decode.** Deferred, not done.
+
+- [ ] **4.3.9** `Open` on multilingual costs 1.18 s, 207 MB and 1.54 M allocations under repeated
+      load (0.6–0.7 s for a single cold open), against 4.3.8's "budget < 1 s cold". `encoding/json`
+      over 256000 vocabulary entries and 580604 merge pairs is the whole cost. 4.3.8 already scopes the
+      remedy as "a contained follow-up, not a redesign"; it is not done inside a parity milestone.
+
 **Task 4.5: Fuzz + differential.**
 
-- [ ] **4.5.1** A Go fuzz target checking invariants only: no panic, ids < `vocab_size`, ASCII
+- [x] **4.5.1** A Go fuzz target checking invariants only: no panic, ids < `vocab_size`, ASCII
       round-trip.
-- [ ] **4.5.2** Seed the corpus from the Task 4.4 cases and commit the interesting crashers.
+- [x] **4.5.2** Seed the corpus from the Task 4.4 cases and commit the interesting crashers.
 - [ ] **4.5.3** A one-off differential run of ~100k lines of real multilingual corpus through both
       Python and Go, diffing the id streams. That is what actually finds the metaspace/added-token bug
       classes. Oracle: `.venv-ref/bin/python` (tokenizers 0.23.2, the version every fixture header
@@ -1290,8 +1342,12 @@ Required cases:
 
 **Gate**
 
-- [ ] **M5 does not start until both golden corpora are 100 % green and `CGO_ENABLED=0 go build ./...`
-      still passes.**
+- [~] **M5 does not start until both golden corpora are 100 % green and `CGO_ENABLED=0 go build ./...`
+  still passes.** _(2026-09-20) — partial:_ both corpora **are** 100 % green (206 subtests: 103
+  cases × 2 checkpoints, ids and token strings, bare and with the leading space) and
+  `CGO_ENABLED=0 go build ./...` passes. What remains before M5 is Task 4.5.3's 100k-line
+  differential run, which is the only thing that can find Unicode-version skew between Go's
+  tables and Oniguruma's (R1).
 - [ ] If parity cannot be reached, execute R1's fallback: swap to `daulet/tokenizers` (CGO, wraps the
       same Rust crate Python uses — parity by construction) behind the Task 4.1 interface, and record
       the CGO consequence against D2.
@@ -1663,7 +1719,11 @@ The dynamic-typing decisions Python leaves implicit:
 ## 8. Definition of done for 1.0
 
 - [ ] `just check` green; `go test ./... -race` green on linux/amd64 and darwin/arm64.
-- [ ] Both tokenizer golden corpora 100 % id- and token-identical to Python.
+- [x] Both tokenizer golden corpora 100 % id- and token-identical to Python — 206 subtests green
+      (103 cases × 2 checkpoints, each asserting the bare and leading-space encoding).
+      **This is a local gate, not a CI one:** `models/` is gitignored and `tokenizer.json` is
+      3.5 MB / 34 MB, so the runner skips unless `LAYA_MODELS` names a tree containing `laya/`.
+      CI covers the stages instead, against `testdata/pretok_{en,ml}.jsonl` (task 4.4.13).
 - [ ] `testdata/sequence.jsonl` byte-identical.
 - [ ] End-to-end probabilities within 1e-4 of the fp32, CPU, single-thread, `sdpa` PyTorch run recorded
       in the fixture headers (Task 1.7's `compute` block) on all three checkpoints; **zero argmax flips**.
