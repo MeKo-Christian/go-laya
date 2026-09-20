@@ -28,11 +28,11 @@ Laya evaluates typed questions (`choice`, `score`, `noul`) over any state (text,
 
 Three checkpoints, and a `Router` that picks between them per request:
 
-| | encoder | params | context | use it for |
-|---|---|---|---|---|
-| [`laya`](https://huggingface.co/convaiinnovations/laya) | ModernBERT-large | 421M | 512 | English |
-| [`laya-multilingual`](https://huggingface.co/convaiinnovations/laya-multilingual) | mmBERT-base | 322M | 1024 | 100+ languages, 2x faster |
-| [`laya-typed-decisions`](https://huggingface.co/convaiinnovations/laya-typed-decisions) | ModernBERT-large | 421M | 1024 | the typed-decisions workflows |
+|                                                                                         | encoder          | params | context | use it for                    |
+| --------------------------------------------------------------------------------------- | ---------------- | ------ | ------- | ----------------------------- |
+| [`laya`](https://huggingface.co/convaiinnovations/laya)                                 | ModernBERT-large | 421M   | 512     | English                       |
+| [`laya-multilingual`](https://huggingface.co/convaiinnovations/laya-multilingual)       | mmBERT-base      | 322M   | 1024    | 100+ languages, 2x faster     |
+| [`laya-typed-decisions`](https://huggingface.co/convaiinnovations/laya-typed-decisions) | ModernBERT-large | 421M   | 1024    | the typed-decisions workflows |
 
 ---
 
@@ -125,21 +125,21 @@ router.route({"body": "Der Kunde wurde zweimal belastet"}, questions).reason
 
 On a shared benchmark (17,416 questions, one T4 GPU, identical questions per model):
 
-| Benchmark / Task | English (`laya`) | Multilingual (`laya-multilingual`) | `Router` (Routed) |
-|---|---|---|---|
-| MASSIVE intent, English | **0.783** | 0.657 | **0.783** |
-| MASSIVE intent, 13 other languages | 0.306 | **0.451** | **0.451** |
-| XNLI, English | **0.860** | 0.843 | **0.860** |
-| XNLI, 14 other languages | 0.521 | **0.731** | **0.731** |
-| Languages usable (>3x random) | 23 / 51 | 45 / 51 | **45 / 51** |
-| Latency, 1 question (T4 GPU) | 39.5 ms | **32.8 ms** | **32.8 ms** |
-| Latency, 10 questions batched | 158.6 ms | **72.3 ms** | **72.3 ms** |
+| Benchmark / Task                   | English (`laya`) | Multilingual (`laya-multilingual`) | `Router` (Routed) |
+| ---------------------------------- | ---------------- | ---------------------------------- | ----------------- |
+| MASSIVE intent, English            | **0.783**        | 0.657                              | **0.783**         |
+| MASSIVE intent, 13 other languages | 0.306            | **0.451**                          | **0.451**         |
+| XNLI, English                      | **0.860**        | 0.843                              | **0.860**         |
+| XNLI, 14 other languages           | 0.521            | **0.731**                          | **0.731**         |
+| Languages usable (>3x random)      | 23 / 51          | 45 / 51                            | **45 / 51**       |
+| Latency, 1 question (T4 GPU)       | 39.5 ms          | **32.8 ms**                        | **32.8 ms**       |
+| Latency, 10 questions batched      | 158.6 ms         | **72.3 ms**                        | **72.3 ms**       |
 
 The English checkpoint collapses on non-Latin scripts (Khmer scores **0.000 accuracy at 0.952 confidence**). Because the model stays confident while being wrong, confidence gating cannot save you. `Router` detects the script in <0.5 ms pure Python before the forward pass.
 
 ### Production Preload & Memory
 
-A cold checkpoint build costs seconds; language detection costs microseconds. At the default `max_loaded=1`, traffic that alternates languages rebuilds a model on *every* request (measured at a 7.4 s median reload on CPU and 10.3 s on T4).
+A cold checkpoint build costs seconds; language detection costs microseconds. At the default `max_loaded=1`, traffic that alternates languages rebuilds a model on _every_ request (measured at a 7.4 s median reload on CPU and 10.3 s on T4).
 
 For a server or production app, preload:
 
@@ -159,10 +159,10 @@ router = Router(max_loaded=2)       # keep two hot
 router.unload()                     # free memory
 ```
 
-| Deployment Mode | Per-Request Latency | Model Reloads |
-|---|---|---|
-| `Router()` (lazy, `max_loaded=1`) | 7 to 10 s on every language switch | 1 per switch |
-| `Router(preload=True)` | **32.8 ms (GPU) / 193–464 ms (CPU)** | **none** |
+| Deployment Mode                   | Per-Request Latency                  | Model Reloads |
+| --------------------------------- | ------------------------------------ | ------------- |
+| `Router()` (lazy, `max_loaded=1`) | 7 to 10 s on every language switch   | 1 per switch  |
+| `Router(preload=True)`            | **32.8 ms (GPU) / 193–464 ms (CPU)** | **none**      |
 
 ---
 
@@ -233,11 +233,11 @@ triage = agent.predict({"message": "My payment failed twice"}, laya.triage_quest
 
 ## Decision Primitives
 
-| Primitive | Output | Use Cases |
-|---|---|---|
-| **`choice`** | Top label, probabilities per option, confidence | Department routing, intent classification, topic categorization |
-| **`score`** | Expected level on ordinal rubric, distribution, confidence | Frustration level, ticket urgency, harm severity |
-| **`noul`** | Calibrated probability P(true) from 0.0 to 1.0 | Phishing detection, spam filtering, jailbreak detection, churn risk |
+| Primitive    | Output                                                     | Use Cases                                                           |
+| ------------ | ---------------------------------------------------------- | ------------------------------------------------------------------- |
+| **`choice`** | Top label, probabilities per option, confidence            | Department routing, intent classification, topic categorization     |
+| **`score`**  | Expected level on ordinal rubric, distribution, confidence | Frustration level, ticket urgency, harm severity                    |
+| **`noul`**   | Calibrated probability P(true) from 0.0 to 1.0             | Phishing detection, spam filtering, jailbreak detection, churn risk |
 
 ---
 
@@ -255,12 +255,12 @@ All Laya numbers below are measured. Every model answered byte-identical questio
 
 ### Speed (Tesla T4, measured)
 
-| questions per call | `laya` | `laya-multilingual` |
-|---|---|---|
-| 1 | 39.5 ms | **32.8 ms** |
-| 5 | 84.5 ms | **40.1 ms** |
-| 10 | 158.6 ms (15.9 ms/q) | **72.3 ms (7.2 ms/q)** |
-| 50 | 771 ms | **337 ms (6.8 ms/q)** |
+| questions per call | `laya`               | `laya-multilingual`    |
+| ------------------ | -------------------- | ---------------------- |
+| 1                  | 39.5 ms              | **32.8 ms**            |
+| 5                  | 84.5 ms              | **40.1 ms**            |
+| 10                 | 158.6 ms (15.9 ms/q) | **72.3 ms (7.2 ms/q)** |
+| 50                 | 771 ms               | **337 ms (6.8 ms/q)**  |
 
 Batched throughput reaches 103-332 questions/sec on a single T4. For reference, TypeSafe Jev
 has been independently measured at 236-276 ms p50
@@ -274,26 +274,26 @@ Every Laya figure is what `Router().predict(...)` actually returns — the check
 selects for that input, not a hand-picked best of three. Jev figures are **third-party
 published, never measured here** (no TypeSafe API access), so sample sizes and prompts differ.
 
-| | Jev 1.13.0 | Laya (routed) | |
-|---|---|---|---|
-| typed-decisions, 2,000 decisions | 0.727 | **0.766** | +0.039 |
-| AG News, 4 labels | 0.910 | **0.950** | +0.040 |
-| DAIR Emotion, 6 labels | 0.480 | **0.595** | +0.115 |
-| Banking77 (72 vs 77 labels) | **0.870** | 0.425 | Jev leads on >20 options |
-| ECE *(lower better)* | 0.246 | **0.081** | 3× better (post-temperature) |
-| p50 latency, 1 question | 236–276 ms | **32.8 ms** | 7.8× faster |
-| Languages usable | *no published benchmark* | **45 of 51** | — |
-| Weights | closed API | **Apache 2.0** | — |
-| Cost | $0.042 / 1M tokens | **$0 self-hosted** | — |
+|                                  | Jev 1.13.0               | Laya (routed)      |                              |
+| -------------------------------- | ------------------------ | ------------------ | ---------------------------- |
+| typed-decisions, 2,000 decisions | 0.727                    | **0.766**          | +0.039                       |
+| AG News, 4 labels                | 0.910                    | **0.950**          | +0.040                       |
+| DAIR Emotion, 6 labels           | 0.480                    | **0.595**          | +0.115                       |
+| Banking77 (72 vs 77 labels)      | **0.870**                | 0.425              | Jev leads on >20 options     |
+| ECE _(lower better)_             | 0.246                    | **0.081**          | 3× better (post-temperature) |
+| p50 latency, 1 question          | 236–276 ms               | **32.8 ms**        | 7.8× faster                  |
+| Languages usable                 | _no published benchmark_ | **45 of 51**       | —                            |
+| Weights                          | closed API               | **Apache 2.0**     | —                            |
+| Cost                             | $0.042 / 1M tokens       | **$0 self-hosted** | —                            |
 
 On DAIR Emotion, Jev assigned **zero probability to the true label on 16% of examples** — a hard
 failure for anything branching on confidence.
 
 #### Where Jev leads
 
-* **High-cardinality label spaces (>20 options at default settings):** On Banking77, Jev scores 0.870 (on 72 labels) while Laya scores 0.425 (on 77 labels at default 256-token head budget). This is an architectural token-budget constraint: options share a fixed `head_max_len` budget (192 tokens on English, 256 on multilingual), so 77 options receive only ~3 to 4 tokens per label, causing text to become indistinguishable. Jev supports up to 255 options out-of-the-box. While `laya-multilingual` supports 1,024 context (and up to 8,192 in the encoder) and you can raise `agent.cfg["head_max_len"] = 512` at runtime, Jev is currently better suited for 50+ options in a single prompt without tuning.
-* **Soft distribution matching:** On typed-decisions, while Laya achieves higher argmax accuracy (0.766 vs 0.727), Jev achieves higher soft accuracy (0.580 vs 0.471) against the teacher's full probability distributions.
-* **Out-of-the-box raw calibration:** Before temperature scaling, the base checkpoint has higher raw ECE (0.213 vs 0.144). Laya achieves its 0.081 ECE after domain temperature fitting.
+- **High-cardinality label spaces (>20 options at default settings):** On Banking77, Jev scores 0.870 (on 72 labels) while Laya scores 0.425 (on 77 labels at default 256-token head budget). This is an architectural token-budget constraint: options share a fixed `head_max_len` budget (192 tokens on English, 256 on multilingual), so 77 options receive only ~3 to 4 tokens per label, causing text to become indistinguishable. Jev supports up to 255 options out-of-the-box. While `laya-multilingual` supports 1,024 context (and up to 8,192 in the encoder) and you can raise `agent.cfg["head_max_len"] = 512` at runtime, Jev is currently better suited for 50+ options in a single prompt without tuning.
+- **Soft distribution matching:** On typed-decisions, while Laya achieves higher argmax accuracy (0.766 vs 0.727), Jev achieves higher soft accuracy (0.580 vs 0.471) against the teacher's full probability distributions.
+- **Out-of-the-box raw calibration:** Before temperature scaling, the base checkpoint has higher raw ECE (0.213 vs 0.144). Laya achieves its 0.081 ECE after domain temperature fitting.
 
 Full detail, including every workflow and all 51 languages: **[`BENCHMARKS.md`](BENCHMARKS.md)**.
 
@@ -301,15 +301,15 @@ Full detail, including every workflow and all 51 languages: **[`BENCHMARKS.md`](
 
 400 cases, 2,000 decisions, four workflows.
 
-| model | accuracy | soft acc | Brier | ECE | score MAE |
-|---|---|---|---|---|---|
-| **`laya-typed-decisions`** | **0.766** | 0.471 | **0.062** | 0.213 | **0.242** |
-| `laya` | 0.362 | 0.332 | 0.316 | 0.175 | 0.694 |
-| `laya-multilingual` | 0.342 | 0.326 | 0.439 | 0.285 | 0.687 |
-| *Jev 1.13.0 (published)* | *0.727* | *0.580* | *0.148* | *0.144* | *0.391* |
-| *teacher self-agreement ceiling* | *0.735* | | | | |
-| *per-question majority class* | *0.461* | | | | |
-| *random guess* | *0.318* | | | | |
+| model                            | accuracy  | soft acc | Brier     | ECE     | score MAE |
+| -------------------------------- | --------- | -------- | --------- | ------- | --------- |
+| **`laya-typed-decisions`**       | **0.766** | 0.471    | **0.062** | 0.213   | **0.242** |
+| `laya`                           | 0.362     | 0.332    | 0.316     | 0.175   | 0.694     |
+| `laya-multilingual`              | 0.342     | 0.326    | 0.439     | 0.285   | 0.687     |
+| _Jev 1.13.0 (published)_         | _0.727_   | _0.580_  | _0.148_   | _0.144_ | _0.391_   |
+| _teacher self-agreement ceiling_ | _0.735_   |          |           |         |           |
+| _per-question majority class_    | _0.461_   |          |           |         |           |
+| _random guess_                   | _0.318_   |          |           |         |           |
 
 The fine-tuned checkpoint beats Jev by 3.9 points and clears the teacher ceiling, with 2.4x
 better Brier and 1.6x better score MAE. It wins on all four workflows: invoice processing
@@ -325,28 +325,28 @@ All of the capability on this benchmark comes from fine-tuning.
 
 ### Multilingual (51 languages, MASSIVE intent, 20 options, random = 0.050)
 
-| | `laya` | `laya-multilingual` |
-|---|---|---|
-| English | **0.783** | 0.657 |
-| 13 other languages | 0.306 | **0.451** |
-| XNLI, English | **0.860** | 0.843 |
-| XNLI, 14 other languages | 0.521 | **0.731** |
+|                          | `laya`    | `laya-multilingual` |
+| ------------------------ | --------- | ------------------- |
+| English                  | **0.783** | 0.657               |
+| 13 other languages       | 0.306     | **0.451**           |
+| XNLI, English            | **0.860** | 0.843               |
+| XNLI, 14 other languages | 0.521     | **0.731**           |
 
 Across all 51 languages the English checkpoint macro-averages **0.227** with macro ECE
 **0.733**, and only 23 of 51 languages clear 3x random. Khmer scores **0.000 at 95.2%
-confidence**. This is why [`Router`](#model-routing-three-checkpoints-one-call) exists: the
+confidence**. This is why [`Router`](#quickstart-route-mode-recommended) exists: the
 model's own confidence gives no warning, so the routing decision has to be made before the
 forward pass.
 
 ### English tasks
 
-| task | `laya` | `laya-multilingual` | note |
-|---|---|---|---|
-| AG News | **0.947** | 0.937 | in training mix |
-| BoolQ | **0.830** | 0.787 | in training mix |
-| DAIR Emotion | **0.573** | 0.513 | held out |
-| prompt-injections | **0.698** | 0.578 | held out, n=116 |
-| SST-5 (ordinal) | 0.372 | 0.282 | held out |
+| task              | `laya`    | `laya-multilingual` | note            |
+| ----------------- | --------- | ------------------- | --------------- |
+| AG News           | **0.947** | 0.937               | in training mix |
+| BoolQ             | **0.830** | 0.787               | in training mix |
+| DAIR Emotion      | **0.573** | 0.513               | held out        |
+| prompt-injections | **0.698** | 0.578               | held out, n=116 |
+| SST-5 (ordinal)   | 0.372     | 0.282               | held out        |
 
 ### Calibration
 
@@ -357,27 +357,27 @@ temperatures at all, so fit them before relying on its probabilities.
 
 ### Honest limits
 
-* **The base checkpoints are near chance on typed-decisions zero-shot** -- 0.362 and 0.352
+- **The base checkpoints are near chance on typed-decisions zero-shot** -- 0.362 and 0.352
   against a 0.318 random baseline and a 0.461 majority-class baseline. The 0.766 figure comes
   from the checkpoint fine-tuned on that benchmark's own training split. Laya is a fast base to
   specialise, not a zero-shot decision engine.
-* **High-cardinality choice questions and token budgets:** Sequences split into an option prompt budget (`head_max_len`) and the remaining document/state budget (`max_len - head_max_len`):
-  * `laya` (English) defaults to 512 context (`head_max_len = 192`, ~320 tokens for state).
-  * `laya-multilingual` and `laya-typed-decisions` default to 1,024 context (`head_max_len = 256`, ~768 tokens for state; mmBERT-base encoder supports up to 8,192 with RoPE).
-  At default settings, a 77-option question like Banking77 allocates only `(256 - 16) // 77` ≈ 3–4 tokens per label, which causes accuracy to fall off sharply (0.425 vs Jev's 0.870). If evaluating 50+ options in a single question:
+- **High-cardinality choice questions and token budgets:** Sequences split into an option prompt budget (`head_max_len`) and the remaining document/state budget (`max_len - head_max_len`):
+  - `laya` (English) defaults to 512 context (`head_max_len = 192`, ~320 tokens for state).
+  - `laya-multilingual` and `laya-typed-decisions` default to 1,024 context (`head_max_len = 256`, ~768 tokens for state; mmBERT-base encoder supports up to 8,192 with RoPE).
+    At default settings, a 77-option question like Banking77 allocates only `(256 - 16) // 77` ≈ 3–4 tokens per label, which causes accuracy to fall off sharply (0.425 vs Jev's 0.870). If evaluating 50+ options in a single question:
   1. Raise `agent.cfg["head_max_len"] = 512` and `agent.cfg["max_len"] = 1024` (or up to 2048 / 4096 / 8192) so every option has enough tokens to remain distinct.
   2. Or split large option sets into a two-step coarse-to-fine hierarchical choice.
-* Ordinal `score` questions are the weakest primitive (SST-5 0.372).
-* `laya` collapses outside English; `laya-multilingual` is weaker on English. Route, or pick
+- Ordinal `score` questions are the weakest primitive (SST-5 0.372).
+- `laya` collapses outside English; `laya-multilingual` is weaker on English. Route, or pick
   deliberately.
 
 ---
 
 ## Live Demo & Resources
 
-* **Hugging Face Model:** [convaiinnovations/laya](https://huggingface.co/convaiinnovations/laya)
-* **Interactive Web Demo:** [convaiinnovations/laya-demo](https://huggingface.co/spaces/convaiinnovations/laya-demo)
-* **Engineering Writeup:** [Read the full story on Dev.to](https://dev.to/nandakishor_m_6cc0adfde9f/i-built-non-autoregressive-decision-models-a-year-ago-then-a-frontier-lab-called-it-a-18me)
+- **Hugging Face Model:** [convaiinnovations/laya](https://huggingface.co/convaiinnovations/laya)
+- **Interactive Web Demo:** [convaiinnovations/laya-demo](https://huggingface.co/spaces/convaiinnovations/laya-demo)
+- **Engineering Writeup:** [Read the full story on Dev.to](https://dev.to/nandakishor_m_6cc0adfde9f/i-built-non-autoregressive-decision-models-a-year-ago-then-a-frontier-lab-called-it-a-18me)
 
 ---
 
@@ -387,7 +387,7 @@ Fine-tune Laya on your own domain data. The notebook runs on Kaggle's free 2xT4 
 the whole loop: build the dataset, train with RLCD (proper-scoring-rule rewards, GRPO-style
 policy gradient), fit calibration temperatures, evaluate, and push the result to the Hub.
 
-* **[`notebooks/laya_finetune_typed_decisions_2xT4_kaggle.ipynb`](notebooks/laya_finetune_typed_decisions_2xT4_kaggle.ipynb)**
+- **[`notebooks/laya_finetune_typed_decisions_2xT4_kaggle.ipynb`](notebooks/laya_finetune_typed_decisions_2xT4_kaggle.ipynb)**
 
 Fine-tuning is where most of the value is. On the typed-decisions benchmark the base
 checkpoints score near chance zero-shot (0.36 and 0.35 against a 0.318 random baseline),
