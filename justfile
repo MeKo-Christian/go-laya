@@ -34,7 +34,7 @@ fmt-check:
 
 # Lint Markdown (checker only -- prettier owns Markdown formatting, see treefmt.toml)
 lint-md:
-    markdownlint '**/*.md' --ignore original --ignore node_modules
+    markdownlint '**/*.md' --ignore original --ignore models --ignore node_modules
 
 # Generate a coverage report
 cover:

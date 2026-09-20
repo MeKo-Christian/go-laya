@@ -58,6 +58,11 @@ coverage.html
 .venv-ref/
 
 # Model artefacts: downloaded checkpoints and ONNX exports are large and reproducible.
+# An export above the 2 GB protobuf limit is split into a graph file plus a weights
+# blob, and `*.onnx` does NOT match that blob -- hence the two extra patterns.
 *.onnx
+*.onnx.data
+*.onnx_data
 *.safetensors
 /models/
+/build/

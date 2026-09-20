@@ -15,6 +15,10 @@ excludes = [
   # Frozen upstream Python. It is the parity reference; reformatting it would make
   # every diff against upstream unreadable.
   "original/**",
+  # Downloaded checkpoints. treefmt's default --walk=auto uses the git walker and so
+  # already skips these, but prettier being handed a 34 MB tokenizer.json is not a
+  # failure mode worth leaving to a default.
+  "models/**",
   # Binary and generated artefacts.
   "*.png",
   "*.svg",
