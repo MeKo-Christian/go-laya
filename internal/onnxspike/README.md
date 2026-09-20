@@ -1,6 +1,8 @@
 # `internal/onnxspike` — Spikes S2 and S3
 
-Throwaway. **M6 deletes this package** and replaces it with `internal/backend`.
+Spike code, but not throwaway: **M6 absorbs this package into `internal/backend/onnx`**
+(`PLAN.md` Task 6.10). The library-resolution chain, the external-data rule, the fixture schema,
+the finalizer regression and both benchmarks move as they are; only the name goes.
 
 It answers two questions. **S2:** can the S1 ONNX export be executed from Go **without CGO**, and
 is `github.com/shota3506/onnxruntime-purego` stable enough to build on (risk R5)? **S3:** how long
@@ -11,7 +13,9 @@ and S3 for the evidence.
 
 Both tests skip unless an ONNX Runtime shared library is present, and `TestForwardPass`
 additionally needs the S1 export. CI has neither, so CI skips them — `AGENTS.md`'s rule that
-the pipeline never needs model weights.
+the pipeline never needs model weights. `TestForwardPass` and the benchmarks also skip under
+`go test -short`, which is what `just test` and `just check` run, so an export on disk never turns
+the developer loop into a 1.7 GB load.
 
 ```bash
 just spike-onnx            # both tests, CGO-free
@@ -19,10 +23,10 @@ just spike-onnx-race 200   # the finalizer hunt, under the race detector
 just bench-onnx            # the S3 latency sweep -- about 20 minutes
 ```
 
-| Input              | Default                                       | Override                                |
-| ------------------ | --------------------------------------------- | --------------------------------------- |
-| ORT shared library | `/usr/local/lib`, `/usr/lib`, Homebrew        | `LAYA_ORT_LIB`, then `ORT_LIBRARY_PATH` |
-| The `.onnx` export | `build/onnx/` (where `export_onnx.py` writes) | `LAYA_ONNX_DIR`                         |
+| Input              | Default                                                                  | Override                                |
+| ------------------ | ------------------------------------------------------------------------ | --------------------------------------- |
+| ORT shared library | `/usr/local/lib`, `/usr/lib`, Homebrew                                   | `LAYA_ORT_LIB`, then `ORT_LIBRARY_PATH` |
+| The `.onnx` export | none — `LAYA_ONNX_DIR` is required; the `just` recipes pass `build/onnx` | `LAYA_ONNX_DIR`                         |
 
 A variable that is set but points nowhere is an error, not a fallback: quietly running
 against a different runtime than the caller named would defeat the purpose of pinning one.

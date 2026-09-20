@@ -78,7 +78,7 @@ func loadFixture(t *testing.T) fixture {
 	return fx
 }
 
-func requireORTLibrary(t *testing.T) string {
+func requireORTLibrary(t testing.TB) string {
 	t.Helper()
 
 	lib, err := findORTLibrary()
@@ -91,7 +91,7 @@ func requireORTLibrary(t *testing.T) string {
 
 // newRuntime opens the shared library and logs which one answered, so a failing run
 // names the runtime it was talking to rather than leaving it to be guessed.
-func newRuntime(t *testing.T, lib string) *ort.Runtime {
+func newRuntime(t testing.TB, lib string) *ort.Runtime {
 	t.Helper()
 
 	rt, err := ort.NewRuntime(lib, ortAPIVersion)
@@ -191,12 +191,16 @@ func maxScaledDiff(got, want []float32) float64 {
 // tensors wrong -- a bool packed as four bytes would do it -- from two ONNX Runtime
 // builds disagreeing in the last digits.
 func TestForwardPass(t *testing.T) {
+	if testing.Short() {
+		t.Skip("-short: needs an ONNX Runtime library and the 1.7 GB S1 export")
+	}
+
 	lib := requireORTLibrary(t)
 	fx := loadFixture(t)
 
 	model, err := findModel(fx.ONNX)
 	if err != nil {
-		t.Skipf("no export: %v (run scripts/export_onnx.py --all --dynamo)", err)
+		t.Skipf("no export: %v (run scripts/export_onnx.py --all --dynamo and set LAYA_ONNX_DIR)", err)
 	}
 
 	t.Logf("checkpoint %s, fixture built with onnxruntime %s", fx.Checkpoint, fx.Versions["onnxruntime"])

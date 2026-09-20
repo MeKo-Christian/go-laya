@@ -6,7 +6,8 @@
 // and thread counts, on the hardware we actually ship numbers for". The numbers have to
 // come through the binding go-laya ships, not through Python, because that is the thing
 // whose latency a caller will experience -- hence a Go benchmark next to the S2 spike
-// rather than a script. M6 deletes this package along with the rest of the spike.
+// rather than a script. M6 moves it unchanged into internal/backend/onnx (PLAN.md Task
+// 6.10): Task 6.9.2 re-runs it against quantized graphs and needs the same harness.
 
 package onnxspike
 
@@ -101,23 +102,12 @@ func shapesFor(ck benchCheckpoint, threads int) []benchShape {
 	return out
 }
 
-func requireORTLibraryB(tb testing.TB) string {
-	tb.Helper()
-
-	lib, err := findORTLibrary()
-	if err != nil {
-		tb.Skipf("no ONNX Runtime: %v", err)
-	}
-
-	return lib
-}
-
 // newBenchEnv opens the runtime and an environment once for the whole sweep. Both are
 // cheap; the session is the expensive part and is created per (checkpoint, threads).
 func newBenchEnv(tb testing.TB) (*ort.Runtime, *ort.Env) {
 	tb.Helper()
 
-	lib := requireORTLibraryB(tb)
+	lib := requireORTLibrary(tb)
 
 	rt, err := ort.NewRuntime(lib, ortAPIVersion)
 	if err != nil {
@@ -233,6 +223,10 @@ func runOnce(tb testing.TB, sess *ort.Session, inputs map[string]*ort.Value) {
 // machine these numbers come from is a 15 W mobile part that throttles, so the spread
 // between the two is itself a result.
 func BenchmarkForward(b *testing.B) {
+	if testing.Short() {
+		b.Skip("-short: needs an ONNX Runtime library and the S1 exports")
+	}
+
 	rt, env := newBenchEnv(b)
 
 	for _, ck := range benchCheckpoints {
@@ -325,6 +319,10 @@ func millis(d time.Duration) float64 {
 // across the first load only, because ORT does not return the arena to the OS when the
 // session closes and every later iteration would report roughly zero.
 func BenchmarkSessionLoad(b *testing.B) {
+	if testing.Short() {
+		b.Skip("-short: needs an ONNX Runtime library and the S1 exports")
+	}
+
 	rt, env := newBenchEnv(b)
 
 	for _, ck := range benchCheckpoints {

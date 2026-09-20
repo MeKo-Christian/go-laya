@@ -2,8 +2,10 @@
 // through a CGO-free ONNX Runtime binding, and that the runtime.AddCleanup defect
 // go-pocket-tts hit (risk R5) is gone.
 //
-// The package is throwaway by design. Milestone M6 replaces it with
-// internal/backend and deletes it; nothing but its own tests may import it.
+// Milestone M6 absorbs this package into internal/backend/onnx (PLAN.md Task
+// 6.10): the library-resolution chain, the external-data check, the fixture
+// schema, the finalizer regression and the benchmarks all move; only the name
+// dies. Nothing but its own tests may import it in the meantime.
 //
 // This file is deliberately pure stdlib and carries no build constraints, so
 // `GOOS=windows go build ./...` (release.yml) keeps working. The binding is
@@ -50,7 +52,9 @@ func findORTLibrary() (string, error) {
 			continue
 		}
 		// #nosec G703 -- the path is the developer's own environment variable naming a
-		// local shared library, and it is only stat'ed. Nothing downloaded reaches here.
+		// local shared library, and it is only stat'ed. This holds only while every path
+		// here is developer-supplied: when Task 6.10 moves this into internal/backend,
+		// Hub-derived paths (Task 6.2) must not be routed through it.
 		if _, err := os.Stat(path); err != nil {
 			return "", fmt.Errorf("%s=%q: %w", key, path, err)
 		}
@@ -68,19 +72,21 @@ func findORTLibrary() (string, error) {
 
 // findModel resolves the .onnx file named by the fixture.
 //
-// The exports are gitignored build artefacts of scripts/export_onnx.py, so the
-// default is where that script writes them, two levels up from this package.
-// LAYA_ONNX_DIR overrides the directory.
+// LAYA_ONNX_DIR must be set explicitly; there is no implicit default. The
+// exports are gitignored build artefacts of scripts/export_onnx.py, and a
+// default pointing at build/onnx meant that any developer with an export on
+// disk pulled 1.7 GB into every `go test ./...`. The `just spike-onnx` and
+// `just bench-onnx` recipes set the variable to build/onnx themselves.
 func findModel(name string) (string, error) {
 	dir := os.Getenv("LAYA_ONNX_DIR")
 	if dir == "" {
-		dir = filepath.Join("..", "..", "build", "onnx")
+		return "", fmt.Errorf("model %s: %w (set LAYA_ONNX_DIR)", name, errNotFound)
 	}
 
 	path := filepath.Join(dir, name)
 
-	// #nosec G703 -- dir is a developer environment variable or a fixed relative default,
-	// and name comes from a checked-in fixture; both are stat'ed, never opened.
+	// #nosec G703 -- dir is a developer environment variable and name comes from a
+	// checked-in fixture; both are stat'ed, never opened. Same M6 caveat as above.
 	if _, err := os.Stat(path); err != nil {
 		return "", fmt.Errorf("%s: %w", path, err)
 	}
