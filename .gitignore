@@ -56,6 +56,9 @@ coverage.html
 # The isolated Python reference environment (PLAN.md task 1.1). Its pinned versions
 # live in scripts/requirements-ref.txt, which IS committed -- the venv itself is not.
 .venv-ref/
+# ... and the transformers-4.x cross-check environment (task 1.6), plus any sibling.
+.venv-ref*/
+.ruff_cache/
 
 # Model artefacts: downloaded checkpoints and ONNX exports are large and reproducible.
 # An export above the 2 GB protobuf limit is split into a graph file plus a weights
