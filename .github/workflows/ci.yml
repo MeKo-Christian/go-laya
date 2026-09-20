@@ -9,76 +9,107 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  # transformers probes for TensorFlow at import; when TF is present its abseil runtime can
-  # deadlock model construction. Laya is torch-only.
-  USE_TF: "0"
-  USE_TORCH: "1"
-  TOKENIZERS_PARALLELISM: "false"
+permissions:
+  contents: read
 
 jobs:
   test:
-    name: tests (py${{ matrix.python }})
-    runs-on: ubuntu-latest
+    name: tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.9", "3.11", "3.13"]
+        # PLAN.md section 8 requires green on linux/amd64 and darwin/arm64.
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-go@v5
         with:
-          python-version: ${{ matrix.python }}
-          cache: pip
+          go-version-file: go.mod
+          cache: true
 
-      - name: Install
-        run: |
-          python -m pip install --upgrade pip
-          # CPU-only torch keeps the job under a minute instead of pulling CUDA wheels
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -e .
+      - name: Build
+        run: go build -v ./...
 
-      - name: Import check
-        run: python -c "import laya; print(laya.__version__); print(sorted(laya.__all__))"
-
-      - name: Routing and language-detection tests
-        run: |
-          python tests/test_router.py
-          python tests/test_criteria.py
+      - name: Test
+        run: go test -race -count=1 ./...
 
   lint:
     name: lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-go@v5
         with:
-          python-version: "3.11"
-      - run: pip install ruff
-      - name: Ruff
-        run: ruff check laya/ --select=E9,F63,F7,F82,F401,F811 --line-length=120
-      - name: Byte-compile every module
-        run: python -m compileall -q laya/ tests/
+          go-version-file: go.mod
+          cache: true
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          # Pinned: `default: all` in .golangci.yml means a new linter in a new
+          # release turns green into red without a commit in this repo.
+          version: v2.12.2
+          args: --timeout=5m ./...
 
-  build:
-    name: package
+  format:
+    name: format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-go@v5
         with:
-          python-version: "3.11"
-      - run: pip install build twine
-      - run: python -m build
-      - name: Validate metadata
-        run: python -m twine check dist/*
-      - name: Version must match the tag on a release
-        if: startsWith(github.ref, 'refs/tags/v')
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install formatters
+        env:
+          # Every version is pinned. treefmt --fail-on-change compares bytes, so an
+          # upstream formatter release changing its output breaks CI on an unrelated PR.
+          TREEFMT_VERSION: "2.5.0"
+          PRETTIER_VERSION: "3.9.6"
+          SHFMT_VERSION: "v3.12.0"
+          GOFUMPT_VERSION: "v0.10.0"
+          GCI_VERSION: "v0.14.0"
         run: |
-          pkg=$(python -c "import re;print(re.search(r'version = \"(.*)\"', open('pyproject.toml').read()).group(1))")
-          tag="${GITHUB_REF_NAME#v}"
-          test "$pkg" = "$tag" || { echo "pyproject $pkg != tag $tag"; exit 1; }
-      - uses: actions/upload-artifact@v4
+          curl -sSL -o treefmt.tar.gz \
+            "https://github.com/numtide/treefmt/releases/download/v${TREEFMT_VERSION}/treefmt_${TREEFMT_VERSION}_linux_amd64.tar.gz"
+          tar -xzf treefmt.tar.gz treefmt
+          sudo install -m 0755 treefmt /usr/local/bin/treefmt
+          npm install -g "prettier@${PRETTIER_VERSION}"
+          go install "mvdan.cc/gofumpt@${GOFUMPT_VERSION}"
+          go install "github.com/daixiang0/gci@${GCI_VERSION}"
+          go install "mvdan.cc/sh/v3/cmd/shfmt@${SHFMT_VERSION}"
+          sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - uses: extractions/setup-just@v2
+
+      - name: Check formatting
+        run: just fmt-check
+
+  markdown:
+    name: markdown
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          name: dist
-          path: dist/
+          node-version: "22"
+      # markdownlint is a checker here, never a formatter -- prettier owns Markdown
+      # formatting. See the comment at the top of treefmt.toml for why.
+      - run: npm install -g markdownlint-cli@0.42.0
+      - uses: extractions/setup-just@v2
+      - run: just lint-md
+
+  tidy:
+    name: go.mod is tidy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: extractions/setup-just@v2
+      - run: just check-tidy

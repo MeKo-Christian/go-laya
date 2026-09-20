@@ -1,11 +1,12 @@
 name: Release
 
 # Tag a commit v0.2.1 and push it; this builds, verifies the version matches the tag,
-# publishes to PyPI and opens a GitHub Release.
+# and opens a GitHub Release.
 #
-# Set up once: PyPI -> Publishing -> add a Trusted Publisher for
-#   owner NandhaKishorM, repo laya, workflow release.yml, environment pypi
-# Then no API token ever lives in GitHub secrets.
+# There is no publish step. A Go module is consumed straight from the tag, so
+# `go get github.com/MeKo-Christian/go-laya@v0.2.1` works the moment the tag exists
+# and the proxy has fetched it. The upstream Python pipeline published to PyPI; that
+# job is gone, and its trusted publisher was bound to NandhaKishorM/laya in any case.
 
 on:
   push:
@@ -13,93 +14,61 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write        # create the GitHub Release
-  id-token: write        # PyPI trusted publishing
-
-env:
-  USE_TF: "0"
-  USE_TORCH: "1"
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-go@v5
         with:
-          python-version: "3.11"
+          go-version-file: go.mod
+          cache: true
 
-      - name: Install
-        run: |
-          python -m pip install --upgrade pip build twine
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -e .
-
-      - name: Tests must pass before anything is published
-        run: |
-          python tests/test_router.py
-          python tests/test_criteria.py
-
-      - name: Build
-        run: python -m build
+      - name: Tests must pass before anything is released
+        run: go test -race -count=1 ./...
 
       - name: Version matches the tag
-        if: startsWith(github.ref, 'refs/tags/v')   # workflow_dispatch has no tag to match
+        if: startsWith(github.ref, 'refs/tags/v') # workflow_dispatch has no tag to match
         run: |
-          pkg=$(python -c "import re;print(re.search(r'version = \"(.*)\"', open('pyproject.toml').read()).group(1))")
+          # laya.go is the single source of truth (PLAN.md task 0.5). laya_test.go
+          # pins the two properties this comparison relies on: that Version is valid
+          # semver, and that it does not itself carry a leading v.
+          pkg=$(sed -n 's/^const Version = "\(.*\)"$/\1/p' laya.go)
           tag="${GITHUB_REF_NAME#v}"
-          echo "pyproject=$pkg tag=$tag"
-          test "$pkg" = "$tag" || { echo "::error::pyproject version $pkg does not match tag $tag"; exit 1; }
+          echo "laya.go=$pkg tag=$tag"
+          if [ -z "$pkg" ]; then
+            echo "::error::could not read Version out of laya.go - has the declaration been reformatted?"
+            exit 1
+          fi
+          test "$pkg" = "$tag" || { echo "::error::laya.go Version $pkg does not match tag $tag"; exit 1; }
 
-      - run: python -m twine check dist/*
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dist
-          path: dist/
-
-  pypi:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    environment: pypi
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist/
-      # Needs a Trusted Publisher on PyPI (Publishing -> add: owner NandhaKishorM,
-      # repo laya, workflow release.yml, environment pypi). Until that exists the
-      # exchange fails; skip-existing also makes a re-run safe after a manual upload.
-      - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          skip-existing: true
+      - name: Build every package for the supported platforms
+        run: |
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            echo "--- $target"
+            GOOS="${target%/*}" GOARCH="${target#*/}" go build ./...
+          done
 
   github_release:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write # create the GitHub Release
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist/
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "release $GITHUB_REF_NAME already exists - uploading artifacts to it"
-            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+            echo "release $GITHUB_REF_NAME already exists - nothing to do"
           else
-            gh release create "$GITHUB_REF_NAME" dist/* \
+            gh release create "$GITHUB_REF_NAME" \
               --title "$GITHUB_REF_NAME" \
               --generate-notes
           fi
