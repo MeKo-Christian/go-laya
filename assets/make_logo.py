@@ -13,6 +13,7 @@ decision.
                                        assets/logo-lockup.svg  logo-lockup.png
                                        assets/logo-mark-mono.svg
 """
+
 import math
 import os
 import subprocess
@@ -23,15 +24,15 @@ os.makedirs(ASSETS, exist_ok=True)
 
 INK = "#111111"
 BLUE = "#2a78d6"
-PAPER = "#eceef1"      # wordmark ink for dark backgrounds
+PAPER = "#eceef1"  # wordmark ink for dark backgrounds
 
-SIZE = 64          # viewBox
+SIZE = 64  # viewBox
 CX = CY = 32.0
 R = 21.0
 STROKE = 5.0
 
 # The stroke covers this sweep; the points cover the rest.
-ARC_FROM, ARC_TO = 118.0, 300.0      # degrees, measured counter-clockwise from +x
+ARC_FROM, ARC_TO = 118.0, 300.0  # degrees, measured counter-clockwise from +x
 N_DOTS = 10
 DOT_MAX, DOT_MIN = 3.1, 0.85
 OP_MAX, OP_MIN = 0.95, 0.42
@@ -39,7 +40,7 @@ OP_MAX, OP_MIN = 0.95, 0.42
 
 def pt(deg, r=R):
     a = math.radians(deg)
-    return CX + r * math.cos(a), CY - r * math.sin(a)      # SVG y grows downward
+    return CX + r * math.cos(a), CY - r * math.sin(a)  # SVG y grows downward
 
 
 def arc_path():
@@ -58,24 +59,26 @@ def dots(color):
     centre says that where a ring of even dots would just read as a loading spinner. It is also
     what the model does -- a spread of options collapsing to one decision.
     """
-    span = 268.0                     # how far the spiral travels before reaching the centre
+    span = 268.0  # how far the spiral travels before reaching the centre
     out = []
     for i in range(N_DOTS):
         f = (i + 1) / float(N_DOTS)
         deg = ARC_TO + span * f
-        r = R * (1.0 - 0.93 * (f ** 1.08))          # ease inward, ending near the centre
+        r = R * (1.0 - 0.93 * (f**1.08))  # ease inward, ending near the centre
         x, y = pt(deg, r)
-        rr = DOT_MAX + (DOT_MIN - DOT_MAX) * (f ** 0.85)
-        op = OP_MAX + (OP_MIN - OP_MAX) * (f ** 1.4)
-        out.append('    <circle cx="%.3f" cy="%.3f" r="%.3f" fill="%s" opacity="%.3f"/>'
-                   % (x, y, rr, color, op))
+        rr = DOT_MAX + (DOT_MIN - DOT_MAX) * (f**0.85)
+        op = OP_MAX + (OP_MIN - OP_MAX) * (f**1.4)
+        out.append(
+            '    <circle cx="%.3f" cy="%.3f" r="%.3f" fill="%s" opacity="%.3f"/>'
+            % (x, y, rr, color, op)
+        )
     out.append('    <circle cx="%.2f" cy="%.2f" r="2.35" fill="%s"/>' % (CX, CY, color))
     return "\n".join(out)
 
 
 def mark_svg(color, use_current=False):
     c = "currentColor" if use_current else color
-    return '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d"
+    return """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d"
      width="%d" height="%d" role="img" aria-label="Laya">
   <title>Laya</title>
   <desc>An open stroke whose end breaks into points that spiral inward and shrink to a single
@@ -85,7 +88,7 @@ def mark_svg(color, use_current=False):
 %s
   </g>
 </svg>
-''' % (SIZE, SIZE, SIZE, SIZE, arc_path(), c, STROKE, dots(c))
+""" % (SIZE, SIZE, SIZE, SIZE, arc_path(), c, STROKE, dots(c))
 
 
 def lockup_svg(color, text=INK):
@@ -95,9 +98,9 @@ def lockup_svg(color, text=INK):
     README header stays legible under either GitHub theme.
     """
     w, h = 252, 72
-    s = 0.95                                   # mark scale inside the lockup
+    s = 0.95  # mark scale inside the lockup
     tx, ty = 2, (h - SIZE * s) / 2
-    return '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d"
+    return """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d"
      width="%d" height="%d" role="img" aria-label="Laya">
   <title>Laya</title>
   <g transform="translate(%.2f,%.2f) scale(%.3f)">
@@ -109,12 +112,11 @@ def lockup_svg(color, text=INK):
   <text x="71.5" y="%d" font-family="DejaVu Sans, Helvetica Neue, Helvetica, Arial, sans-serif"
         font-size="10.5" letter-spacing="2.6" fill="%s" opacity="0.62">DECISIONS, NOT TEXT</text>
 </svg>
-''' % (w, h, w, h, tx, ty, s, arc_path(), color, STROKE, dots(color), 42, text, 57, text)
+""" % (w, h, w, h, tx, ty, s, arc_path(), color, STROKE, dots(color), 42, text, 57, text)
 
 
 def render(svg_path, png_path, width):
-    subprocess.run(["rsvg-convert", "-w", str(width), "-a",
-                    "-o", png_path, svg_path], check=True)
+    subprocess.run(["rsvg-convert", "-w", str(width), "-a", "-o", png_path, svg_path], check=True)
     return os.path.getsize(png_path)
 
 
