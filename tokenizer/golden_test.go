@@ -1,6 +1,7 @@
 package tokenizer
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -55,11 +56,16 @@ func assertEncoding(tb testing.TB, tok *HF, text string, wantIDs []int64, wantTo
 	gotIDs := tok.Encode(text)
 	gotTokens := tokensOf(tok, gotIDs)
 
-	if equalIDs(gotIDs, wantIDs) {
+	// Both halves, per AGENTS.md. Returning early on matching ids would let
+	// every idToTok regression through -- including the one this package
+	// actually had, where the added tokens above English's contiguous
+	// vocabulary were missing from the table and IDToToken returned "".
+	if equalIDs(gotIDs, wantIDs) && slices.Equal(gotTokens, wantTokens) {
 		return
 	}
 	tb.Errorf("Encode(%q)\n got ids %v\n     tokens %q\nwant ids %v\n     tokens %q\nfirst divergence at %d",
-		text, gotIDs, gotTokens, wantIDs, wantTokens, firstDiff(gotIDs, wantIDs))
+		text, gotIDs, gotTokens, wantIDs, wantTokens,
+		firstDiff(gotIDs, wantIDs, gotTokens, wantTokens))
 }
 
 func equalIDs(a, b []int64) bool {
@@ -74,13 +80,23 @@ func equalIDs(a, b []int64) bool {
 	return true
 }
 
-func firstDiff(a, b []int64) int {
-	for i := range min(len(a), len(b)) {
-		if a[i] != b[i] {
+// firstDiff is the index of the first differing id, or -- when the ids agree
+// and only the token strings do not -- of the first differing token.
+func firstDiff(gotIDs, wantIDs []int64, gotTokens, wantTokens []string) int {
+	for i := range min(len(gotIDs), len(wantIDs)) {
+		if gotIDs[i] != wantIDs[i] {
 			return i
 		}
 	}
-	return min(len(a), len(b))
+	if len(gotIDs) != len(wantIDs) {
+		return min(len(gotIDs), len(wantIDs))
+	}
+	for i := range min(len(gotTokens), len(wantTokens)) {
+		if gotTokens[i] != wantTokens[i] {
+			return i
+		}
+	}
+	return min(len(gotTokens), len(wantTokens))
 }
 
 // TestEncodeSanitisesInvalidUTF8 is task 4.4.11. A lone surrogate cannot round
