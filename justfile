@@ -88,6 +88,16 @@ bench-onnx reps="5" out="build/bench-onnx.txt":
             -benchtime={{reps}}x -timeout 20m ./internal/onnxspike/ 2>&1 | tee -a {{out}}; \
     done
 
+# Task 4.5.3: assemble the tokenizer differential corpus into build/corpus.
+# ~157k lines across five streams -- Tatoeba sentences in 427 languages, generated
+# Unicode probes, the multilingual vocabulary, gettext catalogues, and every added
+# token in 16 whitespace contexts. The Tatoeba samples are cached per language, so
+# only the first run touches the network.
+corpus python=".venv-ref/bin/python":
+    {{python}} scripts/build_corpus.py --out {{justfile_directory()}}/build/corpus
+
+
+
 # Report known vulnerabilities in the dependency graph
 vuln:
     govulncheck ./...
