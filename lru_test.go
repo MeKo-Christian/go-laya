@@ -352,3 +352,31 @@ func TestRouterConcurrentRouteAndEvict(t *testing.T) {
 		t.Errorf("%d resident at max_loaded=1, want 1", got)
 	}
 }
+
+// Invariant #50's actual content, which upstream does not test.
+//
+// test_router.py:264 asserts `ra.max_loaded >= 1` on a cap-1 router holding one
+// attached agent -- true whatever attach does, since the cap already is 1. The
+// raise only becomes observable with a second agent, and without it the next
+// load evicts what was just attached, which is the whole thing attach exists to
+// prevent. Deleting the raise leaves the upstream port entirely green.
+func TestRouterAttachRaisesTheCapEnoughToHoldEverything(t *testing.T) {
+	r, _ := stubbedRouter(t, 1)
+	mustLoad(t, r, "english")
+
+	sentinel := &stubAgent{name: "sentinel"}
+	if err := r.Attach("multilingual", sentinel); err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+
+	if got := r.MaxLoaded(); got != 2 {
+		t.Errorf("MaxLoaded() = %d after attaching a second agent, want 2", got)
+	}
+
+	// With the cap raised, the next load evicts only the oldest. With the cap
+	// still at 1 it would evict both, taking the attached agent with it.
+	mustLoad(t, r, "typed-decisions")
+	if got := r.Loaded(); !slices.Equal(got, []string{"multilingual", "typed-decisions"}) {
+		t.Errorf("Loaded() = %v, want [multilingual typed-decisions]", got)
+	}
+}
