@@ -26,7 +26,7 @@ not finished; keep it rare. A milestone is done when every task box under it is 
 | ---------------------------------------------------------------------- | ------------------------------------------------ | -------------------- |
 | [M0 — Scaffolding](#m0--scaffolding)                                   | Go module, tooling, CI, frozen Python, `Version` | ✅ 5/6 (0.1 skipped) |
 | [Spikes S1–S3](#3-spikes--do-these-before-writing-library-code)        | ONNX export, binding choice, latency floor       | 🟢 S1–S3 done        |
-| [M1 — Reference harness](#m1--the-python-reference-harness)            | `testdata/*.jsonl` golden vectors                | 🟡 1.1–1.2 done      |
+| [M1 — Reference harness](#m1--the-python-reference-harness)            | `testdata/*.jsonl` golden vectors                | ✅ done              |
 | [M2 — Tier-1 core](#m2--tier-1-core-no-ml-runtime-620-lines-of-python) | `jsonx`, `lang`, `mailtext`, `presets`, render   | ⬜ not started       |
 | [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ⬜ not started       |
 | [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | ⬜ not started       |
@@ -43,14 +43,15 @@ useful (see the M3 milestone check).
 
 ## 0. Decisions already made
 
-| #   | Decision                                                                                                  | Rationale                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| --- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D1  | **ONNX first, pure-Go native backend later**, both behind a `Backend` interface                           | The entire `DecisionModel.forward` is one static graph — no KV cache, no loop, no control flow — so it exports to a single ONNX file and there is exactly _one_ numerics-parity surface to test. Reimplementing ModernBERT (RoPE, alternating local/global attention, GeGLU) up front is weeks of work before anything runs. In-house precedent: `yalue/onnxruntime_go` in `pogo`, `FlashSR`, `go-autoresearch`, `Emanetics`.                                                                                                                                                                                                                                                                      |
-| D2  | **Pure-Go tokenizer, no CGO**                                                                             | User decision. Keeps the build CGO-free and cross-compilable. This is the single largest correctness risk in the port (see §6 R1) and is therefore front-loaded: golden corpus before implementation.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| D3  | **Inference only**                                                                                        | `proper_reward`, `td_lambda_targets` and `collate_items` are RLCD training math a Go port cannot use. Deliberate API narrowing; document it in the README.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| D4  | **Python moves to `original/`**                                                                           | Same pattern as `go-pocket-tts`. Upstream Python is frozen as the parity reference and drives `scripts/dump_python_parity.py`. Also keeps the Apache-2.0 derivative-work attribution honest.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| D5  | **`shota3506/onnxruntime-purego` for ONNX, pinned to `8db8bd7`; every `*Value` closed explicitly**        | Spike S2. The CGO-free path holds: `CGO_ENABLED=0 go build ./...` passes and the S1 export runs through the binding, agreeing with the Python ORT run to 3.8e-06. R5's `runtime.AddCleanup` panic is fixed upstream (PR #11, merged 2026-03-15); `go-pocket-tts` is pinned two commits short of it. The cost is stated rather than hidden: the binding carries **no tags at all**, so the pin is a pseudo-version of the untagged HEAD of a 31-star library whose README says "APIs may change without notice", and a live data race remains on the finalizer path. `yalue/onnxruntime_go` (719 stars, v1.36.0, cgo) stays the fallback, and D1's `Backend` seam is what keeps the swap contained. |
-| D6  | **CPU is a batch deployment; no quantization by default; `IntraOpNumThreads` is the physical core count** | Spike S3. Measured through the shipped binding on a 15 W laptop: 0.6–1.9 s per question at the default 512-token `max_len`, 9–43× upstream's 33 ms on a T4. Two measured surprises drive the decision rather than the headline number: **batching does not amortise on CPU** (per-question cost is flat, where the T4 falls 4.6×), and **all hardware threads is the wrong setting** (every checkpoint peaks at 8 of 12 and then loses 12–26%). So go-laya ships CPU as the default, documents it as a background workload, and treats a GPU execution provider as the answer for interactive use. int8 stays off the default path until Task 6.9 measures ECE and Brier, not accuracy (R4).       |
+| #   | Decision                                                                                                  | Rationale                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| --- | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | **ONNX first, pure-Go native backend later**, both behind a `Backend` interface                           | The entire `DecisionModel.forward` is one static graph — no KV cache, no loop, no control flow — so it exports to a single ONNX file and there is exactly _one_ numerics-parity surface to test. Reimplementing ModernBERT (RoPE, alternating local/global attention, GeGLU) up front is weeks of work before anything runs. In-house precedent: `yalue/onnxruntime_go` in `pogo`, `FlashSR`, `go-autoresearch`, `Emanetics`.                                                                                                                                                                                                                                                                                                                                                                         |
+| D2  | **Pure-Go tokenizer, no CGO**                                                                             | User decision. Keeps the build CGO-free and cross-compilable. This is the single largest correctness risk in the port (see §6 R1) and is therefore front-loaded: golden corpus before implementation.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| D3  | **Inference only**                                                                                        | `proper_reward`, `td_lambda_targets` and `collate_items` are RLCD training math a Go port cannot use. Deliberate API narrowing; document it in the README.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| D4  | **Python moves to `original/`**                                                                           | Same pattern as `go-pocket-tts`. Upstream Python is frozen as the parity reference and drives `scripts/dump_python_parity.py`. Also keeps the Apache-2.0 derivative-work attribution honest.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| D5  | **`shota3506/onnxruntime-purego` for ONNX, pinned to `8db8bd7`; every `*Value` closed explicitly**        | Spike S2. The CGO-free path holds: `CGO_ENABLED=0 go build ./...` passes and the S1 export runs through the binding, agreeing with the Python ORT run to 3.8e-06. R5's `runtime.AddCleanup` panic is fixed upstream (PR #11, merged 2026-03-15); `go-pocket-tts` is pinned two commits short of it. The cost is stated rather than hidden: the binding carries **no tags at all**, so the pin is a pseudo-version of the untagged HEAD of a 31-star library whose README says "APIs may change without notice", and a live data race remains on the finalizer path. `yalue/onnxruntime_go` (719 stars, v1.36.0, cgo) stays the fallback, and D1's `Backend` seam is what keeps the swap contained.                                                                                                    |
+| D6  | **CPU is a batch deployment; no quantization by default; `IntraOpNumThreads` is the physical core count** | Spike S3. Measured through the shipped binding on a 15 W laptop: 0.6–1.9 s per question at the default 512-token `max_len`, 9–43× upstream's 33 ms on a T4. Two measured surprises drive the decision rather than the headline number: **batching does not amortise on CPU** (per-question cost is flat, where the T4 falls 4.6×), and **all hardware threads is the wrong setting** (every checkpoint peaks at 8 of 12 and then loses 12–26%). So go-laya ships CPU as the default, documents it as a background workload, and treats a GPU execution provider as the answer for interactive use. int8 stays off the default path until Task 6.9 measures ECE and Brier, not accuracy (R4).                                                                                                          |
+| D7  | **The reference environment stays on transformers 5.17.0; 4.x is unsafe for this port**                   | Task 1.6, measured rather than assumed. The two ModernBERT-large checkpoints are bit-identical across the major, but 4.57.6 silently mis-parses mmBERT's `rope_parameters.sliding_attention.rope_theta` (160000) and substitutes its own default of 10000.0, so every sliding-attention layer runs on the wrong RoPE frequencies — logits off by 6.96, act_logits by 1879. Correcting that one value makes 4.57.6 bit-identical, so this is a parsing bug, not a numerics difference. English is unaffected only because its sliding `rope_theta` genuinely is 10000.0. This **inverts** Task 1.6.2, which presumed 4.x was the safer pin. Upstream's declared `transformers>=4.45.0` floor is therefore wrong twice over: it predates ModernBERT (4.48) and it admits versions that mis-load mmBERT. |
 
 **D2 has a consequence that needs resolving in Spike S2:** `yalue/onnxruntime_go` requires CGO (it
 `dlopen`s the shared library _through_ cgo). A CGO-free tokenizer paired with a CGO ONNX binding
@@ -618,6 +619,11 @@ read the repo's conventions first.
 - [ ] **README still points at `raw.githubusercontent.com/NandhaKishorM/laya/...`** for every image and
       still documents the Python API. Left for Task 7.5, which rewrites it against the Go API — fixing
       the URLs now would mean documenting an API that does not exist.
+- [ ] **Nothing lints the workflows, the TOML or the YAML.** _(new, 2026-09-20)_ Dropping Trunk
+      (Task 1.5.3) removed a config that _enabled_ `actionlint`, `taplo` and `yamllint` — but that
+      config never ran, so nothing regressed and nothing was ever covered. Worth adding to
+      `just ci` deliberately rather than inheriting from a dormant tool. `actionlint` is the one
+      that would earn its place: `ci.yml` is hand-edited every time a formatter version is pinned.
 
 ### M1 — The Python reference harness
 
@@ -684,52 +690,138 @@ python -c "from huggingface_hub import snapshot_download as d; d('convaiinnovati
 Emits into `testdata/`, and records `transformers.__version__` / `tokenizers.__version__` in every
 file header.
 
-- [ ] **1.3.1** `testdata/tokenizer_{en,ml}.jsonl` — `{text, ids, ids_with_leading_space, tokens}` per
-      case, covering the full Task 4.4 case list.
-- [ ] **1.3.2** `testdata/sequence.jsonl` —
-      `(state, question, max_len, head_max_len, option_order, truncate_left) → (ids, markers)`.
-- [ ] **1.3.3** `testdata/render.jsonl` — `render_criterion` / `render_options` / `serialize_state`
-      inputs and outputs.
-- [ ] **1.3.4** `testdata/answers.jsonl` —
-      `(logits, act_logits, temperature, k, qtype, criteria) → answer JSON`.
-- [ ] **1.3.5** `testdata/logits.jsonl` — end-to-end `(state, questions) → (logits, act_logits)` for
-      ~50 fixed inputs.
-- [ ] **1.3.6** Every file carries a header record with the tokenizer/transformers versions and the
-      checkpoint sha from 1.2.2.
-- [ ] **1.3.7** Deterministic output: fixed seeds, sorted case order, stable float formatting, so
-      regeneration is a reviewable diff (R6).
+> **(2026-09-20) — done.** `scripts/dump_python_parity.py`, **eight** files not five (1.3.1 emits
+> two, and `mailtext` and `round4` were added — see below). JSONL with a header record on line 1,
+> because `treefmt`'s prettier owns `*.json` and would reflow a pretty fixture on every `just fmt`,
+> and a line-per-case diff is reviewable where a reflowed blob is not. `testdata/*.jsonl` is
+> excluded from `treefmt` and verified byte-stable across `just fmt`. Seven of the eight need no
+> weights at all: only `logits.jsonl` loads a checkpoint.
+
+- [x] **1.3.1** `testdata/tokenizer_{en,ml}.jsonl` — 53 cases each, covering Task 4.4.1–4.4.8.
+      (2026-09-20) — the record gained **`tokens_with_leading_space`**: the schema as written had a
+      single `tokens` field, so 4.4.10's "ids **and** token strings" was only half-assertable on the
+      `" " + text` variant that `common.py:68` actually uses. The corpus confirms §1.4 item 1 rather
+      than assuming it — EN ids differ with a leading space, ML ids do not — and §1.4's special-token
+      table exactly (EN UNK 50280/CLS 50281/SEP 50282/PAD 50283/MASK 50284; ML 3/2/1/0/4), which is
+      Task 4.2.4's assertion data. **Task 4.4.9 is deliberately excluded**: a lone surrogate cannot
+      round-trip through JSON (Python writes `\ud800`, Go's decoder yields U+FFFD), so a vector would
+      assert against a corrupted input. 4.4.9 says "decide and document the boundary" — this is the
+      decision; Go tests it at the API edge instead. New Task 4.4.11 records that.
+- [x] **1.3.2** `testdata/sequence.jsonl` — 45 cases, all three checkpoints. (2026-09-20) — carries
+      **both** the public `qdef` and the internal `q` (`{t,ins,crit}`), plus the checkpoint, because
+      the budgets differ (512/192 english, 1024/256 the other two) and a Go failure has to name
+      which. Also `n_options` and `markers_lost`, which is where `agent.py:262-263`'s `ValueError`
+      guard is pinned. Invariant #6 reproduces exactly: 77 options at `head_max_len=192` gives a
+      marker stride of 4, i.e. `per=4`.
+- [x] **1.3.3** `testdata/render.jsonl` — 41 cases. (2026-09-20) — `original/tests/test_criteria.py:33-100`
+      ported, plus #17's named golden cases and `serialize_state`'s key-order / HTML / non-ASCII
+      traps. Output is always carried as a **string**, never a nested object, or #17's
+      `{"d": "münchen"}` → literal-`ü` case would be unverifiable. The `default=str` cases use
+      `date`, `Decimal` and `complex` rather than `object()`, whose `str()` embeds a heap address and
+      would differ on every run; their inputs are recorded post-substitution because Go cannot
+      construct a Python `Decimal` anyway.
+- [x] **1.3.4** `testdata/answers.jsonl` — 27 cases. (2026-09-20) — carries
+      **`temperature_by_options`** as well as `temperature`: the 3-vector alone cannot exercise the
+      `temp_bucket` lookup (#23, Task 7.1.1), and `k` sweeps every bucket boundary (2, 3–5, 6–10,
+      11+) against both english's populated table and multilingual's empty one. `answer_json` is the
+      exact serialized string, because 7.3.1/7.3.2 compare bytes. Injected by hand because no sample
+      produces them: a `score` of exactly **0.0** (`docs/API.md:203-205`), and k=2 uniform under both
+      confidence formulas — which come out **0.0 for choice and 0.5 for noul**, the clearest possible
+      demonstration that #25 and #26 must not be unified.
+- [x] **1.3.5** `testdata/logits.jsonl` — 10 states × 3 questions × 3 checkpoints, batch-level.
+      (2026-09-20) — batch-level is not a convenience: `collate_items` derives `L` and `kmax` from
+      the whole batch and the act features soft-max over the padded `kmax` (`common.py:119-125`), so
+      one question in isolation is a different computation. Tagged per checkpoint and qtype for Task
+      6.9.3's reuse. **Final outputs only** — head intermediates for #35–#38 are M8's, and M8 is
+      deferred; Task 8.8 carries the regeneration.
+- [x] **1.3.6** (2026-09-20) — uniform header on line 1 of all eight files: the `transformers` /
+      `tokenizers` / `numpy` / `safetensors` / `python` versions, the Hub sha `1c5edc17…`, **and a
+      sha256 of each `tokenizer_config.json`**. That last one turns 1.2.2's `_fix_tokenizer_config`
+      hazard from a warning into a check. The hazard is currently **dormant**: all three local
+      configs were sha256-compared against the Hub at the pinned revision and are byte-identical,
+      already carrying the shapes the function would write.
+- [x] **1.3.7** (2026-09-20) — `np.random.default_rng` seeded per case from a **sha256** of the case
+      name, not `hash()`, which Python randomises per process; sorted, de-duplicated case order,
+      `torch.set_num_threads(1)`, CPU only. Verified by regenerating and diffing.
+- [x] **1.3.8** _(new)_ `testdata/mailtext.jsonl` — 26 cases over `original/laya/email.py`.
+      (2026-09-20) — #66–#74 is the only invariant block with **neither** an upstream test nor golden
+      data, and Task 2.3.3 would otherwise port 90 lines of regex by reading them. It already paid:
+      the signature-cut window is widest for a _short_ message, not narrowest —
+      `min(int(n*0.6), n-8)` goes negative below nine lines and `max(1, …)` pins the start at 1 — the
+      opposite of what the code reads like.
+- [x] **1.3.9** _(new)_ `testdata/round4.jsonl` — 26 cases. (2026-09-20) — #29 is one of the four
+      §5 singles out as causing silent wrong answers, and no sampled softmax output lands on a tie,
+      so the values have to be chosen. Serves Task 2.1.5/2.1.6 directly, long before an answer exists
+      to apply `Round4` to. Includes `-2.5e-05 → -0.0`, which is a second trap: Go must emit negative
+      zero rather than normalising it.
+- [x] **1.3.10** _(new)_ `--verify-agent`. (2026-09-20) — `answers.jsonl` is generated by a
+      hand-inlined copy of `agent.py:294-343`, because the arithmetic has no seam; it lives inside
+      the batch loop. A copy that drifts would produce a corpus that is internally consistent and
+      wrong, so the generator runs a real `laya.Agent.system_one` over the same forward pass and
+      compares every field.
 
 **Task 1.4: Provenance test.** `TestGoldenProvenance` asserts the recorded tokenizer version matches
 what the Go implementation claims to target. A silent upstream tokenizer change is the realistic way
 parity regresses.
 
-- [ ] **1.4.1** A Go constant naming the targeted `tokenizers` version.
-- [ ] **1.4.2** `TestGoldenProvenance` reads every `testdata/*.jsonl` header and fails on a mismatch.
-- [ ] **1.4.3** The test also fails if a `testdata` file is missing its header entirely.
+- [x] **1.4.1** (2026-09-20) — `targetTokenizersVersion` and `targetTransformersVersion` in
+      `provenance_test.go`. Test-only: nothing in the library reads them yet, and an exported
+      constant the public API does not need is harder to remove than to add. M4 promotes them if the
+      pure-Go tokenizer needs a runtime target.
+- [x] **1.4.2** (2026-09-20) — globs rather than taking a file list, so a fixture added later is
+      covered without anyone remembering to register it. An empty glob is a failure, not a skip.
+- [x] **1.4.3** (2026-09-20) — all three failure modes exercised against a corrupted copy and
+      confirmed to fire: a bumped version, a header removed, and an empty file. A provenance test
+      that cannot fail is worse than none.
 
 **Task 1.5: Lint the harness.** _(new, 2026-09-20)_ `original/**` is excluded from `treefmt`
 and the repo has no Python formatter, so `scripts/*.py` is the one part of the tree nothing
 checks. That was acceptable when `scripts/` was empty and is not now.
 
-- [ ] **1.5.1** Add `ruff format` and `ruff check` to `treefmt.toml` over `scripts/*.py`, leaving
-      `original/**` excluded — reformatting the parity reference would make every diff against
-      upstream unreadable.
-- [ ] **1.5.2** Pin the `ruff` version in CI the way the other formatters are pinned.
+- [x] **1.5.1** (2026-09-20) — `ruff.toml` at the root (`line-length = 100`, `E/F/B/I/UP`,
+      `laya` declared first-party for isort since it is reached through a `sys.path.insert` rather
+      than an install). **`ruff format` under treefmt; `ruff check` deliberately not** — it is a
+      checker, and `treefmt.toml`'s own header already explains why chaining one as a formatter can
+      fail to converge under `--fail-on-change`. It gets `just lint-py`, wired into `just ci`.
+      `original/**` stays excluded.
+- [x] **1.5.2** (2026-09-20) — `RUFF_VERSION: "0.16.8"` in `ci.yml`'s `format` job `env:` block,
+      same curl-tarball idiom as `TREEFMT_VERSION`, plus a `Lint Python` step. The sweep landed as
+      its own commit ahead of the wiring so both commits stay green: the file was hand-wrapped
+      between 88 and 107 columns, so no line length makes `ruff format` a no-op.
+- [x] **1.5.3** _(new)_ Drop Trunk. (2026-09-20) — `.trunk/` enabled 15 linters including a
+      **second** Python formatter stack (`black` + `isort` alongside `ruff`), and none of them ran:
+      no workflow invoked `trunk check` and both git hooks sat in `actions.disabled`. It was never
+      tracked either — excluded via `.git/info/exclude`, so this is a local removal with no repo
+      diff. One stack, not two.
 
 **Task 1.6: Cross-check the transformers major version.** _(new, 2026-09-20)_ The reference
 environment resolved to **transformers 5.17.0**. Upstream declares `transformers>=4.45.0` with no
 upper bound, so that is legal, but laya 0.3.4 predates 5.x. `load_state_dict(strict=True)` passing
 proves the _parameter set_ matches; it says nothing about numerics.
 
-- [ ] **1.6.1** Build the same checkpoint under a 4.x environment and diff the logits against
-      5.17.0 on a fixed batch, **before** Task 1.3 freezes any golden vector.
-- [ ] **1.6.2** If they differ beyond float noise, pin the reference environment to the major
-      version upstream was written against and re-freeze `scripts/requirements-ref.txt`.
+- [x] **1.6.1** (2026-09-20) — `scripts/crosscheck_transformers.py`, `.venv-ref4` with
+      transformers **4.57.6** (the last 4.x; note upstream's declared `>=4.45.0` floor predates
+      ModernBERT itself, which landed in 4.48). All three checkpoints, fp32 CPU, single-threaded,
+      run **before** any vector was frozen. Tokenizer ids were diffed too — the two environments
+      resolve `tokenizers` 0.22.2 and 0.23.2 — and agree exactly, so R6 is clean on that axis.
+- [x] **1.6.2** **Does not fire, and the task's presumption is backwards.** (2026-09-20) — the two
+      ModernBERT-large checkpoints are **bit-identical** across the major. `multilingual` diverges
+      enormously (logits by 6.96, act_logits by 1879) and the cause is a **parsing bug in 4.x**, not
+      a numerics difference: mmBERT's config sets
+      `rope_parameters.sliding_attention.rope_theta = 160000`, and transformers 4.57.6 loads its own
+      default of `10000.0` instead, so every sliding-attention layer runs on the wrong RoPE
+      frequencies. Setting that one value by hand makes 4.57.6 bit-identical — that is the whole
+      difference. English survives only because its sliding `rope_theta` genuinely **is** 10000.0
+      and so is unharmed by being ignored. Pinning to 4.x, which 1.6.2 assumes is the safe
+      direction, would have silently corrupted the multilingual checkpoint. **The reference
+      environment stays at transformers 5.17.0**, now on evidence rather than by default.
 
 **Exit criteria**
 
-- [ ] All five `testdata/*.jsonl` files committed; CI does not need Python to run the suite.
-- [ ] Commit: `feat(testdata): golden parity vectors generated from upstream Python`.
+- [x] All **eight** `testdata/*.jsonl` files committed; CI does not need Python to run the suite.
+      (2026-09-20) — the criterion said five; 1.3.1 emits two files and 1.3.8/1.3.9 added two more.
+      `just ci` is green with no Python interpreter involved in the Go suite.
+- [x] Commit: `feat(testdata): golden parity vectors generated from upstream Python`. (2026-09-20)
 
 ### M2 — Tier-1 core (no ML runtime, ~620 lines of Python)
 
@@ -946,6 +1038,10 @@ Required cases:
 - [ ] **4.4.9** Lone surrogates / invalid UTF-8 (Go tolerates, Python `str` does not) — decide and
       document the boundary; sanitize at the API edge.
 - [ ] **4.4.10** Both corpora run green: ids **and** token strings identical to Python.
+- [ ] **4.4.11** _(new, 2026-09-20)_ Lone surrogates are **not** in `testdata/tokenizer_*.jsonl`
+      and cannot be: Python writes `\ud800` and Go's decoder yields U+FFFD, so the vector would
+      assert against a corrupted input. 4.4.9's "decide and document the boundary" is therefore
+      settled the other way — sanitize at the API edge and test that Go-side, without a vector.
 
 **Task 4.5: Fuzz + differential.**
 
@@ -1217,16 +1313,16 @@ The four that cause silent wrong answers rather than loud failures, and therefor
 
 ## 6. Risks
 
-| #   | Risk                                                                                                                                                                                                                                                                                                | Mitigation                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| R1  | **Pure-Go tokenizer drift.** Marker positions are token indices, so one off-by-one silently corrupts every decision. Both candidate libraries have demonstrable bugs on exactly laya's paths.                                                                                                       | The `Tokenizer` interface (Task 4.1) keeps the decision reversible. Golden corpus + fuzz + a 100k-line differential run gate M5. If parity cannot be reached, `daulet/tokenizers` (CGO, wraps the same Rust crate Python uses — parity by construction) is a one-day swap.                                                                                                                                                                                                  |
-| R2  | **`torch.onnx.export` fails on ModernBERT-large.** transformers#35545 is still open; no ModernBERT-large ONNX is published anywhere.                                                                                                                                                                | Spike S1 up front. `sevenreasons/laya-onnx-fp16` unblocks development while our exporter is fixed.                                                                                                                                                                                                                                                                                                                                                                          |
-| R3  | **CPU latency ≫ the README's 33 ms.** _(2026-09-20, S3)_ Confirmed and quantified: 0.6–1.9 s per question at the default 512-token `max_len`, 9–43× the T4 figure. Not fatal — it is the fast end of the predicted band — but it rules out the interactive framing upstream's README uses.          | Measured before anything was promised; `BENCHMARKS.md` now carries the numbers and the hardware, and D6 records the decision. Of the levers listed here, **batching is not one** (measured flat on CPU) and **routing to mmBERT-base cannot be a default** without breaking M7's parity — it becomes opt-in Task 3.4. What is left: int8 (Task 6.9, gated on calibration), a GPU execution provider (Task 6.3.2), and setting `IntraOpNumThreads` correctly, which is free. |
-| R4  | **int8 quantization wrecks calibration.** This model's whole value is calibrated probabilities.                                                                                                                                                                                                     | Measure ECE and Brier, not accuracy. Never quantize by default.                                                                                                                                                                                                                                                                                                                                                                                                             |
-| R5  | **`onnxruntime-purego` instability.** _(2026-09-20, S2)_ The recorded `AddCleanup` panic is **fixed** upstream. What remains: an unsynchronised `Runtime.Close` racing the GC cleanup path, and a dependency on the untagged HEAD of a 31-star library that says its API may change without notice. | Close every `*Value` explicitly — that removes the race, and `internal/onnxspike` keeps a reproduction under `LAYA_ONNXSPIKE_FINALIZER=1`. `yalue/onnxruntime_go` remains the fallback behind D1's `Backend` seam, at the cost of CGO. New Task 6.6 pins the runtime itself.                                                                                                                                                                                                |
-| R6  | **Upstream tokenizer/transformers version drift** silently changes golden vectors.                                                                                                                                                                                                                  | `TestGoldenProvenance` (Task 1.4); `scripts/requirements-ref.txt` pinned; regeneration is a reviewed diff.                                                                                                                                                                                                                                                                                                                                                                  |
-| R7  | **Supply chain.** laya downloads checkpoints from the Hub; `laya.Open("someone/their-model")` must not be RCE.                                                                                                                                                                                      | Carry the upstream security policy over (Task 0.4): verify ONNX/safetensors headers, ETag/sha checks, no `os/exec` or `encoding/gob` on downloaded artifacts.                                                                                                                                                                                                                                                                                                               |
-| R8  | **Licensing.** This is a derivative of an Apache-2.0 work.                                                                                                                                                                                                                                          | Preserve `LICENSE`, add `NOTICE` with the original copyright and a statement of modification (Task 0.3). Weights are Apache-2.0 and ungated.                                                                                                                                                                                                                                                                                                                                |
+| #   | Risk                                                                                                                                                                                                                                                                                                             | Mitigation                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R1  | **Pure-Go tokenizer drift.** Marker positions are token indices, so one off-by-one silently corrupts every decision. Both candidate libraries have demonstrable bugs on exactly laya's paths.                                                                                                                    | The `Tokenizer` interface (Task 4.1) keeps the decision reversible. Golden corpus + fuzz + a 100k-line differential run gate M5. If parity cannot be reached, `daulet/tokenizers` (CGO, wraps the same Rust crate Python uses — parity by construction) is a one-day swap.                                                                                                                                                                                                  |
+| R2  | **`torch.onnx.export` fails on ModernBERT-large.** transformers#35545 is still open; no ModernBERT-large ONNX is published anywhere.                                                                                                                                                                             | Spike S1 up front. `sevenreasons/laya-onnx-fp16` unblocks development while our exporter is fixed.                                                                                                                                                                                                                                                                                                                                                                          |
+| R3  | **CPU latency ≫ the README's 33 ms.** _(2026-09-20, S3)_ Confirmed and quantified: 0.6–1.9 s per question at the default 512-token `max_len`, 9–43× the T4 figure. Not fatal — it is the fast end of the predicted band — but it rules out the interactive framing upstream's README uses.                       | Measured before anything was promised; `BENCHMARKS.md` now carries the numbers and the hardware, and D6 records the decision. Of the levers listed here, **batching is not one** (measured flat on CPU) and **routing to mmBERT-base cannot be a default** without breaking M7's parity — it becomes opt-in Task 3.4. What is left: int8 (Task 6.9, gated on calibration), a GPU execution provider (Task 6.3.2), and setting `IntraOpNumThreads` correctly, which is free. |
+| R4  | **int8 quantization wrecks calibration.** This model's whole value is calibrated probabilities.                                                                                                                                                                                                                  | Measure ECE and Brier, not accuracy. Never quantize by default.                                                                                                                                                                                                                                                                                                                                                                                                             |
+| R5  | **`onnxruntime-purego` instability.** _(2026-09-20, S2)_ The recorded `AddCleanup` panic is **fixed** upstream. What remains: an unsynchronised `Runtime.Close` racing the GC cleanup path, and a dependency on the untagged HEAD of a 31-star library that says its API may change without notice.              | Close every `*Value` explicitly — that removes the race, and `internal/onnxspike` keeps a reproduction under `LAYA_ONNXSPIKE_FINALIZER=1`. `yalue/onnxruntime_go` remains the fallback behind D1's `Backend` seam, at the cost of CGO. New Task 6.6 pins the runtime itself.                                                                                                                                                                                                |
+| R6  | **Upstream tokenizer/transformers version drift** silently changes golden vectors. _(2026-09-20, M1)_ Real, and now measured: transformers 4.57.6 moves `multilingual`'s logits by 6.96 against the pin (D7). The tokenizer half is clean — `tokenizers` 0.22.2 and 0.23.2 produce identical ids on every probe. | `TestGoldenProvenance` (Task 1.4) reads the header of every `testdata/*.jsonl` and fails the suite on a mismatch; all three of its failure modes were exercised rather than assumed. `scripts/requirements-ref.txt` stays pinned, regeneration is byte-identical, and the diff is reviewed. `scripts/crosscheck_transformers.py` is how the next pin bump gets checked instead of hoped about.                                                                              |
+| R7  | **Supply chain.** laya downloads checkpoints from the Hub; `laya.Open("someone/their-model")` must not be RCE.                                                                                                                                                                                                   | Carry the upstream security policy over (Task 0.4): verify ONNX/safetensors headers, ETag/sha checks, no `os/exec` or `encoding/gob` on downloaded artifacts.                                                                                                                                                                                                                                                                                                               |
+| R8  | **Licensing.** This is a derivative of an Apache-2.0 work.                                                                                                                                                                                                                                                       | Preserve `LICENSE`, add `NOTICE` with the original copyright and a statement of modification (Task 0.3). Weights are Apache-2.0 and ungated.                                                                                                                                                                                                                                                                                                                                |
 
 ---
 
