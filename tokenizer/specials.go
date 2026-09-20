@@ -15,7 +15,10 @@ type specialIDs struct {
 // addedToken is one entry of HF's AddedVocabulary, kept in the form the matcher
 // wants rather than the form the file stores.
 type addedToken struct {
-	content    string
+	content string
+	// pattern is what the matcher looks for: the content for a phase-1 token,
+	// the normalized content for a phase-2 one.
+	pattern    string
 	id         int64
 	lstrip     bool
 	rstrip     bool

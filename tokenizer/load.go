@@ -43,6 +43,10 @@ type HF struct {
 	norm   normalizer
 	pretok preTokenizer
 	added  []addedToken
+	// The two AddedVocabulary phases: normalized:false patterns matched
+	// against the raw string, normalized:true against the normalized segments.
+	phase1 addedMatcher
+	phase2 addedMatcher
 
 	byteFallback bool
 	fuseUnk      bool
@@ -121,6 +125,7 @@ func build(doc *tokenizerJSON, cfg *tokenizerConfigJSON) (*HF, error) {
 		return nil, err
 	}
 	t.buildAdded(doc.AddedTokens)
+	t.buildMatchers()
 	t.indexVocab()
 	return t, nil
 }
