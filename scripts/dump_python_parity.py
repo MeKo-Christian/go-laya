@@ -334,6 +334,31 @@ def tokenizer_cases(mask_token: str) -> list[tuple[str, str]]:
     ]:
         cases.append((f"masklstrip/{n}", t))
 
+    # The ByteLevel give-back, evaluated per added-token segment. `\s+(?!\S)`
+    # hands its last character back to a following `\s+` only when the run is
+    # followed by a non-space *inside the same segment* -- and an added token ends
+    # the segment. Measured against the oracle: "a\t\t[unused0]" pre-tokenises the
+    # run whole because it reaches the segment end, while "a\t\tX" splits it 1 + 1.
+    # Nothing in 4.4.12's probe list reaches this, and it is the exact shape of bug
+    # (a one-token shift) that moves every marker position after it.
+    #
+    # Both bracket styles are probed because the two checkpoints disagree about
+    # which is an added token: "[unused0]" is one on English (id 50285) and plain
+    # text on multilingual, "<unused0>" is one on multilingual (id 7) and plain
+    # text on English. One spelling alone would test a segment boundary on one
+    # checkpoint and ordinary text on the other, under a name claiming otherwise.
+    for n, t in [
+        ("tabs-then-en-added", "a\t\t[unused0]"),
+        ("tabs-then-ml-added", "a\t\t<unused0>"),
+        ("tabs-mid-segment", "a\t\tX"),
+        ("tabs-at-text-end", "a\t\t"),
+        ("tabs-before-mask", f"a\t\t{mask_token}"),
+        ("spaces-then-en-added", "a   [unused0]"),
+        ("spaces-then-ml-added", "a   <unused0>"),
+        ("spaces-mid-segment", "a   X"),
+    ]:
+        cases.append((f"giveback/{n}", t))
+
     # Space runs past the added-token table. English has whitespace added tokens for
     # runs of 2..24 only, so 25 and up must fall back to the merge loop -- 48 and 49
     # straddle two table-width boundaries.
@@ -408,6 +433,57 @@ def dump_tokenizer(name: str, ckpt: str, models_root: Path, out_dir: Path) -> No
             "pad_token_id": tok.pad_token_id,
             "unk_token_id": tok.unk_token_id,
         },
+    )
+    write_jsonl(out_dir / f"{name}.jsonl", head, cases)
+
+
+# ------------------------------------------------------------------ 4.4.13 pretok
+
+
+def dump_pretok(name: str, ckpt: str, models_root: Path, out_dir: Path) -> None:
+    """Per-stage vectors: the normalizer's output and the pre-tokenizer's pieces.
+
+    Task 4.4.13. The tokenizer_*.jsonl corpus pins the whole pipeline, which is
+    what parity means -- but it can only be run against the real 3.5/34 MB
+    tokenizer.json, so it is gated out of CI and a failure names no stage. These
+    vectors are pure ``str -> str`` and ``str -> list[str]``: the Go normalizer,
+    ByteLevel scanner and Metaspace can be tested against real Oniguruma output
+    with no model files present, and a red case says which stage broke.
+
+    Note the composition. ``pre_tokenize_str`` does **not** run the normalizer,
+    so feeding it the raw text would record a pipeline laya never executes. It
+    is fed ``normalized`` here, which is the order ``Tokenizer.encode`` uses and
+    the order the Go code implements.
+
+    Offsets ride along because they are what pins the give-back rule and the
+    lstrip spans; Go does not compute them, but a human reading a failure does.
+    """
+    from transformers import AutoTokenizer
+
+    tok_dir = models_root / "laya" / CHECKPOINT_DIRS[ckpt] / "tokenizer"
+    tok = AutoTokenizer.from_pretrained(tok_dir)
+    backend = tok.backend_tokenizer
+
+    cases = []
+    for case_name, text in tokenizer_cases(tok.mask_token):
+        normalized = backend.normalizer.normalize_str(text)
+        pieces = backend.pre_tokenizer.pre_tokenize_str(normalized)
+        cases.append(
+            {
+                "name": case_name,
+                "text": text,
+                "normalized": normalized,
+                "pretokens": [piece for piece, _ in pieces],
+                "offsets": [[start, end] for _, (start, end) in pieces],
+            }
+        )
+
+    head = header(
+        name,
+        models_root,
+        checkpoint=ckpt,
+        normalizer=json.loads(backend.normalizer.__getstate__())["type"],
+        pre_tokenizer=json.loads(backend.pre_tokenizer.__getstate__())["type"],
     )
     write_jsonl(out_dir / f"{name}.jsonl", head, cases)
 
@@ -1281,6 +1357,8 @@ def verify_answer_block(models_root: Path) -> None:
 FIXTURES = (
     "tokenizer_en",
     "tokenizer_ml",
+    "pretok_en",
+    "pretok_ml",
     "sequence",
     "render",
     "answers",
@@ -1319,6 +1397,10 @@ def main() -> int:
         dump_tokenizer("tokenizer_en", "english", args.models_root, args.out)
     if "tokenizer_ml" in wanted:
         dump_tokenizer("tokenizer_ml", "multilingual", args.models_root, args.out)
+    if "pretok_en" in wanted:
+        dump_pretok("pretok_en", "english", args.models_root, args.out)
+    if "pretok_ml" in wanted:
+        dump_pretok("pretok_ml", "multilingual", args.models_root, args.out)
     if "sequence" in wanted:
         dump_sequence(args.models_root, args.out)
     if "render" in wanted:
