@@ -5,12 +5,13 @@ These scripts exist to produce artefacts that _are_ checked in (golden vectors u
 `testdata/`) or that are too large to check in (ONNX exports), from the frozen upstream
 Python in `original/`.
 
-| Script                       | Purpose                                                          | `PLAN.md` |
-| ---------------------------- | ---------------------------------------------------------------- | --------- |
-| `export_onnx.py`             | Export the whole `DecisionModel` graph (encoder + head) to ONNX  | Spike S1  |
-| `dump_python_parity.py`      | Generate the golden vectors under `testdata/`                    | Task 1.3  |
-| `crosscheck_transformers.py` | Diff a transformers 4.x build against the pinned 5.17.0          | Task 1.6  |
-| `requirements-ref.txt`       | The pinned reference environment — **this file is the contract** | Task 1.1  |
+| Script                       | Purpose                                                                                | `PLAN.md` |
+| ---------------------------- | -------------------------------------------------------------------------------------- | --------- |
+| `export_onnx.py`             | Export the whole `DecisionModel` graph (encoder + head) to ONNX                        | Spike S1  |
+| `export_onnx.py --fixture`   | One forward pass with inputs, Python-ORT and PyTorch outputs, for the Go binding tests | Spike S2  |
+| `dump_python_parity.py`      | Generate the golden vectors under `testdata/`                                          | Task 1.3  |
+| `crosscheck_transformers.py` | Diff a transformers 4.x build against the pinned 5.17.0                                | Task 1.6  |
+| `requirements-ref.txt`       | The pinned reference environment — **this file is the contract**                       | Task 1.1  |
 
 ## Regenerating the golden vectors
 
