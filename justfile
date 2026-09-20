@@ -54,6 +54,14 @@ check-tidy:
         exit 1; \
     fi
 
+# Spike S2: run the ONNX-binding spike (skips unless an ORT library and the S1 export exist)
+spike-onnx:
+    CGO_ENABLED=0 go test -count=1 -v ./internal/onnxspike/
+
+# The S2.2 finalizer hunt. -race needs cgo, so this cannot also assert CGO_ENABLED=0.
+spike-onnx-race count="200":
+    go test -race -count={{count}} ./internal/onnxspike/
+
 # Report known vulnerabilities in the dependency graph
 vuln:
     govulncheck ./...
