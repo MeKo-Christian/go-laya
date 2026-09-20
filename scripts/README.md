@@ -5,10 +5,50 @@ These scripts exist to produce artefacts that _are_ checked in (golden vectors u
 `testdata/`) or that are too large to check in (ONNX exports), from the frozen upstream
 Python in `original/`.
 
-| Script                 | Purpose                                                          | `PLAN.md` |
-| ---------------------- | ---------------------------------------------------------------- | --------- |
-| `export_onnx.py`       | Export the whole `DecisionModel` graph (encoder + head) to ONNX  | Spike S1  |
-| `requirements-ref.txt` | The pinned reference environment — **this file is the contract** | Task 1.1  |
+| Script                       | Purpose                                                          | `PLAN.md` |
+| ---------------------------- | ---------------------------------------------------------------- | --------- |
+| `export_onnx.py`             | Export the whole `DecisionModel` graph (encoder + head) to ONNX  | Spike S1  |
+| `dump_python_parity.py`      | Generate the golden vectors under `testdata/`                    | Task 1.3  |
+| `crosscheck_transformers.py` | Diff a transformers 4.x build against the pinned 5.17.0          | Task 1.6  |
+| `requirements-ref.txt`       | The pinned reference environment — **this file is the contract** | Task 1.1  |
+
+## Regenerating the golden vectors
+
+```bash
+.venv-ref/bin/python scripts/dump_python_parity.py --all
+just fmt && just ci
+git diff --stat testdata/     # review it; this is never a drive-by
+```
+
+Eight JSONL files, one header record per file carrying the `transformers` /
+`tokenizers` / `numpy` / `safetensors` versions, the Hub revision and a sha256 of
+each `tokenizer_config.json`. `TestGoldenProvenance` fails the whole suite if a
+header drifts from what the Go port targets (R6).
+
+Seven of the eight need no model weights — only `logits.jsonl` loads a checkpoint.
+`--verify-agent` additionally checks the generator's inlined copy of
+`agent.py:294-343` against a real `laya.Agent.system_one` run, because a copy that
+drifts would produce a corpus that is internally consistent and wrong.
+
+`testdata/*.jsonl` is excluded from `treefmt` (see `treefmt.toml`): the vectors are
+compared byte-for-byte, so nothing may reflow them.
+
+## Checking the transformers major version
+
+```bash
+uv venv --python 3.12 .venv-ref4
+uv pip install --python .venv-ref4/bin/python --index-strategy unsafe-best-match \
+    --extra-index-url https://download.pytorch.org/whl/cpu \
+    'torch==2.14.0+cpu' 'transformers==4.57.6' 'numpy==2.5.3' 'safetensors==0.8.0'
+
+.venv-ref/bin/python  scripts/crosscheck_transformers.py --all --out build/x-5.json
+.venv-ref4/bin/python scripts/crosscheck_transformers.py --all --out build/x-4.json
+.venv-ref/bin/python  scripts/crosscheck_transformers.py --compare build/x-4.json build/x-5.json
+```
+
+**Answered 2026-09-20: stay on 5.17.0.** 4.57.6 mis-parses mmBERT's
+`rope_parameters.sliding_attention.rope_theta`, silently substituting its own
+default. Details in the script's docstring and `PLAN.md` task 1.6.
 
 ## The reference environment
 
