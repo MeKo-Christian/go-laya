@@ -1,0 +1,42 @@
+{"kind": "header", "fixture": "render", "generator": "scripts/dump_python_parity.py", "versions": {"python": "3.12.4", "transformers": "5.17.0", "tokenizers": "0.23.2", "numpy": "2.5.3", "safetensors": "0.8.0"}, "checkpoint_sha": "1c5edc17a7acd8701df6fc341c0d179f1c62c982", "tokenizer_config_sha256": {"english": "50044de60daaa73df97d262e15a40d4faf0160e7d742df64b377877a1320dd12", "multilingual": "6c6b2d8e3c84ce0e671c129cd6b374b235d6f9863042a5836358d00a89bbb5a1", "typed-decisions": "08d4cf3ac4dca381759441b85b91a6d40e688471dcd33d15d6649eb0a9a854d1"}, "seed": 0, "comment": "Generated against the pinned reference environment (scripts/requirements-ref.txt). Do not hand-edit: regenerating this file is a reviewed diff (PLAN.md R6)."}
+{"kind": "case", "name": "criterion/bool-false", "fn": "render_criterion", "input": false, "output": "false"}
+{"kind": "case", "name": "criterion/bool-true", "fn": "render_criterion", "input": true, "output": "true"}
+{"kind": "case", "name": "criterion/default-str-complex", "fn": "render_criterion", "input": {"z": "(1+2j)"}, "output": "{\"z\": \"(1+2j)\"}", "original_types": {"z": "complex"}, "note": "input recorded after json.dumps(default=str) substitution"}
+{"kind": "case", "name": "criterion/default-str-date", "fn": "render_criterion", "input": {"when": "2026-09-20"}, "output": "{\"when\": \"2026-09-20\"}", "original_types": {"when": "date"}, "note": "input recorded after json.dumps(default=str) substitution"}
+{"kind": "case", "name": "criterion/default-str-decimal", "fn": "render_criterion", "input": {"amount": "1.50"}, "output": "{\"amount\": \"1.50\"}", "original_types": {"amount": "Decimal"}, "note": "input recorded after json.dumps(default=str) substitution"}
+{"kind": "case", "name": "criterion/dict", "fn": "render_criterion", "input": {"desc": "phishing"}, "output": "{\"desc\": \"phishing\"}"}
+{"kind": "case", "name": "criterion/empty-dict", "fn": "render_criterion", "input": {}, "output": "{}"}
+{"kind": "case", "name": "criterion/empty-string", "fn": "render_criterion", "input": "", "output": ""}
+{"kind": "case", "name": "criterion/float", "fn": "render_criterion", "input": 3.5, "output": "3.5"}
+{"kind": "case", "name": "criterion/int", "fn": "render_criterion", "input": 3, "output": "3"}
+{"kind": "case", "name": "criterion/list", "fn": "render_criterion", "input": ["a", "b"], "output": "[\"a\", \"b\"]"}
+{"kind": "case", "name": "criterion/nested", "fn": "render_criterion", "input": {"a": {"b": [1, {"c": null}]}}, "output": "{\"a\": {\"b\": [1, {\"c\": null}]}}"}
+{"kind": "case", "name": "criterion/non-ascii", "fn": "render_criterion", "input": {"d": "münchen"}, "output": "{\"d\": \"münchen\"}"}
+{"kind": "case", "name": "criterion/none", "fn": "render_criterion", "input": null, "output": "null"}
+{"kind": "case", "name": "criterion/str-passthrough", "fn": "render_criterion", "input": "phishing or scam", "output": "phishing or scam"}
+{"kind": "case", "name": "options/choice/bare-forms", "fn": "render_options", "input": {"t": "choice", "ins": "x", "crit": {"tech": null, "sales": ""}}, "output": ["tech", "sales"]}
+{"kind": "case", "name": "options/choice/dict-desc", "fn": "render_options", "input": {"t": "choice", "ins": "x", "crit": {"billing": {"desc": "payments"}}}, "output": ["billing: {\"desc\": \"payments\"}"]}
+{"kind": "case", "name": "options/choice/empty", "fn": "render_options", "input": {"t": "choice", "ins": "x", "crit": {}}, "output": []}
+{"kind": "case", "name": "options/choice/mixed", "fn": "render_options", "input": {"t": "choice", "ins": "x", "crit": {"a": {"n": 1}, "b": [1, 2], "c": 3.5}}, "output": ["a: {\"n\": 1}", "b: [1, 2]", "c: 3.5"]}
+{"kind": "case", "name": "options/choice/strings", "fn": "render_options", "input": {"t": "choice", "ins": "x", "crit": {"a": "first", "b": null}}, "output": ["a: first", "b"]}
+{"kind": "case", "name": "options/choice/zero-and-false", "fn": "render_options", "input": {"t": "choice", "ins": "x", "crit": {"zero": 0, "no": false}}, "output": ["zero: 0", "no: false"]}
+{"kind": "case", "name": "options/noul/defaults", "fn": "render_options", "input": {"t": "noul", "ins": "x", "crit": null}, "output": ["false: no, the statement does not hold", "true: yes, the statement holds"]}
+{"kind": "case", "name": "options/noul/dict-criteria", "fn": "render_options", "input": {"t": "noul", "ins": "x", "crit": {"true": [1], "false": {"z": 0}}}, "output": ["false: {\"z\": 0}", "true: [1]"]}
+{"kind": "case", "name": "options/noul/empty-dict", "fn": "render_options", "input": {"t": "noul", "ins": "x", "crit": {}}, "output": ["false: no, the statement does not hold", "true: yes, the statement holds"]}
+{"kind": "case", "name": "options/noul/reversed-dict-order", "fn": "render_options", "input": {"t": "noul", "ins": "x", "crit": {"true": {"desc": "phishing"}, "false": {"desc": "ok"}}}, "output": ["false: {\"desc\": \"ok\"}", "true: {\"desc\": \"phishing\"}"]}
+{"kind": "case", "name": "options/noul/strings", "fn": "render_options", "input": {"t": "noul", "ins": "x", "crit": {"true": "yes it is", "false": "no"}}, "output": ["false: no", "true: yes it is"]}
+{"kind": "case", "name": "options/score/dict-criteria", "fn": "render_options", "input": {"t": "score", "ins": "x", "crit": {"low": 1, "high": 2}}, "output": ["level 0: low", "level 1: high"]}
+{"kind": "case", "name": "options/score/empty", "fn": "render_options", "input": {"t": "score", "ins": "x", "crit": []}, "output": []}
+{"kind": "case", "name": "options/score/mixed-levels", "fn": "render_options", "input": {"t": "score", "ins": "x", "crit": [{"d": "low"}, "high", 2]}, "output": ["level 0: {\"d\": \"low\"}", "level 1: high", "level 2: 2"]}
+{"kind": "case", "name": "options/score/strings", "fn": "render_options", "input": {"t": "score", "ins": "x", "crit": ["low", "high"]}, "output": ["level 0: low", "level 1: high"]}
+{"kind": "case", "name": "options/score/with-none", "fn": "render_options", "input": {"t": "score", "ins": "x", "crit": [{"a": 1}, [2], null]}, "output": ["level 0: {\"a\": 1}", "level 1: [2]", "level 2: null"]}
+{"kind": "case", "name": "state/dict-flat", "fn": "serialize_state", "input": {"subject": "invoice 4411", "amount": 42}, "output": "{\"subject\": \"invoice 4411\", \"amount\": 42}"}
+{"kind": "case", "name": "state/dict-html-chars", "fn": "serialize_state", "input": {"html": "<b>a & b</b>"}, "output": "{\"html\": \"<b>a & b</b>\"}"}
+{"kind": "case", "name": "state/dict-nested", "fn": "serialize_state", "input": {"user": {"id": 7, "tags": ["a", "b"]}, "ok": true, "none": null}, "output": "{\"user\": {\"id\": 7, \"tags\": [\"a\", \"b\"]}, \"ok\": true, \"none\": null}"}
+{"kind": "case", "name": "state/dict-non-ascii", "fn": "serialize_state", "input": {"city": "München", "emoji": "🚀"}, "output": "{\"city\": \"München\", \"emoji\": \"🚀\"}"}
+{"kind": "case", "name": "state/dict-unsorted-keys", "fn": "serialize_state", "input": {"z": 1, "a": 2, "m": 3}, "output": "{\"z\": 1, \"a\": 2, \"m\": 3}"}
+{"kind": "case", "name": "state/empty-dict", "fn": "serialize_state", "input": {}, "output": "{}"}
+{"kind": "case", "name": "state/empty-list", "fn": "serialize_state", "input": [], "output": "[]"}
+{"kind": "case", "name": "state/list", "fn": "serialize_state", "input": [1, "two", {"three": 3}], "output": "[1, \"two\", {\"three\": 3}]"}
+{"kind": "case", "name": "state/str-passthrough", "fn": "serialize_state", "input": "just a string", "output": "just a string"}
+{"kind": "case", "name": "state/str-with-braces", "fn": "serialize_state", "input": "{\"not\": \"parsed\"}", "output": "{\"not\": \"parsed\"}"}

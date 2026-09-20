@@ -1,0 +1,27 @@
+{"kind": "header", "fixture": "round4", "generator": "scripts/dump_python_parity.py", "versions": {"python": "3.12.4", "transformers": "5.17.0", "tokenizers": "0.23.2", "numpy": "2.5.3", "safetensors": "0.8.0"}, "checkpoint_sha": "1c5edc17a7acd8701df6fc341c0d179f1c62c982", "tokenizer_config_sha256": {"english": "50044de60daaa73df97d262e15a40d4faf0160e7d742df64b377877a1320dd12", "multilingual": "6c6b2d8e3c84ce0e671c129cd6b374b235d6f9863042a5836358d00a89bbb5a1", "typed-decisions": "08d4cf3ac4dca381759441b85b91a6d40e688471dcd33d15d6649eb0a9a854d1"}, "seed": 0, "comment": "Generated against the pinned reference environment (scripts/requirements-ref.txt). Do not hand-edit: regenerating this file is a reviewed diff (PLAN.md R6)."}
+{"kind": "case", "name": "round4/00", "input": 0.00125, "input_repr": "0.00125", "output": 0.0013, "output_repr": "0.0013"}
+{"kind": "case", "name": "round4/01", "input": 0.00135, "input_repr": "0.00135", "output": 0.0014, "output_repr": "0.0014"}
+{"kind": "case", "name": "round4/02", "input": 0.00115, "input_repr": "0.00115", "output": 0.0011, "output_repr": "0.0011"}
+{"kind": "case", "name": "round4/03", "input": -0.00125, "input_repr": "-0.00125", "output": -0.0013, "output_repr": "-0.0013"}
+{"kind": "case", "name": "round4/04", "input": -0.00135, "input_repr": "-0.00135", "output": -0.0014, "output_repr": "-0.0014"}
+{"kind": "case", "name": "round4/05", "input": 2.5e-05, "input_repr": "2.5e-05", "output": 0.0, "output_repr": "0.0"}
+{"kind": "case", "name": "round4/06", "input": 3.5e-05, "input_repr": "3.5e-05", "output": 0.0, "output_repr": "0.0"}
+{"kind": "case", "name": "round4/07", "input": 1.5e-05, "input_repr": "1.5e-05", "output": 0.0, "output_repr": "0.0"}
+{"kind": "case", "name": "round4/08", "input": -2.5e-05, "input_repr": "-2.5e-05", "output": -0.0, "output_repr": "-0.0"}
+{"kind": "case", "name": "round4/09", "input": 0.12345, "input_repr": "0.12345", "output": 0.1235, "output_repr": "0.1235"}
+{"kind": "case", "name": "round4/10", "input": 0.123450001, "input_repr": "0.123450001", "output": 0.1235, "output_repr": "0.1235"}
+{"kind": "case", "name": "round4/11", "input": 0.98765, "input_repr": "0.98765", "output": 0.9877, "output_repr": "0.9877"}
+{"kind": "case", "name": "round4/12", "input": 0.5, "input_repr": "0.5", "output": 0.5, "output_repr": "0.5"}
+{"kind": "case", "name": "round4/13", "input": -0.5, "input_repr": "-0.5", "output": -0.5, "output_repr": "-0.5"}
+{"kind": "case", "name": "round4/14", "input": 0.0, "input_repr": "0.0", "output": 0.0, "output_repr": "0.0"}
+{"kind": "case", "name": "round4/15", "input": -0.0, "input_repr": "-0.0", "output": -0.0, "output_repr": "-0.0"}
+{"kind": "case", "name": "round4/16", "input": 1.0, "input_repr": "1.0", "output": 1.0, "output_repr": "1.0"}
+{"kind": "case", "name": "round4/17", "input": 0.99995, "input_repr": "0.99995", "output": 1.0, "output_repr": "1.0"}
+{"kind": "case", "name": "round4/18", "input": 0.99994999, "input_repr": "0.99994999", "output": 0.9999, "output_repr": "0.9999"}
+{"kind": "case", "name": "round4/19", "input": 1e-09, "input_repr": "1e-09", "output": 0.0, "output_repr": "0.0"}
+{"kind": "case", "name": "round4/20", "input": -1e-09, "input_repr": "-1e-09", "output": -0.0, "output_repr": "-0.0"}
+{"kind": "case", "name": "round4/21", "input": 0.3333333333333333, "input_repr": "0.3333333333333333", "output": 0.3333, "output_repr": "0.3333"}
+{"kind": "case", "name": "round4/22", "input": 0.6666666666666666, "input_repr": "0.6666666666666666", "output": 0.6667, "output_repr": "0.6667"}
+{"kind": "case", "name": "round4/23", "input": 3.141592653589793, "input_repr": "3.141592653589793", "output": 3.1416, "output_repr": "3.1416"}
+{"kind": "case", "name": "round4/24", "input": 2.718281828459045, "input_repr": "2.718281828459045", "output": 2.7183, "output_repr": "2.7183"}
+{"kind": "case", "name": "round4/25", "input": 10000000000.00005, "input_repr": "10000000000.00005", "output": 10000000000.0, "output_repr": "10000000000.0"}
