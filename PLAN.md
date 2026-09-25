@@ -30,7 +30,7 @@ not finished; keep it rare. A milestone is done when every task box under it is 
 | [M2 — Tier-1 core](#m2--tier-1-core-no-ml-runtime-620-lines-of-python) | `jsonx`, `lang`, `mailtext`, `presets`, render   | 🟢 2.1–2.4 done; 2.5.4 partial    |
 | [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ✅ done                           |
 | [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | 🟢 4.1–4.5 done; 4.3.9/4.5.5 open |
-| [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ⬜ not started                    |
+| [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | 🟢 5.1 done                       |
 | [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | ⬜ not started                    |
 | [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started                    |
 | [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred                       |
@@ -1547,11 +1547,30 @@ decision, not yet a fix.**
 This is 38 lines carrying most of the porting risk, and it has **no test at all upstream**.
 Invariants §5 items 1–13.
 
-- [ ] **5.1.1** Port the token-budget arithmetic: `opt_budget`, the `< 16` fallback, `[:48]`.
-- [ ] **5.1.2** Port the truncation direction: `[-room:]` when `truncate_left`, else `[:room]`.
-- [ ] **5.1.3** Port the final `ids[:max_len]` clamp and the marker filter that drops markers pushed
+- [x] **5.1.1** Port the token-budget arithmetic: `opt_budget`, the `< 16` fallback, `[:48]`.
+      (2026-09-25) — `internal/prompt.BuildSequence`; `TestBuildSequenceBudget` pins the 49-id
+      option cap, invariant #6's own 77-option example (`per=4`, budget −116, head at 8, 320 ids),
+      a fallback that does truncate (mask included), `head_max_len < 16`, and a head that takes the
+      whole budget. Python's `//` is spelled as Go's `/`: they differ only on a negative numerator,
+      which `max(4, …)` absorbs, and the comment says so.
+- [x] **5.1.2** Port the truncation direction: `[-room:]` when `truncate_left`, else `[:room]`.
+      (2026-09-25) — `pyHead`/`pyTail` carry Python's slice semantics, including `st[-0:]` being the
+      **whole** state. `TestBuildSequenceTruncation` pins both directions, room beyond the state, and
+      `room == 0` in both: under `truncate_left` the last slot goes to the state's first id, not to
+      `[SEP]` — so the 5.2.3 note's "agrees only by way of the clamp" is true only when the options
+      end short of `max_len - 1`.
+- [x] **5.1.3** Port the final `ids[:max_len]` clamp and the marker filter that drops markers pushed
       past the clamp.
-- [ ] **5.1.4** Marker positions are token indices — assert them explicitly, not just the id stream.
+      (2026-09-25) — `TestBuildSequenceClamp`: a marker at `max_len` is dropped, one at `max_len - 1`
+      survives, and the trailing `[SEP]` is clamped away. Invariant #13's `ValueError` stays with the
+      caller (M7), as it does upstream.
+- [x] **5.1.4** Marker positions are token indices — assert them explicitly, not just the id stream.
+      (2026-09-25) — every case asserts the marker slice exactly and that each surviving marker
+      points at a mask id; `TestBuildSequenceLayout` adds `option_order`, the mask scrub in all three
+      sources, noul/score heads, a structured state and zero options. All of it runs on a
+      one-id-per-word stub tokenizer, so a failure names the arithmetic; 5.2.2 builds on that stub.
+      Three injected defects (`st[-0:]` as empty, `<=` in the marker filter, head budget +1) each
+      failed a case. The fixture test is still 5.2.1's.
 
 **Task 5.2: Assert against `testdata/sequence.jsonl` byte-for-byte.**
 
