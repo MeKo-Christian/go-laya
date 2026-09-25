@@ -31,7 +31,7 @@ not finished; keep it rare. A milestone is done when every task box under it is 
 | [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ✅ done                           |
 | [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | 🟢 4.1–4.5 done; 4.3.9/4.5.5 open |
 | [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ✅ done                           |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | 🟡 6.1 done                       |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | 🟡 6.1 done; 6.2 partial          |
 | [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started                    |
 | [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred                       |
 
@@ -1671,8 +1671,8 @@ type Batch struct {
 - [x] **6.1.3** The fake fails loudly on an unknown input rather than returning zeros, so a prompt
       regression cannot masquerade as a passing test.
       (2026-09-26) — a miss returns no outputs and an error wrapping `ErrUnknownBatch` that names
-      the nearest same-shape recording and its first differing cell (`… english/en/billing differs
-    in 1 cells, first at input_ids[1][5]: got 21008, recorded 21007`).
+      the nearest same-shape recording and its first differing cell, e.g.
+      `first at input_ids[1][5]: got 21008, recorded 21007`.
       `TestFakeRejectsUnknownBatch` covers one changed cell in each of the five tensors, a dropped
       row, a trimmed column and all 10 `multilingual` batches fed to the `english` fake; returning
       zeros on a miss fails it. An unknown checkpoint name fails `New` rather than yielding a fake
@@ -1680,17 +1680,45 @@ type Batch struct {
 
 **Task 6.2: `internal/hub` — HF resolve + cache.**
 
-- [ ] **6.2.1** Resolve via `https://huggingface.co/{repo}/resolve/{rev}/{path}`, optional
+- [x] **6.2.1** Resolve via `https://huggingface.co/{repo}/resolve/{rev}/{path}`, optional
       `Authorization: Bearer $HF_TOKEN`.
-- [ ] **6.2.2** ETag/sha verification on every download (R7).
-- [ ] **6.2.3** A local cache under `$LAYA_CACHE` or `os.UserCacheDir()/laya`, with atomic
+      (2026-09-26) — `hub.Client.Fetch`: a HEAD for the metadata, then a GET, both on the resolve
+      URL, the revision escaped whole (`refs%2Fpr%2F1`) as huggingface_hub quotes it. Redirects are
+      followed by hand so the token goes only to the Hub's host: a relative 307 keeps it, a 302 to
+      the CDN drops it. `TestFetchResolvesURL` and `TestFetchAuth` pass; forwarding the token on
+      every redirect fails `TestFetchAuth`. Repo, revision and path are validated before any
+      request (`ErrInvalidPath`, `TestFetchRejectsUnsafeNames`), since from 6.2.4 on the path comes
+      from the Hub's own listing.
+- [x] **6.2.2** ETag/sha verification on every download (R7).
+      (2026-09-26) — checked against the live Hub first: the resolve URL's `X-Linked-Etag` is the
+      **git blob sha1** of a regular file (`README.md`: `git hash-object` gives the header's value)
+      and the **sha256** of an LFS file (`model.safetensors`: equal to the API's `lfs.sha256`), and
+      only the first hop carries it — the CDN does not. A 404 carries a **weak** `W/"…"` ETag, so a
+      weak, missing or wrong-length tag is `ErrUnverifiable` (fail closed), never a skipped check.
+      `TestFetchVerifies` covers both hash kinds, match and one-byte mismatch
+      (`ErrHashMismatch`), direct and via the CDN, with no file cached on any failure. Dropping the
+      comparison fails it, and so does stripping `W/` and trusting the rest.
+- [x] **6.2.3** A local cache under `$LAYA_CACHE` or `os.UserCacheDir()/laya`, with atomic
       write-then-rename so an interrupted download is never served.
+      (2026-09-26) — `DefaultDir` (`TestDefaultDir`); files land at
+      `Dir/owner/name/<commit>/path`, keyed on `X-Repo-Commit` (40 hex or `ErrInvalidPath`, since it
+      becomes a directory), written to `.partial-*` beside it and renamed only after the hash
+      matched. `TestFetchCache`: one file and nothing else, and a second `Fetch` downloads nothing.
 - [ ] **6.2.4** An `allow_patterns`-equivalent so a subfolder request downloads only that subfolder —
       the bundle repo is 2.4 GB; the English checkpoint alone is 846 MB.
-- [ ] **6.2.5** Everything cancellable via `context.Context`; a cancelled download leaves no partial
+- [x] **6.2.5** Everything cancellable via `context.Context`; a cancelled download leaves no partial
       file behind.
+      (2026-09-26) — `TestFetchCancel`: a download cancelled halfway returns `context.Canceled`, and
+      one whose connection drops halfway fails; neither leaves a file. While stalled, the cache path
+      must not exist yet — a crash runs no cleanup — and writing straight to it fails the test.
 - [ ] **6.2.6** Offline mode: an already-cached checkpoint resolves with no network call.
 - [ ] **6.2.7** Tests run against an `httptest` server — no network in CI.
+      (2026-09-26) — partial: every `internal/hub` test so far uses two `httptest` servers (Hub and
+      CDN); ticks when 6.2.4 and 6.2.6 land under the same rule.
+- [ ] **6.2.8** _(new, 2026-09-26)_ Decide the default revision. The Hub's `main` moved from
+      `1c5edc17…` (the revision every golden vector describes, Task 1.2.2) to `55cf4c4…`, so
+      `Open("convaiinnovations/laya")` at `main` no longer loads what the fixtures were made from.
+      Pinning a default in the default loader (Task 6.11.1) or following `main` is a user decision.
 
 **Task 6.3: ONNX backend.** Per Spike S2's binding decision.
 
