@@ -30,7 +30,7 @@ not finished; keep it rare. A milestone is done when every task box under it is 
 | [M2 — Tier-1 core](#m2--tier-1-core-no-ml-runtime-620-lines-of-python) | `jsonx`, `lang`, `mailtext`, `presets`, render   | 🟢 2.1–2.4 done; 2.5.4 partial    |
 | [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ✅ done                           |
 | [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | 🟢 4.1–4.5 done; 4.3.9/4.5.5 open |
-| [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | 🟢 5.1 done                       |
+| [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | 🟢 5.1, 5.2 done                  |
 | [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | ⬜ not started                    |
 | [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started                    |
 | [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred                       |
@@ -1574,12 +1574,24 @@ Invariants §5 items 1–13.
 
 **Task 5.2: Assert against `testdata/sequence.jsonl` byte-for-byte.**
 
-- [ ] **5.2.1** A table test across the matrix
+- [x] **5.2.1** A table test across the matrix
       `(qtype, criteria, instructions, state, max_len, head_max_len, option_order, truncate_left)`.
-- [ ] **5.2.2** Cases that exercise the truncation arithmetic independently of tokenizer drift —
+      (2026-09-25) — `TestBuildSequenceGolden` (`internal/prompt/sequence_golden_test.go`): all 45
+      cases on the three real tokenizers, ids and markers exact plus `markers_lost`; a mismatch
+      prints ids and token strings around the first divergence. Gated by `golden.SkipWithoutModels`,
+      so CI skips it. A `room` off by one fails 7 cases — but a head budget +1, a head floor of 9
+      and `<=` in the marker filter **fail none**: no fixture head sits on its budget edge and no
+      marker lands on `max_len`. Only the stub tests (5.2.2, 5.2.3) guard those three.
+- [x] **5.2.2** Cases that exercise the truncation arithmetic independently of tokenizer drift —
       feed a stub tokenizer with known ids so a failure names the arithmetic, not the tokenizer.
-- [ ] **5.2.3** Boundary cases: exactly `max_len`, one over, an option list that alone exceeds the
+      (2026-09-25) — delivered with 5.1's stub tests: `TestBuildSequenceBudget`, `…Truncation` and
+      `…Clamp` run on a one-id-per-word stub; no duplicates added.
+- [x] **5.2.3** Boundary cases: exactly `max_len`, one over, an option list that alone exceeds the
       budget, zero options, and a state that truncates to nothing.
+      (2026-09-25) — `TestBuildSequenceBoundaries`, one row per boundary on the stub: one over is
+      split into state-cut (both directions) and trailing-`[SEP]`-cut; options past `max_len` lose a
+      marker (invariant #13's precondition); `room == 0` in both directions. `<=` in the marker
+      filter and `st[-0:]` read as empty each fail a row.
       _(2026-09-20, measured while scoping M5)_ **Two of these cannot come from the fixture and must
       come from 5.2.2's stub tokenizer.** `markers_lost` is 0 in all 45 cases, so nothing in
       `sequence.jsonl` trips invariant #13's `ValueError`; and the smallest `room` across the 45 is
