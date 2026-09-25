@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"net/url"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -36,7 +37,7 @@ type listing struct {
 // and the listing, which is what lets an Offline client resolve it later.
 func (c *Client) Snapshot(ctx context.Context, repo, rev string, allow []string) (string, error) {
 	owner, name, ok := splitRepo(repo)
-	if !ok || !validSegments(rev) {
+	if !ok || !validPath(rev) {
 		return "", fmt.Errorf("%w: repo %q, revision %q", ErrInvalidPath, repo, rev)
 	}
 	dir, err := c.dir()
@@ -66,11 +67,11 @@ func (c *Client) Snapshot(ctx context.Context, repo, rev string, allow []string)
 	if err != nil {
 		return "", fmt.Errorf("hub: %w", err)
 	}
-	if err := writeAtomic(filepath.Join(base, "listings", commit+".json"), raw); err != nil {
+	if err := writeAtomic(dir, repo+"/listings/"+commit+".json", raw); err != nil {
 		return "", fmt.Errorf("hub: %s: %w", repo, err)
 	}
 	if rev != commit {
-		if err := writeAtomic(filepath.Join(base, "refs", filepath.FromSlash(rev)), []byte(commit)); err != nil {
+		if err := writeAtomic(dir, repo+"/refs/"+rev, []byte(commit)); err != nil {
 			return "", fmt.Errorf("hub: %s: %w", repo, err)
 		}
 	}
@@ -123,7 +124,7 @@ func offlineSnapshot(dir, owner, name, rev string, allow []string) (string, erro
 	if err != nil {
 		return "", err
 	}
-	raw, err := os.ReadFile(filepath.Join(base, "listings", commit+".json"))
+	raw, err := readCached(dir, repo+"/listings/"+commit+".json")
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("%w: %s at %s: no listing", ErrNotCached, repo, rev)
 	}
@@ -141,13 +142,12 @@ func offlineSnapshot(dir, owner, name, rev string, allow []string) (string, erro
 	if err != nil {
 		return "", err
 	}
-	snap := filepath.Join(base, commit)
 	for _, path := range want {
-		if !cached(filepath.Join(snap, filepath.FromSlash(path))) {
+		if !cached(dir, repo+"/"+commit+"/"+path) {
 			return "", fmt.Errorf("%w: %s %s at %s", ErrNotCached, repo, path, rev)
 		}
 	}
-	return snap, nil
+	return filepath.Join(base, commit), nil
 }
 
 // cachedCommit is the commit an earlier Snapshot resolved rev to; a commit id
@@ -156,7 +156,7 @@ func cachedCommit(dir, owner, name, rev string) (string, error) {
 	if commitRE.MatchString(rev) {
 		return rev, nil
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, owner, name, "refs", filepath.FromSlash(rev)))
+	raw, err := readCached(dir, owner+"/"+name+"/refs/"+rev)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("%w: %s/%s at %s", ErrNotCached, owner, name, rev)
 	}
@@ -263,12 +263,22 @@ func translate(pat string) string {
 	return b.String()
 }
 
-// writeAtomic writes data to path by rename, so a reader sees all of it or
-// nothing.
-func writeAtomic(path string, data []byte) (err error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+// readCached reads rel, a slash path below the cache root, only if cached
+// accepts it; anything else is fs.ErrNotExist.
+func readCached(root, rel string) ([]byte, error) {
+	if !cached(root, rel) {
+		return nil, fs.ErrNotExist
+	}
+	return os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+}
+
+// writeAtomic writes data to rel, a slash path below the cache root, by
+// rename, so a reader sees all of it or nothing.
+func writeAtomic(root, rel string, data []byte) (err error) {
+	if err := cacheDir(root, pathpkg.Dir(rel)); err != nil {
 		return err
 	}
+	path := filepath.Join(root, filepath.FromSlash(rel))
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".partial-*")
 	if err != nil {
 		return err

@@ -337,6 +337,24 @@ func TestSnapshotRejectsUnsafeListing(t *testing.T) {
 	}
 }
 
+// TestSnapshotRejectsUnsafeRevision: the revision becomes refs/<rev>, so a
+// backslash, a separator on Windows, is as invalid as "..".
+func TestSnapshotRejectsUnsafeRevision(t *testing.T) {
+	for _, rev := range []string{`..\..\evil`, `a\b`, "..", "a/../b", ""} {
+		for _, offline := range []bool{false, true} {
+			f := newFakeRepo(t)
+			cl := f.client(t, "")
+			cl.Offline = offline
+			if _, err := cl.Snapshot(context.Background(), "org/model", rev, nil); !errors.Is(err, ErrInvalidPath) {
+				t.Errorf("rev %q, offline %v: err = %v, want ErrInvalidPath", rev, offline, err)
+			}
+			if got := f.seen(); len(got) != 0 {
+				t.Errorf("rev %q: reached the Hub: %+v", rev, got)
+			}
+		}
+	}
+}
+
 // TestSnapshotNoMatch: patterns matching nothing are ErrNotFound, where
 // upstream downloads nothing and fails later on the missing subfolder.
 func TestSnapshotNoMatch(t *testing.T) {
@@ -427,6 +445,45 @@ func TestOffline(t *testing.T) {
 	}
 	if _, err := offline().Snapshot(ctx, "org/model", "main", []string{"multilingual/*"}); !errors.Is(err, ErrNotCached) {
 		t.Errorf("missing file: err = %v, want ErrNotCached", err)
+	}
+
+	// Checking the leaf alone would follow a symlinked parent: a subfolder,
+	// the ref or the listing linked outside the cache is not a cached snapshot.
+	full := filepath.Join(t.TempDir(), "full")
+	if err := os.CopyFS(full, os.DirFS(online.Dir)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(victim, []byte(checkpoints["multilingual/tokenizer/tokenizer.json"]), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := offline().Snapshot(ctx, "org/model", "main", []string{"multilingual/*"}); err != nil {
+		t.Fatalf("restored cache: %v", err)
+	}
+	base := filepath.Join(online.Dir, "org", "model")
+	for _, rel := range []string{
+		filepath.Join(commit, "multilingual"),
+		filepath.Join("refs", "main"),
+		filepath.Join("listings", commit+".json"),
+	} {
+		t.Run("symlinked "+filepath.ToSlash(rel), func(t *testing.T) {
+			orig := filepath.Join(base, rel)
+			moved := filepath.Join(t.TempDir(), "moved")
+			if err := os.Rename(orig, moved); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(moved, orig); err != nil {
+				t.Skipf("no symlinks here: %v", err)
+			}
+			defer func() {
+				_ = os.Remove(orig)
+				if err := os.Rename(moved, orig); err != nil {
+					t.Fatal(err)
+				}
+			}()
+			if _, err := offline().Snapshot(ctx, "org/model", "main", []string{"multilingual/*"}); !errors.Is(err, ErrNotCached) {
+				t.Errorf("Snapshot: err = %v, want ErrNotCached", err)
+			}
+		})
 	}
 
 	if after := len(f.seen()); after != before {

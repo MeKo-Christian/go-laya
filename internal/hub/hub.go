@@ -16,9 +16,11 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -90,7 +92,7 @@ func DefaultDir() (string, error) {
 // cache alone, or fails with ErrNotCached.
 func (c *Client) Fetch(ctx context.Context, repo, rev, path string) (string, error) {
 	owner, name, ok := splitRepo(repo)
-	if !ok || !validSegments(rev) || !validPath(path) {
+	if !ok || !validPath(rev) || !validPath(path) {
 		return "", fmt.Errorf("%w: repo %q, revision %q, path %q", ErrInvalidPath, repo, rev, path)
 	}
 	dir, err := c.dir()
@@ -102,11 +104,11 @@ func (c *Client) Fetch(ctx context.Context, repo, rev, path string) (string, err
 		if err != nil {
 			return "", err
 		}
-		local := filepath.Join(dir, owner, name, commit, filepath.FromSlash(path))
-		if !cached(local) {
+		rel := owner + "/" + name + "/" + commit + "/" + path
+		if !cached(dir, rel) {
 			return "", fmt.Errorf("%w: %s %s at %s", ErrNotCached, repo, path, rev)
 		}
-		return local, nil
+		return filepath.Join(dir, filepath.FromSlash(rel)), nil
 	}
 	return c.fetch(ctx, dir, owner, name, rev, path, "")
 }
@@ -134,9 +136,13 @@ func (c *Client) fetch(ctx context.Context, dir, owner, name, rev, path, pin str
 	if pin != "" && commit != pin {
 		return "", fmt.Errorf("%w: %s/%s %s: commit %s, listing said %s", ErrCommitMismatch, owner, name, path, commit, pin)
 	}
-	local := filepath.Join(dir, owner, name, commit, filepath.FromSlash(path))
-	if cached(local) {
+	rel := owner + "/" + name + "/" + commit + "/" + path
+	local := filepath.Join(dir, filepath.FromSlash(rel))
+	if cached(dir, rel) {
 		return local, nil
+	}
+	if err := cacheDir(dir, pathpkg.Dir(rel)); err != nil {
+		return "", err
 	}
 
 	body, err := c.get(ctx, hc, resolve, resolve.Host)
@@ -150,13 +156,50 @@ func (c *Client) fetch(ctx context.Context, dir, owner, name, rev, path, pin str
 	return local, nil
 }
 
-// cached reports whether local is a cache hit. Only a regular file is: Stat
-// would follow a symlink planted here to unverified bytes outside the cache,
-// and accept a directory. Anything else is downloaded again; the rename
-// replaces a symlink itself, never its target, and fails on a directory.
-func cached(local string) bool {
-	fi, err := os.Lstat(local)
-	return err == nil && fi.Mode().IsRegular()
+// cached reports whether rel, a slash path below the cache root, is a cache
+// hit. Only a regular file reached through real directories is: Stat would
+// follow a symlink planted at the file or at any parent to unverified bytes
+// outside the cache, and accept a directory. Anything else is downloaded
+// again; the rename replaces a symlink itself, never its target, and fails
+// on a directory.
+func cached(root, rel string) bool {
+	p := root
+	segs := strings.Split(rel, "/")
+	for i, seg := range segs {
+		p = filepath.Join(p, seg)
+		fi, err := os.Lstat(p)
+		if err != nil {
+			return false
+		}
+		if i < len(segs)-1 && !fi.IsDir() || i == len(segs)-1 && !fi.Mode().IsRegular() {
+			return false
+		}
+	}
+	return true
+}
+
+// cacheDir creates rel, a slash path below the cache root, one directory at a
+// time, and fails on any component that is not a real directory: MkdirAll
+// would follow a symlinked parent and write outside the cache.
+func cacheDir(root, rel string) error {
+	if err := os.MkdirAll(root, 0o750); err != nil {
+		return err
+	}
+	p := root
+	for seg := range strings.SplitSeq(rel, "/") {
+		p = filepath.Join(p, seg)
+		if err := os.Mkdir(p, 0o750); err != nil && !errors.Is(err, fs.ErrExist) {
+			return err
+		}
+		fi, err := os.Lstat(p)
+		if err != nil {
+			return err
+		}
+		if !fi.IsDir() {
+			return fmt.Errorf("%w: cache path %s is not a directory", ErrInvalidPath, p)
+		}
+	}
+	return nil
 }
 
 func (c *Client) dir() (string, error) {
@@ -257,11 +300,9 @@ func (c *Client) authorize(req *http.Request) {
 }
 
 // store writes body to a temporary file beside local, checks it against want
-// and renames it into place. Every failure removes the temporary file.
+// and renames it into place. local's directory must exist, made by cacheDir.
+// Every failure removes the temporary file.
 func store(ctx context.Context, body io.Reader, local, want string) (err error) {
-	if err := os.MkdirAll(filepath.Dir(local), 0o750); err != nil {
-		return err
-	}
 	tmp, err := os.CreateTemp(filepath.Dir(local), ".partial-*")
 	if err != nil {
 		return err
