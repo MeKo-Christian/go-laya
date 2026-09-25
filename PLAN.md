@@ -1671,8 +1671,8 @@ type Batch struct {
 - [x] **6.1.3** The fake fails loudly on an unknown input rather than returning zeros, so a prompt
       regression cannot masquerade as a passing test.
       (2026-09-26) — a miss returns no outputs and an error wrapping `ErrUnknownBatch` that names
-      the nearest same-shape recording and its first differing cell (`… english/en/billing differs
-    in 1 cells, first at input_ids[1][5]: got 21008, recorded 21007`).
+      the nearest same-shape recording and its first differing cell, e.g.
+      `first at input_ids[1][5]: got 21008, recorded 21007`.
       `TestFakeRejectsUnknownBatch` covers one changed cell in each of the five tensors, a dropped
       row, a trimmed column and all 10 `multilingual` batches fed to the `english` fake; returning
       zeros on a miss fails it. An unknown checkpoint name fails `New` rather than yielding a fake
