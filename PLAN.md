@@ -30,8 +30,8 @@ not finished; keep it rare. A milestone is done when every task box under it is 
 | [M2 — Tier-1 core](#m2--tier-1-core-no-ml-runtime-620-lines-of-python) | `jsonx`, `lang`, `mailtext`, `presets`, render   | 🟢 2.1–2.4 done; 2.5.4 partial    |
 | [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ✅ done                           |
 | [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | 🟢 4.1–4.5 done; 4.3.9/4.5.5 open |
-| [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | 🟢 5.1, 5.2 done                  |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | ⬜ not started                    |
+| [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | 🟢 5.1–5.3 done                   |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | 🟡 6.1.1 done                     |
 | [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started                    |
 | [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred                       |
 
@@ -1604,12 +1604,22 @@ Invariants §5 items 1–13.
 **Task 5.3: Port `collate_items` (`common.py:218-251`).** _(new, 2026-09-20, review)_ D3 had filed it
 as training math; `agent.py:266` calls it on every `system_one`, and its padding is what the graph sees.
 
-- [ ] **5.3.1** `internal/prompt.Collate(items, padID) backend.Batch`: `L = max len(ids)`,
+- [x] **5.3.1** `internal/prompt.Collate(items, padID) backend.Batch`: `L = max len(ids)`,
       `kmax = max len(markers)`; ids right-padded with `pad_id`, `attention_mask` 0 on padding,
       `marker_pos` 0-filled, `marker_mask` false beyond each row's markers, `qtype` per row. The
       `target`/`label`/`meta` fields are training-only and are not ported.
-- [ ] **5.3.2** Acceptance: equals the collated tensors in `logits.jsonl` (after Task 1.7) for all 30
+      (2026-09-25) — `internal/prompt.Collate` over a flat `[]Item` (agent.py:266 always passes one
+      group); rows are copies. `TestCollate` pins ragged ids and markers with a non-zero pad, a
+      single row, `kmax == 0` (n empty rows, as `torch.zeros((n, 0))`) and no items, which returns
+      the zero `Batch` where Python returns `None` — unreachable through the Agent. Padding with 0
+      and `kmax` from row 0 each fail a case. Needed 6.1.1's `backend.Batch`, done alongside.
+- [x] **5.3.2** Acceptance: equals the collated tensors in `logits.jsonl` (after Task 1.7) for all 30
       batches, and `Σ attention_mask == input_tokens` for every case (invariant #33).
+      (2026-09-25) — `TestCollateGolden`: each batch rebuilt as `system_one` does (a test-local
+      `_to_internal`, `BuildSequence` under the checkpoint's own `max_len`/`head_max_len` from
+      `rl_agent_config.json`, `Collate` with `PADID()`); 30/30 equal on all five tensors and their
+      shapes, plus `qtypes` and `input_tokens`. Gated by `golden.SkipWithoutModels`. Padding with 0
+      fails 20 of the 30 batches.
 
 **Task 5.4: `option_order` / `truncate_left` are internal parameters.** _(new, 2026-09-20, review)_
 Invariants #4 and #11 say the public API never sets them, and `docs/API.md` exposes neither — so
@@ -1635,8 +1645,11 @@ type Batch struct {
 }
 ```
 
-- [ ] **6.1.1** Define `Backend` and `Batch` in `backend/`, importing nothing beyond the standard
+- [x] **6.1.1** Define `Backend` and `Batch` in `backend/`, importing nothing beyond the standard
       library; `go list -deps ./backend` names no third-party module.
+      (2026-09-25) — pulled forward as the gate of 5.3, exactly as specified above.
+      `go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./backend` prints only
+      `…/go-laya/backend` itself. §8's CI-level `go list -deps` check is still open.
 - [ ] **6.1.2** An in-memory fake replaying `testdata/logits.jsonl`, keyed on the collated tensors Task
       1.7 adds — every M7 test then runs without ORT.
 - [ ] **6.1.3** The fake fails loudly on an unknown input rather than returning zeros, so a prompt
