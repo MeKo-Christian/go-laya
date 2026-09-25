@@ -77,7 +77,10 @@ func BuildSequence(
 	}
 	headIDs = pyHead(headIDs, max(8, optBudget))
 
-	ids = make([]int64, 0, maxLen+1)
+	// Sized from the content, never from maxLen: max_len comes from the
+	// checkpoint's config, which is untrusted, and upstream's list only grows
+	// as far as its contents do.
+	ids = make([]int64, 0, 3+len(headIDs)+totalLen(optIDs))
 	ids = append(ids, tok.CLSID())
 	ids = append(ids, headIDs...)
 	ids = append(ids, tok.SEPID())

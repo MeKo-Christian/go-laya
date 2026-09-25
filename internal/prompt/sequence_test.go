@@ -383,3 +383,16 @@ func TestBuildSequenceStateError(t *testing.T) {
 		t.Fatal("BuildSequence accepted a state json.dumps would refuse")
 	}
 }
+
+// TestBuildSequenceHugeMaxLen: max_len comes from the checkpoint's config, and
+// a checkpoint is untrusted input (AGENTS.md, Security). Upstream's list grows
+// with its contents, so an absurd max_len costs nothing until the clamp; a
+// buffer sized from max_len would instead allocate it up front, or panic.
+func TestBuildSequenceHugeMaxLen(t *testing.T) {
+	runSequenceCases(t, []seqCase{{
+		name: "max_len 1<<50", q: Internal{T: TypeChoice, Ins: "q", Crit: labels("a")}, state: "s",
+		maxLen:      1 << 50,
+		want:        toks("[CLS] choice question: q [SEP] [MASK] a [SEP] s [SEP]"),
+		wantMarkers: []int64{5},
+	}})
+}
