@@ -31,7 +31,7 @@ not finished; keep it rare. A milestone is done when every task box under it is 
 | [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ✅ done                           |
 | [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | 🟢 4.1–4.5 done; 4.3.9/4.5.5 open |
 | [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ✅ done                           |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | 🟡 6.1.1 done                     |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | 🟡 6.1 done                       |
 | [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started                    |
 | [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred                       |
 
@@ -239,6 +239,7 @@ go-laya/
   internal/golden/   the testdata/ corpus loader, shared by every package that asserts against it
   internal/calib/    softmax, entropy confidence, temperature, py-round, ECE
   internal/hub/      HF resolve + local cache
+  internal/backend/fake/  replays testdata/logits.jsonl per checkpoint, so tests above the backend need no ORT (Task 6.1)
   internal/backend/onnx/  ONNX Runtime implementation; absorbs internal/onnxspike in M6 (Task 6.10)
   internal/onnxspike/ Spikes S2/S3; M6 moves it into internal/backend/onnx rather than deleting it
   cmd/laya/          optional CLI
@@ -1656,10 +1657,26 @@ type Batch struct {
       (2026-09-25) — pulled forward as the gate of 5.3, exactly as specified above.
       `go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./backend` prints only
       `…/go-laya/backend` itself. §8's CI-level `go list -deps` check is still open.
-- [ ] **6.1.2** An in-memory fake replaying `testdata/logits.jsonl`, keyed on the collated tensors Task
+- [x] **6.1.2** An in-memory fake replaying `testdata/logits.jsonl`, keyed on the collated tensors Task
       1.7 adds — every M7 test then runs without ORT.
-- [ ] **6.1.3** The fake fails loudly on an unknown input rather than returning zeros, so a prompt
+      (2026-09-26) — `internal/backend/fake`: `New(tb, checkpoint)` loads that checkpoint's records,
+      `Forward` matches all five tensors exactly and returns copies of the recorded `logits` and
+      `act_logits`. **Per checkpoint, not global:** `english` and `typed-decisions` record
+      byte-identical batches with different logits (shared tokenizer and budgets, different weights),
+      so tensors alone cannot key the fixture. `TestFakeReplaysEveryRecord` replays all 30 bit for
+      bit and `TestFakeIsPerCheckpoint` pins the ambiguity; both pass with `LAYA_MODELS` unset.
+      Forcing a match on any input fails both; dropping the checkpoint filter fails both as well.
+      The tensor decoders moved from `internal/prompt`'s test into `internal/golden`
+      (`Matrix`/`Vector`/`CollatedBatch`) so the fake and `TestCollateGolden` share them.
+- [x] **6.1.3** The fake fails loudly on an unknown input rather than returning zeros, so a prompt
       regression cannot masquerade as a passing test.
+      (2026-09-26) — a miss returns no outputs and an error wrapping `ErrUnknownBatch` that names
+      the nearest same-shape recording and its first differing cell (`… english/en/billing differs
+    in 1 cells, first at input_ids[1][5]: got 21008, recorded 21007`).
+      `TestFakeRejectsUnknownBatch` covers one changed cell in each of the five tensors, a dropped
+      row, a trimmed column and all 10 `multilingual` batches fed to the `english` fake; returning
+      zeros on a miss fails it. An unknown checkpoint name fails `New` rather than yielding a fake
+      that rejects everything.
 
 **Task 6.2: `internal/hub` — HF resolve + cache.**
 
