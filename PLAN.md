@@ -30,7 +30,7 @@ not finished; keep it rare. A milestone is done when every task box under it is 
 | [M2 — Tier-1 core](#m2--tier-1-core-no-ml-runtime-620-lines-of-python) | `jsonx`, `lang`, `mailtext`, `presets`, render   | 🟢 2.1–2.4 done; 2.5.4 partial    |
 | [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ✅ done                           |
 | [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | 🟢 4.1–4.5 done; 4.3.9/4.5.5 open |
-| [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | 🟢 5.1–5.3 done                   |
+| [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ✅ done                           |
 | [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | 🟡 6.1.1 done                     |
 | [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started                    |
 | [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred                       |
@@ -1625,8 +1625,14 @@ as training math; `agent.py:266` calls it on every `system_one`, and its padding
 Invariants #4 and #11 say the public API never sets them, and `docs/API.md` exposes neither — so
 they live on `internal/prompt`'s function signature only, never on `Agent` or `Question`.
 
-- [ ] **5.4.1** Both flags exercised by 5.2.1 (the fixture carries them in all 45 cases) and by 5.2.2's
+- [x] **5.4.1** Both flags exercised by 5.2.1 (the fixture carries them in all 45 cases) and by 5.2.2's
       stub-tokenizer tests; no public symbol.
+      (2026-09-26) — no code change; verified. `TestBuildSequenceGolden` passes both from all 45 cases
+      (3 set `option_order`, 3 `truncate_left`). Forcing `truncateLeft = false` fails 2 golden cases
+      — `typed-decisions/choice/truncate-left` passes either way — and 4 stub rows; forcing
+      `optionOrder = nil` fails all 3 `option-order` golden cases and the `option_order` layout row.
+      `go doc -all` over the 8 non-`internal` packages matches `optionorder|truncateleft` 0 times, and
+      `docs/API.md` names neither.
 
 ### M6 — Backend + checkpoint loading
 
