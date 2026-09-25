@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -309,6 +310,40 @@ func TestFetchCacheHitIsARegularFile(t *testing.T) {
 		}
 	})
 
+	t.Run("symlinked parent", func(t *testing.T) {
+		// Lstat on the leaf alone resolves the parents: a commit directory
+		// linked elsewhere must neither serve nor receive a file.
+		f := newFakeHub(t)
+		cl := f.client(t, "")
+		outside := t.TempDir()
+		if err := os.WriteFile(filepath.Join(outside, "a.bin"), []byte("evil\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(cl.Dir, "org", "model", commit)
+		if err := os.MkdirAll(filepath.Dir(link), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, link); err != nil {
+			t.Skipf("no symlinks here: %v", err)
+		}
+
+		got, err := cl.Fetch(context.Background(), "org/model", "main", "a.bin")
+		if !errors.Is(err, ErrInvalidPath) {
+			t.Errorf("Fetch = %s, %v; want ErrInvalidPath", got, err)
+		}
+		if got := files(t, outside); !slices.Equal(got, []string{"a.bin"}) {
+			t.Errorf("wrote through the symlink: %q", got)
+		}
+		if b, _ := os.ReadFile(filepath.Join(outside, "a.bin")); string(b) != "evil\n" {
+			t.Errorf("the symlink's target was overwritten: %q", b)
+		}
+
+		cl.Offline = true
+		if got, err := cl.Fetch(context.Background(), "org/model", commit, "a.bin"); !errors.Is(err, ErrNotCached) {
+			t.Errorf("offline Fetch = %s, %v; want ErrNotCached", got, err)
+		}
+	})
+
 	t.Run("directory", func(t *testing.T) {
 		f := newFakeHub(t)
 		cl := f.client(t, "")
@@ -427,12 +462,19 @@ func TestFetchRejectsUnsafeNames(t *testing.T) {
 		{"org/model", "", "a"},
 		{"org/model", "..", "a"},
 		{"org/model", "a/../b", "a"},
+		// An offline Fetch joins the revision below refs/, where Windows
+		// honours a backslash as a separator.
+		{"org/model", `..\..\evil`, "a"},
+		{"org/model", `a\b`, "a"},
 	}
 	f := newFakeHub(t)
 	for _, c := range cases {
-		cl := f.client(t, "")
-		if _, err := cl.Fetch(context.Background(), c.repo, c.rev, c.path); !errors.Is(err, ErrInvalidPath) {
-			t.Errorf("Fetch(%q, %q, %q) = %v, want ErrInvalidPath", c.repo, c.rev, c.path, err)
+		for _, offline := range []bool{false, true} {
+			cl := f.client(t, "")
+			cl.Offline = offline
+			if _, err := cl.Fetch(context.Background(), c.repo, c.rev, c.path); !errors.Is(err, ErrInvalidPath) {
+				t.Errorf("Fetch(%q, %q, %q), offline %v = %v, want ErrInvalidPath", c.repo, c.rev, c.path, offline, err)
+			}
 		}
 	}
 	if got := f.seen(); len(got) != 0 {
