@@ -1,15 +1,15 @@
 //go:build !windows && !js && !wasm
 
-// Spike S3: how long does one forward pass actually take on a CPU?
+// How long does one forward pass actually take on a CPU? (Spike S3)
 //
 // PLAN.md §3 S3.1 asks for ORT-CPU latency "per checkpoint at realistic sequence lengths
 // and thread counts, on the hardware we actually ship numbers for". The numbers have to
 // come through the binding go-laya ships, not through Python, because that is the thing
 // whose latency a caller will experience -- hence a Go benchmark next to the S2 spike
-// rather than a script. M6 moves it unchanged into internal/backend/onnx (PLAN.md Task
+// rather than a script. It moved here unchanged from internal/onnxspike (PLAN.md Task
 // 6.10): Task 6.9.2 re-runs it against quantized graphs and needs the same harness.
 
-package onnxspike
+package onnx
 
 import (
 	"bufio"

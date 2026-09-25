@@ -1,17 +1,14 @@
-// Package onnxspike is Spike S2 (PLAN.md §3): it proves the S1 ONNX export runs
-// through a CGO-free ONNX Runtime binding, and that the runtime.AddCleanup defect
-// go-pocket-tts hit (risk R5) is gone.
+// Package onnx runs the exported DecisionModel graph through ONNX Runtime, via the
+// CGO-free binding github.com/shota3506/onnxruntime-purego (PLAN.md D5).
 //
-// Milestone M6 absorbs this package into internal/backend/onnx (PLAN.md Task
-// 6.10): the library-resolution chain, the external-data check, the fixture
-// schema, the finalizer regression and the benchmarks all move; only the name
-// dies. Nothing but its own tests may import it in the meantime.
+// It absorbed internal/onnxspike (PLAN.md Task 6.10): the library-resolution chain,
+// the external-data check, the fixture schema, the finalizer regression and the S3
+// benchmarks came from Spikes S2 and S3 unchanged.
 //
-// This file is deliberately pure stdlib and carries no build constraints, so
-// `GOOS=windows go build ./...` (release.yml) keeps working. The binding is
-// imported only from spike_test.go, which is constrained to the platforms purego
-// can dlopen on.
-package onnxspike
+// This file is deliberately pure stdlib and carries no build constraints. Everything
+// that imports the binding is constrained to the platforms purego can dlopen on, so
+// `GOOS=windows go build ./...` (release.yml) keeps working.
+package onnx
 
 import (
 	"errors"
@@ -44,7 +41,7 @@ var ortLibraryCandidates = []string{
 //
 // A variable that is set but points nowhere is an error rather than a fallback:
 // silently ignoring it would run against a different runtime than the caller
-// asked for, and the whole point of S2.4 is knowing which library answered.
+// asked for, and the whole point of pinning a runtime (R7) is knowing which library answered.
 func findORTLibrary() (string, error) {
 	for _, key := range ortLibraryEnv {
 		path := os.Getenv(key)
@@ -53,8 +50,8 @@ func findORTLibrary() (string, error) {
 		}
 		// #nosec G703 -- the path is the developer's own environment variable naming a
 		// local shared library, and it is only stat'ed. This holds only while every path
-		// here is developer-supplied: when Task 6.10 moves this into internal/backend,
-		// Hub-derived paths (Task 6.2) must not be routed through it.
+		// here is developer-supplied: Hub-derived paths (internal/hub) must never be routed
+		// through it.
 		if _, err := os.Stat(path); err != nil {
 			return "", fmt.Errorf("%s=%q: %w", key, path, err)
 		}
@@ -75,7 +72,7 @@ func findORTLibrary() (string, error) {
 // LAYA_ONNX_DIR must be set explicitly; there is no implicit default. The
 // exports are gitignored build artefacts of scripts/export_onnx.py, and a
 // default pointing at build/onnx meant that any developer with an export on
-// disk pulled 1.7 GB into every `go test ./...`. The `just spike-onnx` and
+// disk pulled 1.7 GB into every `go test ./...`. The `just test-onnx` and
 // `just bench-onnx` recipes set the variable to build/onnx themselves.
 func findModel(name string) (string, error) {
 	dir := os.Getenv("LAYA_ONNX_DIR")
@@ -86,7 +83,7 @@ func findModel(name string) (string, error) {
 	path := filepath.Join(dir, name)
 
 	// #nosec G703 -- dir is a developer environment variable and name comes from a
-	// checked-in fixture; both are stat'ed, never opened. Same M6 caveat as above.
+	// checked-in fixture; both are stat'ed, never opened. Same caveat as above.
 	if _, err := os.Stat(path); err != nil {
 		return "", fmt.Errorf("%s: %w", path, err)
 	}

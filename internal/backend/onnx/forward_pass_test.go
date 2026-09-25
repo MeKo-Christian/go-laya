@@ -1,6 +1,6 @@
 //go:build !windows && !js && !wasm
 
-// Spike S2: one forward pass of the S1 export through github.com/shota3506/onnxruntime-purego.
+// One forward pass of the S1 export through github.com/shota3506/onnxruntime-purego (Spike S2).
 //
 // The build constraint is not caution about purego -- it supports Windows -- but about
 // what has actually been exercised. go-pocket-tts stubs the binding out on Windows and
@@ -8,7 +8,7 @@
 // platforms here would be a claim no command backs. Keeping the constraint on the test
 // file also keeps the binding out of `GOOS=windows go build ./...`.
 
-package onnxspike
+package onnx
 
 import (
 	"context"
@@ -207,7 +207,7 @@ func TestForwardPass(t *testing.T) {
 
 	rt := newRuntime(t, lib)
 
-	env, err := rt.NewEnv("laya-onnxspike", ort.LoggingLevelWarning)
+	env, err := rt.NewEnv("laya-onnx", ort.LoggingLevelWarning)
 	if err != nil {
 		t.Fatalf("NewEnv: %v", err)
 	}
@@ -288,7 +288,7 @@ func outputNames(m map[string]*ort.Value) []string {
 
 // finalizerEnv opts into the subtest that abandons values instead of closing them.
 // That subtest is a known-failing reproduction, not an assertion -- see TestValueCleanup.
-const finalizerEnv = "LAYA_ONNXSPIKE_FINALIZER"
+const finalizerEnv = "LAYA_ORT_FINALIZER"
 
 // TestValueCleanup is S2.2: does a finalizer defect reproduce under -race, in a loop?
 //

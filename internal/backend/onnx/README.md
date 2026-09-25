@@ -1,10 +1,10 @@
-# `internal/onnxspike` — Spikes S2 and S3
+# `internal/backend/onnx` — the ONNX Runtime backend
 
-Spike code, but not throwaway: **M6 absorbs this package into `internal/backend/onnx`**
-(`PLAN.md` Task 6.10). The library-resolution chain, the external-data rule, the fixture schema,
-the finalizer regression and both benchmarks move as they are; only the name goes.
+This package started life as `internal/onnxspike` and was absorbed here by `PLAN.md` Task 6.10.
+The library-resolution chain, the external-data rule, the fixture schema, the finalizer regression
+and both benchmarks moved as they were; only the name went.
 
-It answers two questions. **S2:** can the S1 ONNX export be executed from Go **without CGO**, and
+Its tests still answer the two spike questions. **S2:** can the S1 ONNX export be executed from Go **without CGO**, and
 is `github.com/shota3506/onnxruntime-purego` stable enough to build on (risk R5)? **S3:** how long
 does one forward pass actually take on a CPU (risk R3)? See §0 D5 and D6 for the answers, and §3 S2
 and S3 for the evidence.
@@ -18,8 +18,8 @@ the pipeline never needs model weights. `TestForwardPass` and the benchmarks als
 the developer loop into a 1.7 GB load.
 
 ```bash
-just spike-onnx            # both tests, CGO-free
-just spike-onnx-race 200   # the finalizer hunt, under the race detector
+just test-onnx             # the ORT-backed tests, CGO-free
+just test-onnx-race 200    # the finalizer hunt, under the race detector
 just bench-onnx            # the S3 latency sweep -- about 20 minutes
 ```
 
@@ -36,7 +36,7 @@ Regenerate `testdata/forward_pass.json` with the pinned reference environment
 
 ```bash
 .venv-ref/bin/python scripts/export_onnx.py --checkpoint english --dynamo --reuse \
-    --suffix=-dynamo --no-check-attn --fixture internal/onnxspike/testdata/forward_pass.json
+    --suffix=-dynamo --no-check-attn --fixture internal/backend/onnx/testdata/forward_pass.json
 just fmt   # prettier owns the file's layout; the generator's is not the committed one
 ```
 
@@ -56,7 +56,7 @@ Three details that are not decoration:
 - **`BenchmarkSessionLoad` gets one process per checkpoint.** RSS growth is only meaningful the first
   time a session is built; a shared process reports the second checkpoint as roughly free.
 
-## Two things worth knowing before M6 reuses any of this
+## Two things worth knowing before building on this
 
 **Every `*Value` must be closed explicitly.** The binding registers a `runtime.AddCleanup`
 safety net on each one, and that net is not safe: `Runtime.Close` writes `r.apiFuncs = nil`
@@ -64,7 +64,7 @@ safety net on each one, and that net is not safe: `Runtime.Close` writes `r.apiF
 (`value.go:152`), with no synchronisation anywhere in the package. `TestValueCleanup/abandoned`
 reproduces the data race on the first iteration; `TestValueCleanup/closed` is green over 200
 runs, because `Close` calls `cleanup.Stop()` and takes the finalizer out of play. The
-abandoned case is opt-in via `LAYA_ONNXSPIKE_FINALIZER=1` so it does not fail `just ci`.
+abandoned case is opt-in via `LAYA_ORT_FINALIZER=1` so it does not fail `just ci`.
 
 **`-race` implies CGO.** `CGO_ENABLED=0 go test -race` is refused by the toolchain, so the two
 halves of the claim are two commands: `CGO_ENABLED=0` proves the _build_ needs no CGO, and a
