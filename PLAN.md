@@ -31,7 +31,7 @@ not finished; keep it rare. A milestone is done when every task box under it is 
 | [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ✅ done                           |
 | [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | 🟢 4.1–4.5 done; 4.3.9/4.5.5 open |
 | [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ✅ done                           |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | 🟡 6.1 done; 6.2 partial          |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | 🟡 6.1 done; 6.2 open: 6.2.9 only |
 | [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started                    |
 | [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred                       |
 
@@ -1704,21 +1704,48 @@ type Batch struct {
       `Dir/owner/name/<commit>/path`, keyed on `X-Repo-Commit` (40 hex or `ErrInvalidPath`, since it
       becomes a directory), written to `.partial-*` beside it and renamed only after the hash
       matched. `TestFetchCache`: one file and nothing else, and a second `Fetch` downloads nothing.
-- [ ] **6.2.4** An `allow_patterns`-equivalent so a subfolder request downloads only that subfolder —
+- [x] **6.2.4** An `allow_patterns`-equivalent so a subfolder request downloads only that subfolder —
       the bundle repo is 2.4 GB; the English checkpoint alone is 846 MB.
+      (2026-09-26) — `hub.Client.Snapshot(ctx, repo, rev, allow)`: lists the repo via
+      `GET /api/models/{repo}/revision/{rev}` (checked live: `sha` + `siblings[].rfilename`), keeps
+      the names matching `allow` with fnmatch semantics as `filter_repo_objects` does (`*` crosses
+      `/`, a trailing `/` gets `*`; `TestMatch`), and `Fetch`es each at the listing's **commit**, not
+      at `rev`: a file served from another commit is `ErrCommitMismatch` (`TestSnapshotPinsCommit`).
+      `TestSnapshotAllowPatterns`: `multilingual/*` downloads exactly the two `multilingual/` files —
+      not `multilingualx/a` — and a second call downloads nothing. Listed names are remote input and
+      go through the path validation before any download (`TestSnapshotRejectsUnsafeListing`).
+      **Deviation:** patterns matching nothing are `ErrNotFound` naming them
+      (`TestSnapshotNoMatch`), where upstream downloads nothing and fails later on the missing
+      subfolder. Mutations — no filter, fetching at `rev` without the commit check, no name
+      validation — each fail at least one of these.
 - [x] **6.2.5** Everything cancellable via `context.Context`; a cancelled download leaves no partial
       file behind.
       (2026-09-26) — `TestFetchCancel`: a download cancelled halfway returns `context.Canceled`, and
       one whose connection drops halfway fails; neither leaves a file. While stalled, the cache path
       must not exist yet — a crash runs no cleanup — and writing straight to it fails the test.
-- [ ] **6.2.6** Offline mode: an already-cached checkpoint resolves with no network call.
-- [ ] **6.2.7** Tests run against an `httptest` server — no network in CI.
-      (2026-09-26) — partial: every `internal/hub` test so far uses two `httptest` servers (Hub and
-      CDN); ticks when 6.2.4 and 6.2.6 land under the same rule.
-- [ ] **6.2.8** _(new, 2026-09-26)_ Decide the default revision. The Hub's `main` moved from
+- [x] **6.2.6** Offline mode: an already-cached checkpoint resolves with no network call.
+      (2026-09-26) — `Client.Offline`. A complete `Snapshot` records `refs/<rev>` → commit and
+      `listings/<commit>.json` under `Dir/owner/name/`, both by rename; an offline `Snapshot` or
+      `Fetch` resolves the revision (a commit id is its own), filters the cached listing and requires
+      every match as a regular file, else `ErrNotCached`. `TestOffline` runs the offline client over a
+      transport that fails the test on any request: by `main` and by commit it returns the online
+      directory; an uncached subfolder, an unknown revision or commit, a deleted file and one swapped
+      for a symlink are all `ErrNotCached`. Skipping the offline branch or the file check fails it.
+      Wiring `HF_HUB_OFFLINE`/`LAYA_OFFLINE` belongs to the loader (6.11.4).
+- [x] **6.2.7** Tests run against an `httptest` server — no network in CI.
+      (2026-09-26) — every `internal/hub` test talks to `httptest` servers only: `fakeHub` (Hub and
+      CDN) for `Fetch`, `fakeRepo` (listing plus resolve) for `Snapshot`; `grep -L httptest
+internal/hub/*_test.go` prints nothing and no test names a real host.
+- [x] **6.2.8** _(new, 2026-09-26)_ Decide the default revision. The Hub's `main` moved from
       `1c5edc17…` (the revision every golden vector describes, Task 1.2.2) to `55cf4c4…`, so
       `Open("convaiinnovations/laya")` at `main` no longer loads what the fixtures were made from.
       Pinning a default in the default loader (Task 6.11.1) or following `main` is a user decision.
+      (2026-09-26) — **decided: pin** `1c5edc17a7acd8701df6fc341c0d179f1c62c982`; following `main`
+      is an explicit opt-in. Carried into 6.11.1 and onto 7.5.3's deviation list; no code until the
+      loader exists.
+- [ ] **6.2.9** _(new, 2026-09-26)_ The English checkpoint is the bundle repo's **root**, so upstream
+      passes no `allow_patterns` for it and downloads all 2.4 GB (`agent.py:125-128`). Narrowing that
+      to the root checkpoint's files is a deviation and needs a decision before 6.11.1 builds on it.
 
 **Task 6.3: ONNX backend.** Per Spike S2's binding decision.
 
@@ -1727,6 +1754,9 @@ type Batch struct {
       three `print()` warnings with `slog` — and warn only when a fallback actually happened
       (upstream `e630a68`).
 - [ ] **6.3.3** `Close()` releases the session; assert no leak across a load/evict cycle (Task 3.2.4).
+- [ ] **6.3.5** _(new, 2026-09-26, read-only recon)_ The binding's `Session.Run` takes a `ctx` but
+      never uses it (it passes NULL `RunOptions`), so a started forward pass cannot be cancelled;
+      `Forward` checks `ctx` before and after, and says so in its doc comment.
 - [ ] **6.3.4** The ONNX backend lives in `internal/backend/onnx`; the §8 check is D9's
       `go list -deps` assertion over `lang`/`mailtext`/`presets`/`backend`. `Route` lives in the root
       package, which is allowed to depend on the binding — `dlopen` happens only in `Open`.
@@ -1780,6 +1810,10 @@ rather than testing it, so today the honest claim is "untested", not "unsupporte
       that nobody has tried.
 - [ ] **6.7.2** Either support it or ship a stub that fails with a named error, and say which in the
       README. Task 6.3.4's build-tag split is where it belongs.
+      _(2026-09-26, read-only recon)_ — **a prerequisite of 6.3.1, not a follow-up:** the binding calls
+      `purego.Dlopen` untagged, and purego v0.9.0 defines it only on darwin/freebsd/linux/netbsd, so the
+      first non-test import of the binding breaks `release.yml`'s `GOOS=windows go build ./...` unless
+      a tagged stub lands with it.
 
 **Task 6.8: Go-vs-Python ONNX Runtime parity across the whole matrix.** _(new, 2026-09-20)_
 Spike S2 proved one forward pass, on one checkpoint, at one shape. M6 owes the rest.
@@ -1837,12 +1871,16 @@ way to make an agent and says so rather than caching a nil one.
 
 - [ ] **6.11.1** A default loader, so `NewRouter()` with no `WithLoader` can load. It is what
       `router.py:174-178` does inline: build an Agent from the spec's repo, subfolder, device and
-      token.
+      token. Its default revision is `1c5edc17a7acd8701df6fc341c0d179f1c62c982` (6.2.8), and a
+      subfolder maps to `hub.Client.Snapshot(…, []string{sub + "/*"})`.
 - [ ] **6.11.2** `WithRouterDevice` and `WithRouterToken` (`docs/API.md:347-348`), including
       upstream's `token or os.environ["HF_TOKEN"]` fallback (`router.py:159`). Deferred out of M3
       because they configure a builder that did not exist; adding them there would have stored two
       values nothing read.
 - [ ] **6.11.3** Widen `Agent` past `Close() error` only when M7 needs it (D13), not here.
+- [ ] **6.11.4** _(new, 2026-09-26)_ Offline from the environment: map `HF_HUB_OFFLINE` (upstream's
+      switch, honoured by `snapshot_download`) and/or a `LAYA_OFFLINE` onto `hub.Client.Offline`
+      (6.2.6).
 
 ### M7 — Agent, calibration, end-to-end parity
 
@@ -1916,7 +1954,8 @@ way to make an agent and says so rather than caching a nil one.
       `raw.githubusercontent.com/NandhaKishorM/laya/main/...`, so a fork's README silently renders
       upstream's assets.
 - [ ] **7.5.3** Document the deliberate deviations _(list completed on the 2026-09-20 review)_: `repo`
-      always a string (Task 3.1.4); `instructions` as `string` only; no `mps` device; `$LAYA_CACHE`
+      always a string (Task 3.1.4); `instructions` as `string` only; the default revision pinned
+      to `1c5edc17` instead of following `main` (6.2.8); no `mps` device; `$LAYA_CACHE`
       instead of the huggingface_hub cache; and every dropped or renamed public export —
       `proper_reward`, `td_lambda_targets` (D3), `ece_score` (internal `calib.ECE`), `load` (→ `Open`),
       `RLAgent` (no alias), `QTYPES`/`QTYPE_NAMES` (→ `QType`), `detect_language` (→ `lang.Analyse`),
