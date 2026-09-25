@@ -112,7 +112,11 @@ func (c *Client) Fetch(ctx context.Context, repo, rev, path string) (string, err
 		return "", err
 	}
 	local := filepath.Join(dir, owner, name, commit, filepath.FromSlash(path))
-	if _, err := os.Stat(local); err == nil {
+	// Only a regular file is a hit: Stat would follow a symlink planted here
+	// to unverified bytes outside the cache, and accept a directory. Anything
+	// else is downloaded again; the rename replaces a symlink itself, never
+	// its target, and fails on a directory.
+	if fi, err := os.Lstat(local); err == nil && fi.Mode().IsRegular() {
 		return local, nil
 	}
 

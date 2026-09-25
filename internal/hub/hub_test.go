@@ -275,6 +275,53 @@ func TestFetchCache(t *testing.T) {
 	}
 }
 
+// TestFetchCacheHitIsARegularFile: only a regular file at the cache path is a
+// hit. A symlink planted there would otherwise serve unverified bytes from
+// outside the cache, and a directory would be returned as if it were the file.
+func TestFetchCacheHitIsARegularFile(t *testing.T) {
+	t.Run("symlink", func(t *testing.T) {
+		f := newFakeHub(t)
+		cl := f.client(t, "")
+		local := filepath.Join(cl.Dir, "org", "model", commit, "a.bin")
+		outside := filepath.Join(t.TempDir(), "evil")
+		if err := os.WriteFile(outside, []byte("evil\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(local), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, local); err != nil {
+			t.Skipf("no symlinks here: %v", err)
+		}
+
+		got, err := cl.Fetch(context.Background(), "org/model", "main", "a.bin")
+		if err != nil {
+			t.Fatalf("Fetch: %v", err)
+		}
+		if fi, err := os.Lstat(got); err != nil || !fi.Mode().IsRegular() {
+			t.Fatalf("Fetch returned %s, mode %v, %v; want a regular file", got, fi.Mode(), err)
+		}
+		if b, _ := os.ReadFile(got); string(b) != hello {
+			t.Errorf("served %q, want the verified %q", b, hello)
+		}
+		if b, _ := os.ReadFile(outside); string(b) != "evil\n" {
+			t.Errorf("the symlink's target was overwritten: %q", b)
+		}
+	})
+
+	t.Run("directory", func(t *testing.T) {
+		f := newFakeHub(t)
+		cl := f.client(t, "")
+		local := filepath.Join(cl.Dir, "org", "model", commit, "a.bin")
+		if err := os.MkdirAll(local, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := cl.Fetch(context.Background(), "org/model", "main", "a.bin"); err == nil {
+			t.Errorf("Fetch returned the directory %s as a cached file", got)
+		}
+	})
+}
+
 // TestDefaultDir is the other half of Task 6.2.3: $LAYA_CACHE, else
 // os.UserCacheDir()/laya (docs/API.md WithCacheDir).
 func TestDefaultDir(t *testing.T) {
