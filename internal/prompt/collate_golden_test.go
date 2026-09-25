@@ -7,7 +7,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/MeKo-Christian/go-laya/backend"
 	"github.com/MeKo-Christian/go-laya/internal/golden"
 	"github.com/MeKo-Christian/go-laya/jsonx"
 	"github.com/MeKo-Christian/go-laya/tokenizer"
@@ -24,14 +23,6 @@ type logitsCase struct {
 	QTypes      []int64                    `json:"qtypes"`
 	InputTokens int64                      `json:"input_tokens"`
 	Collated    map[string]json.RawMessage `json:"collated"`
-}
-
-// tensorRec is dump_python_parity.py's tensor_rec: a row-major flat buffer
-// and the shape to fold it back into.
-type tensorRec[T any] struct {
-	DType string `json:"dtype"`
-	Shape []int  `json:"shape"`
-	Data  []T    `json:"data"`
 }
 
 // checkpointBudget is what agent.py:257-258 reads from rl_agent_config.json.
@@ -85,13 +76,7 @@ func TestCollateGolden(t *testing.T) {
 			}
 
 			got := Collate(items, ck.tok.PADID())
-			want := backend.Batch{
-				InputIDs:      matrix[int64](t, c.Collated, "input_ids"),
-				AttentionMask: matrix[int64](t, c.Collated, "attention_mask"),
-				MarkerPos:     matrix[int64](t, c.Collated, "marker_pos"),
-				MarkerMask:    matrix[bool](t, c.Collated, "marker_mask"),
-				QType:         vector[int64](t, c.Collated, "qtype"),
-			}
+			want := golden.CollatedBatch(t, c.Collated)
 			assertEqual(t, "input_ids", got.InputIDs, want.InputIDs)
 			assertEqual(t, "attention_mask", got.AttentionMask, want.AttentionMask)
 			assertEqual(t, "marker_pos", got.MarkerPos, want.MarkerPos)
@@ -203,54 +188,6 @@ func decodeObj(t *testing.T, raw json.RawMessage) jsonx.Obj {
 		t.Fatalf("recorded questions are %T, not an object", v)
 	}
 	return obj
-}
-
-func loadTensor[T any](t *testing.T, collated map[string]json.RawMessage, name string) tensorRec[T] {
-	t.Helper()
-
-	raw, ok := collated[name]
-	if !ok {
-		t.Fatalf("collated has no %q", name)
-	}
-	var rec tensorRec[T]
-	if err := json.Unmarshal(raw, &rec); err != nil {
-		t.Fatalf("decode %s: %v", name, err)
-	}
-	n := 1
-	for _, d := range rec.Shape {
-		n *= d
-	}
-	if n != len(rec.Data) {
-		t.Fatalf("%s: shape %v holds %d values, data has %d", name, rec.Shape, n, len(rec.Data))
-	}
-	return rec
-}
-
-// matrix folds a 2-D record back into rows. A zero-width tensor still has its
-// rows, as torch.zeros((n, 0)) does.
-func matrix[T any](t *testing.T, collated map[string]json.RawMessage, name string) [][]T {
-	t.Helper()
-
-	rec := loadTensor[T](t, collated, name)
-	if len(rec.Shape) != 2 {
-		t.Fatalf("%s: shape %v is not 2-D", name, rec.Shape)
-	}
-	rows, cols := rec.Shape[0], rec.Shape[1]
-	out := make([][]T, rows)
-	for i := range out {
-		out[i] = append(make([]T, 0, cols), rec.Data[i*cols:(i+1)*cols]...)
-	}
-	return out
-}
-
-func vector[T any](t *testing.T, collated map[string]json.RawMessage, name string) []T {
-	t.Helper()
-
-	rec := loadTensor[T](t, collated, name)
-	if len(rec.Shape) != 1 {
-		t.Fatalf("%s: shape %v is not 1-D", name, rec.Shape)
-	}
-	return rec.Data
 }
 
 func assertEqual(t *testing.T, name string, got, want any) {
