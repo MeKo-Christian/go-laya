@@ -37,8 +37,16 @@ var (
 	ErrHashMismatch = errors.New("hub: downloaded content does not match its hash")
 
 	// ErrNotFound is Fetch's error for a repo, revision or file the Hub does
-	// not have.
+	// not have, and Snapshot's for patterns that match no file.
 	ErrNotFound = errors.New("hub: not found")
+
+	// ErrCommitMismatch is Snapshot's error for a file the Hub serves from
+	// another commit than the one its listing named.
+	ErrCommitMismatch = errors.New("hub: file served from another commit than listed")
+
+	// ErrNotCached is an Offline client's error for anything the cache cannot
+	// answer in full.
+	ErrNotCached = errors.New("hub: not in the cache")
 )
 
 // DefaultEndpoint is the Hub Fetch talks to when Client.Endpoint is empty.
@@ -60,6 +68,7 @@ type Client struct {
 	Token    string       // sent as a bearer token, and only to Endpoint's host
 	Dir      string       // the cache root; DefaultDir() when empty
 	HTTP     *http.Client // http.DefaultClient when nil; Fetch follows redirects itself
+	Offline  bool         // answer from the cache alone, without a single request
 }
 
 // DefaultDir is the cache root: $LAYA_CACHE, else os.UserCacheDir()/laya.
@@ -77,33 +86,44 @@ func DefaultDir() (string, error) {
 // Fetch returns the local path of repo's file at rev, downloading it into
 // Dir/owner/name/<commit>/path first unless it is already there. The file only
 // ever appears there by rename after its hash matched, so a cancelled or
-// failed download leaves nothing behind.
+// failed download leaves nothing behind. An Offline client answers from the
+// cache alone, or fails with ErrNotCached.
 func (c *Client) Fetch(ctx context.Context, repo, rev, path string) (string, error) {
 	owner, name, ok := splitRepo(repo)
-	if !ok || !validSegments(rev) || !validSegments(path) || strings.Contains(path, `\`) {
+	if !ok || !validSegments(rev) || !validPath(path) {
 		return "", fmt.Errorf("%w: repo %q, revision %q, path %q", ErrInvalidPath, repo, rev, path)
 	}
-	dir := c.Dir
-	if dir == "" {
-		var err error
-		if dir, err = DefaultDir(); err != nil {
+	dir, err := c.dir()
+	if err != nil {
+		return "", err
+	}
+	if c.Offline {
+		commit, err := cachedCommit(dir, owner, name, rev)
+		if err != nil {
 			return "", err
 		}
+		local := filepath.Join(dir, owner, name, commit, filepath.FromSlash(path))
+		if !cached(local) {
+			return "", fmt.Errorf("%w: %s %s at %s", ErrNotCached, repo, path, rev)
+		}
+		return local, nil
 	}
-	endpoint := c.Endpoint
-	if endpoint == "" {
-		endpoint = DefaultEndpoint
-	}
+	return c.fetch(ctx, dir, owner, name, rev, path, "")
+}
+
+// fetch is Fetch past validation. A non-empty pin is the commit the Hub must
+// answer with, so that a revision moving mid-snapshot fails instead of mixing
+// two commits.
+func (c *Client) fetch(ctx context.Context, dir, owner, name, rev, path, pin string) (string, error) {
 	// The revision is escaped whole, as huggingface_hub quotes it, so
 	// "refs/pr/1" stays one segment; the path is escaped segment by segment.
 	segs := strings.Split(path, "/")
 	for i, seg := range segs {
 		segs[i] = url.PathEscape(seg)
 	}
-	resolve, err := url.Parse(strings.TrimRight(endpoint, "/") + "/" + owner + "/" + name +
-		"/resolve/" + url.PathEscape(rev) + "/" + strings.Join(segs, "/"))
+	resolve, err := c.url(owner + "/" + name + "/resolve/" + url.PathEscape(rev) + "/" + strings.Join(segs, "/"))
 	if err != nil {
-		return "", fmt.Errorf("hub: endpoint %q: %w", endpoint, err)
+		return "", err
 	}
 	hc := noRedirects(c.HTTP)
 
@@ -111,12 +131,11 @@ func (c *Client) Fetch(ctx context.Context, repo, rev, path string) (string, err
 	if err != nil {
 		return "", err
 	}
+	if pin != "" && commit != pin {
+		return "", fmt.Errorf("%w: %s/%s %s: commit %s, listing said %s", ErrCommitMismatch, owner, name, path, commit, pin)
+	}
 	local := filepath.Join(dir, owner, name, commit, filepath.FromSlash(path))
-	// Only a regular file is a hit: Stat would follow a symlink planted here
-	// to unverified bytes outside the cache, and accept a directory. Anything
-	// else is downloaded again; the rename replaces a symlink itself, never
-	// its target, and fails on a directory.
-	if fi, err := os.Lstat(local); err == nil && fi.Mode().IsRegular() {
+	if cached(local) {
 		return local, nil
 	}
 
@@ -126,9 +145,38 @@ func (c *Client) Fetch(ctx context.Context, repo, rev, path string) (string, err
 	}
 	defer body.Close()
 	if err := store(ctx, body, local, want); err != nil {
-		return "", fmt.Errorf("%s %s: %w", repo, path, err)
+		return "", fmt.Errorf("%s/%s %s: %w", owner, name, path, err)
 	}
 	return local, nil
+}
+
+// cached reports whether local is a cache hit. Only a regular file is: Stat
+// would follow a symlink planted here to unverified bytes outside the cache,
+// and accept a directory. Anything else is downloaded again; the rename
+// replaces a symlink itself, never its target, and fails on a directory.
+func cached(local string) bool {
+	fi, err := os.Lstat(local)
+	return err == nil && fi.Mode().IsRegular()
+}
+
+func (c *Client) dir() (string, error) {
+	if c.Dir != "" {
+		return c.Dir, nil
+	}
+	return DefaultDir()
+}
+
+// url is the endpoint joined with an already escaped path.
+func (c *Client) url(escaped string) (*url.URL, error) {
+	endpoint := c.Endpoint
+	if endpoint == "" {
+		endpoint = DefaultEndpoint
+	}
+	u, err := url.Parse(strings.TrimRight(endpoint, "/") + "/" + escaped)
+	if err != nil {
+		return nil, fmt.Errorf("hub: endpoint %q: %w", endpoint, err)
+	}
+	return u, nil
 }
 
 // head reads the commit and the content hash from the resolve URL itself: the
@@ -296,6 +344,12 @@ func splitRepo(repo string) (owner, name string, ok bool) {
 
 func validName(s string) bool {
 	return nameRE.MatchString(s) && s != "." && s != ".."
+}
+
+// validPath is validSegments for a file path, which must not smuggle a
+// separator Windows would honour.
+func validPath(s string) bool {
+	return validSegments(s) && !strings.Contains(s, `\`)
 }
 
 // validSegments reports whether s is a relative slash path with no empty, "."
