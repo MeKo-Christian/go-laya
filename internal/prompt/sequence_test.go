@@ -396,3 +396,64 @@ func TestBuildSequenceHugeMaxLen(t *testing.T) {
 		wantMarkers: []int64{5},
 	}})
 }
+
+// TestBuildSequenceBoundaries is Task 5.2.3, one row per boundary the plan
+// names. sequence.jsonl reaches none of the interesting ones -- its smallest
+// room is 15 and it never loses a marker -- so the stub is the only witness.
+// Rows 4 and 5 repeat cases of the tests above on purpose: the matrix should
+// read as one table.
+func TestBuildSequenceBoundaries(t *testing.T) {
+	// "[CLS] choice question: q [SEP] [MASK] a [SEP]" is 8 ids.
+	q := Internal{T: TypeChoice, Ins: "q", Crit: labels("a")}
+	abc := Internal{T: TypeChoice, Ins: "q", Crit: labels("a", "b", "c")}
+	runSequenceCases(t, []seqCase{
+		{
+			// 8 + 2 state ids + [SEP] == 11: nothing is cut.
+			name: "1 exactly max_len", q: q, state: "s0 s1", maxLen: 11,
+			want:        toks("[CLS] choice question: q [SEP] [MASK] a [SEP] s0 s1 [SEP]"),
+			wantMarkers: []int64{5},
+		},
+		{
+			// One state id too many: room keeps [SEP] and drops s2.
+			name: "2a one over, right", q: q, state: "s0 s1 s2", maxLen: 11,
+			want:        toks("[CLS] choice question: q [SEP] [MASK] a [SEP] s0 s1 [SEP]"),
+			wantMarkers: []int64{5},
+		},
+		{
+			name: "2b one over, left", q: q, state: "s0 s1 s2", maxLen: 11, truncateLeft: true,
+			want:        toks("[CLS] choice question: q [SEP] [MASK] a [SEP] s1 s2 [SEP]"),
+			wantMarkers: []int64{5},
+		},
+		{
+			// With no state, the prompt is one over max_len only through its
+			// trailing [SEP], and the clamp takes exactly that.
+			name: "2c one over, only the trailing [SEP]", q: q, state: "", maxLen: 8,
+			want:        toks("[CLS] choice question: q [SEP] [MASK] a [SEP]"),
+			wantMarkers: []int64{5},
+		},
+		{
+			// Markers at 5, 7 and 9 against max_len 9: the third is lost, the
+			// precondition of invariant #13's ValueError, which no fixture case
+			// reaches. The second survives although its option text is cut.
+			name: "3 options alone exceed max_len", q: abc, state: "s0", maxLen: 9,
+			want:        toks("[CLS] choice question: q [SEP] [MASK] a [MASK] b"),
+			wantMarkers: []int64{5, 7},
+		},
+		{
+			name: "4 zero options", q: Internal{T: TypeChoice, Ins: "q", Crit: jsonx.Obj{}}, state: "s0", maxLen: 8,
+			want:        toks("[CLS] choice question: q [SEP] [SEP] s0 [SEP]"),
+			wantMarkers: []int64{},
+		},
+		{
+			name: "5a state truncates to nothing, right", q: q, state: "s0 s1", maxLen: 9,
+			want:        toks("[CLS] choice question: q [SEP] [MASK] a [SEP] [SEP]"),
+			wantMarkers: []int64{5},
+		},
+		{
+			// st[-0:] is the whole state; the clamp leaves s0 where [SEP] was.
+			name: "5b state truncates to nothing, left", q: q, state: "s0 s1", maxLen: 9, truncateLeft: true,
+			want:        toks("[CLS] choice question: q [SEP] [MASK] a [SEP] s0"),
+			wantMarkers: []int64{5},
+		},
+	})
+}
