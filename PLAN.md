@@ -22,18 +22,18 @@ safetensors backend landing later behind the same interface.
 Tick a box only when the work is committed and `just check` is green. `[~]` means started but
 not finished; keep it rare. A milestone is done when every task box under it is ticked.
 
-| Milestone                                                              | Delivers                                         | Status                                             |
-| ---------------------------------------------------------------------- | ------------------------------------------------ | -------------------------------------------------- |
-| [M0 — Scaffolding](#m0--scaffolding)                                   | Go module, tooling, CI, frozen Python, `Version` | ✅ 5/6 (0.1 skipped)                               |
-| [Spikes S1–S3](#3-spikes--do-these-before-writing-library-code)        | ONNX export, binding choice, latency floor       | 🟢 S1–S3 done                                      |
-| [M1 — Reference harness](#m1--the-python-reference-harness)            | `testdata/*.jsonl` golden vectors                | ✅ done                                            |
-| [M2 — Tier-1 core](#m2--tier-1-core-no-ml-runtime-620-lines-of-python) | `jsonx`, `lang`, `mailtext`, `presets`, render   | 🟢 2.1–2.4 done; 2.5.4 partial                     |
-| [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ✅ done                                            |
-| [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | 🟢 4.1–4.5 done; 4.3.9/4.5.5 open                  |
-| [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ✅ done                                            |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | 🟡 6.1–6.4, 6.10 done bar 6.3.2 (CUDA); 6.5.1 done |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started                                     |
-| [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred                                        |
+| Milestone                                                              | Delivers                                         | Status                                                  |
+| ---------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------- |
+| [M0 — Scaffolding](#m0--scaffolding)                                   | Go module, tooling, CI, frozen Python, `Version` | ✅ 5/6 (0.1 skipped)                                    |
+| [Spikes S1–S3](#3-spikes--do-these-before-writing-library-code)        | ONNX export, binding choice, latency floor       | 🟢 S1–S3 done                                           |
+| [M1 — Reference harness](#m1--the-python-reference-harness)            | `testdata/*.jsonl` golden vectors                | ✅ done                                                 |
+| [M2 — Tier-1 core](#m2--tier-1-core-no-ml-runtime-620-lines-of-python) | `jsonx`, `lang`, `mailtext`, `presets`, render   | 🟢 2.1–2.4 done; 2.5.4 partial                          |
+| [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ✅ done                                                 |
+| [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | 🟢 4.1–4.5 done; 4.3.9/4.5.5 open                       |
+| [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ✅ done                                                 |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | 🟡 6.1–6.4, 6.6, 6.10 done bar 6.3.2 (CUDA); 6.5.1 done |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started                                          |
+| [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred                                             |
 
 **Critical path:** M1 ✅ → M2 (`jsonx` first) → M4 → M5 → M6 → M7, with M3 off the path. _(Reordered
 on the 2026-09-20 review.)_ _(2026-09-20: M4 was in the event run **in parallel** with M2 from `jsonx`
@@ -1951,13 +1951,50 @@ binding pins the _C API version_ (`supportedAPIVersions = []uint32{23}` — 1.23
 nothing pins the `.so` itself. No in-house repo solves this; `go-pocket-tts` is bring-your-own
 (`docs/INSTALL.md:9-33`), with the version appearing only in a developer's local settings file.
 
-- [ ] **6.6.1** Decide between documenting a bring-your-own library and shipping a verified
+- [x] **6.6.1** Decide between documenting a bring-your-own library and shipping a verified
       download — `pockettts-tools model download-onnx --sha256` is the in-house precedent.
-- [ ] **6.6.2** Verify the resolved library's version at startup rather than inferring it from the
+      (2026-09-26) — **decided (user): verified download**, with bring-your-own via `LAYA_ORT_LIB`
+      still accepted (6.6.2). New `internal/ortlib` pins ORT **1.23.0** for linux and darwin on
+      amd64/arm64. Each entry carries the archive's sha256 as GitHub publishes it for the asset,
+      its size, the library member, and the library's size and sha256. The linux/amd64 library is
+      byte-identical to the `/opt/onnxruntime/cpu` one every recorded number came from.
+      `Client.Download` verifies the archive before parsing it and extracts only that member, as a
+      regular file of the pinned size and hash. It then renames it to
+      `$LAYA_CACHE/onnxruntime/<archive>/<lib>`. `Cached` re-hashes the file on every call, and a
+      changed or symlinked copy is `ErrHashMismatch`, never a silent re-download.
+      `go run ./cmd/laya-ort` downloads it and prints the path; `Open` never touches the network.
+      Tests: `TestDownload` (a second call makes no request), `TestDownloadRejects` (8 cases:
+      archive one byte off, longer, shorter, member missing, symlinked, resized or altered, not a
+      gzip; nothing left in the cache), `TestDownloadHTTPError`, `TestDownloadCancel`, `TestCached`
+      and `TestPinned`. Dropping any one check fails at least two of them: the archive hash, the
+      library hash, the regular-file or size check, the cache re-hash, `Lstat`, or the
+      no-re-download rule. `LAYA_ORT_NET=1 go test -run TestPinnedLive ./internal/ortlib/`
+      downloaded and verified all four real archives. End to end, `laya-ort` into an empty
+      `LAYA_CACHE` and then `just test-onnx` with no ORT variable set passed. It loaded the
+      downloaded library (`TestOpenRuntimeVersion` logs its path).
+- [x] **6.6.2** Verify the resolved library's version at startup rather than inferring it from the
       filename, and fail with a named error when the C API version does not match.
-- [ ] **6.6.3** Reuse `internal/onnxspike`'s resolution chain: `LAYA_ORT_LIB`, `ORT_LIBRARY_PATH`,
+      (2026-09-26) — the premise above was half wrong: the binding asks for C API 23, so a pre-1.23
+      library fails with an unnamed "failed to get OrtAPI", but a **newer** one loads silently.
+      **Decided (user): accept 1.23 or a later 1.x.** `Open` reads the version through
+      `OrtGetApiBase()->GetVersionString` (purego, `runtime_version.go`) before the binding loads
+      the library. The pure `checkRuntimeVersion` requires `1.M.P` with M ≥ 23 and fails closed with
+      `ErrRuntimeVersion` naming the version, for an unreadable one too. `TestCheckRuntimeVersion`
+      covers 4 accepted and 11 rejected strings. `TestOpenRuntimeVersion` opens the 1.23.0
+      library and rejects `libc.so.6` (no `OrtGetApiBase`). With
+      `LAYA_ORT_OLD_LIB` pointing at the official 1.22.0 linux-x64 library, it gets
+      `unsupported ONNX Runtime version: "1.22.0", need 1.23 or a later 1.x (C API 23)`.
+      Skipping the check in `Open` fails that case.
+- [x] **6.6.3** Reuse `internal/onnxspike`'s resolution chain: `LAYA_ORT_LIB`, `ORT_LIBRARY_PATH`,
       then platform candidates; a variable that is set but points nowhere is an error, not a
       fallback.
+      (2026-09-26) — the chain moved with 6.10 but had no test. `TestFindORTLibrary` (10 cases,
+      untagged, runs in CI) covers precedence, set-but-missing for both variables (wrapping
+      `fs.ErrNotExist`), the candidate fallback, and nothing found naming `LAYA_ORT_LIB` and
+      `cmd/laya-ort`. Falling through on a set-but-missing variable fails both of those cases.
+      **Widened by 6.6.1:** 6.6.1's verified download now sits between the variables and the
+      candidates, and a download that fails its hash is an error. A platform without a download
+      falls through.
 
 **Task 6.7: Decide the Windows and js/wasm story for the ONNX backend.** _(new, 2026-09-20)_
 `release.yml` builds `windows/amd64`, but `go-pocket-tts` stubs purego out on Windows and js/wasm
@@ -2155,6 +2192,10 @@ way to make an agent and says so rather than caching a nil one.
       latency and the fact that batching does not amortise it, and does not describe the port as
       "CPU-first". S3.2 made the honest claim available; this is where it gets made.
 - [ ] **7.5.5** State the tokenizer/checkpoint revisions the port is verified against.
+- [ ] **7.5.7** _(new, 2026-09-26, from 6.6)_ Document the runtime in the README:
+      `go run ./cmd/laya-ort` downloads the pinned ONNX Runtime 1.23.0, `LAYA_ORT_LIB` brings your
+      own, and `Open` accepts any 1.x from 1.23 (`ErrRuntimeVersion`) even though everything was measured on
+      1.23.0. The only docs so far are `internal/backend/onnx/README.md`.
 
 **Task 7.6: `Router.Predict` / `Router.SystemOne`.** _(new, 2026-09-20, from M3)_
 `router.py:293-311`: route, load the chosen checkpoint, run `system_one`, then add the decision under
