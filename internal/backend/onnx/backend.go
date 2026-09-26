@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"slices"
 	"sync"
@@ -25,10 +26,11 @@ import (
 // Backend runs one exported DecisionModel graph through ONNX Runtime. It is
 // safe for concurrent Forward calls; Close waits for those in flight.
 type Backend struct {
-	mu   sync.RWMutex
-	rt   *ort.Runtime
-	env  *ort.Env
-	sess *ort.Session
+	mu     sync.RWMutex
+	rt     *ort.Runtime
+	env    *ort.Env
+	sess   *ort.Session
+	device string
 }
 
 var _ backend.Backend = (*Backend)(nil)
@@ -40,7 +42,18 @@ var _ backend.Backend = (*Backend)(nil)
 //
 // The graph must declare exactly the five inputs and two outputs
 // scripts/export_onnx.py writes, in any order.
+//
+// opts.Device picks the execution provider; see Options.Device for when that
+// falls back to the CPU and warns.
 func Open(modelPath string, opts Options) (*Backend, error) {
+	if _, err := parseDevice(opts.Device); err != nil {
+		return nil, err
+	}
+	log := opts.Logger
+	if log == nil {
+		log = slog.Default()
+	}
+
 	// #nosec G703 -- stat only; the path is the caller's, and whatever
 	// resolved it (a developer flag, internal/hub's validated cache path) owns
 	// its trust. ORT reads the file below either way.
@@ -65,9 +78,8 @@ func Open(modelPath string, opts Options) (*Backend, error) {
 	if b.env, err = rt.NewEnv("laya", ort.LoggingLevelWarning); err != nil {
 		return nil, errors.Join(fmt.Errorf("onnx backend: env: %w", err), b.Close())
 	}
-	b.sess, err = rt.NewSession(b.env, modelPath, &ort.SessionOptions{IntraOpNumThreads: opts.IntraOpThreads})
-	if err != nil {
-		return nil, errors.Join(fmt.Errorf("onnx backend: session %s: %w", modelPath, err), b.Close())
+	if err := b.openSession(modelPath, opts, log); err != nil {
+		return nil, errors.Join(err, b.Close())
 	}
 
 	if !sameSet(b.sess.InputNames(), graphInputs) || !sameSet(b.sess.OutputNames(), graphOutputs) {
@@ -76,6 +88,18 @@ func Open(modelPath string, opts Options) (*Backend, error) {
 		return nil, errors.Join(err, b.Close())
 	}
 	return b, nil
+}
+
+// availableProviders is GetAvailableProviders, swappable so a test can make
+// the library advertise a provider it cannot actually build a session with.
+var availableProviders = (*ort.Runtime).GetAvailableProviders
+
+// Device reports the device the session runs on: "cpu", "cuda" or "coreml".
+// After a fallback it is "cpu", whatever Options.Device asked for.
+func (b *Backend) Device() string {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.device
 }
 
 // Forward runs one forward pass and returns logits (n×kmax) and act_logits
@@ -179,6 +203,45 @@ func (b *Backend) Close() error {
 			return fmt.Errorf("onnx backend: close runtime: %w", err)
 		}
 	}
+	return nil
+}
+
+// openSession creates the session on the device opts asks for. It warns, once,
+// only when an explicitly requested device is not what the session ends up on:
+// either the library cannot provide it, or building the session with it
+// failed and the CPU was tried instead (agent.py:156-165, 203-227).
+func (b *Backend) openSession(modelPath string, opts Options, log *slog.Logger) error {
+	available, err := availableProviders(b.rt)
+	if err != nil {
+		return fmt.Errorf("onnx backend: execution providers: %w", err)
+	}
+	choice, err := resolveDevice(opts.Device, available)
+	if err != nil {
+		return err
+	}
+
+	newSession := func(providers []string) (*ort.Session, error) {
+		return b.rt.NewSession(b.env, modelPath, &ort.SessionOptions{
+			IntraOpNumThreads:  opts.IntraOpThreads,
+			ExecutionProviders: providers,
+		})
+	}
+
+	sess, err := newSession(choice.providers)
+	if err != nil && len(choice.providers) > 0 {
+		choice.fallback = fmt.Sprintf("session on %s failed: %v", choice.device, err)
+		choice.device = deviceCPU
+		sess, err = newSession(nil)
+	}
+	if err != nil {
+		return fmt.Errorf("onnx backend: session %s: %w", modelPath, err)
+	}
+
+	if choice.fallback != "" {
+		log.Warn("onnx backend: requested device unavailable, running on CPU",
+			"requested", choice.requested, "reason", choice.fallback)
+	}
+	b.sess, b.device = sess, choice.device
 	return nil
 }
 

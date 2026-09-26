@@ -29,5 +29,8 @@ func (*Backend) Forward(context.Context, backend.Batch) (logits, act [][]float32
 	return nil, nil, ErrUnsupportedPlatform
 }
 
+// Device returns "": there is no session to run anywhere.
+func (*Backend) Device() string { return "" }
+
 // Close does nothing.
 func (*Backend) Close() error { return nil }
