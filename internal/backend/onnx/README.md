@@ -48,6 +48,18 @@ Regenerate `testdata/forward_pass.json` with the pinned reference environment
 just fmt   # prettier owns the file's layout; the generator's is not the committed one
 ```
 
+`testdata/matrix/forward-<checkpoint>.json` holds the same schema at each of S1's four shapes
+(`VALIDATION_SHAPES`), for `TestForwardMatrix`. Regenerate all three the same way:
+
+```bash
+.venv-ref/bin/python scripts/export_onnx.py --all --dynamo --reuse \
+    --suffix=-dynamo --no-check-attn --fixture-matrix internal/backend/onnx/testdata/matrix
+just fmt
+```
+
+`matrixTol` in `matrix_test.go` was set from what those fixtures measured. After a
+regeneration, re-measure and move the tolerances only in a reviewed diff.
+
 ## Reading the benchmark
 
 `bench-onnx` is two one-dimensional sweeps sharing a corner rather than a cross product: threads vary

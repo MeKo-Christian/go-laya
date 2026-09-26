@@ -258,6 +258,16 @@ OUTPUT_NAMES = ["logits", "act_logits"]
 # correctly. k >= 2 still applies -- see example_inputs.
 FIXTURE_SEQ, FIXTURE_K, FIXTURE_BATCH = 16, 3, 1
 
+# S1's four validation shapes as (label, seq, k, batch): the traced one, then a different
+# seq, k and batch in turn. compare_with_ort and --fixture-matrix both read this, so the
+# shapes Python ORT validated and the ones the Go matrix test replays cannot drift apart.
+VALIDATION_SHAPES = (
+    ("traced", 48, 4, 2),
+    ("other_seq", 61, 4, 2),
+    ("other_k", 48, 7, 2),
+    ("other_batch", 48, 4, 3),
+)
+
 
 def export(
     model: nn.Module, inputs: tuple, out_path: Path, dynamo: bool = False, opset: int | None = None
@@ -331,7 +341,7 @@ def head_activation(onnx_path: Path) -> dict[str, int]:
     return {op: counts.get(op, 0) for op in ("Relu", "Gelu", "Erf", "Tanh")}
 
 
-def compare_with_ort(onnx_path: Path, model: nn.Module, inputs: tuple) -> dict[str, Any]:
+def compare_with_ort(onnx_path: Path, model: nn.Module) -> dict[str, Any]:
     """S1 exit criterion: the file loads in ORT and its logits match PyTorch.
 
     Also runs a *different* shape from the traced one, because an export whose dynamic
@@ -358,22 +368,33 @@ def compare_with_ort(onnx_path: Path, model: nn.Module, inputs: tuple) -> dict[s
         except Exception as exc:  # a shape that will not run IS the result
             return {"error": f"{type(exc).__name__}: {str(exc).strip().splitlines()[0]}"}
 
-    return {
-        "outputs": [o.name for o in sess.get_outputs()],
-        "traced_shape": attempt("traced", inputs),
-        # Different on every dynamic axis at once. transformers emits a TracerWarning
-        # about baking the sequence length into the attention mask, so these are the
-        # checks that say whether the warning mattered.
-        "other_seq": attempt("other_seq", example_inputs(model, seq=61, k=4, batch=2)),
-        "other_k": attempt("other_k", example_inputs(model, seq=48, k=7, batch=2)),
-        "other_batch": attempt("other_batch", example_inputs(model, seq=48, k=4, batch=3)),
-    }
+    report: dict[str, Any] = {"outputs": [o.name for o in sess.get_outputs()]}
+    # Different on every dynamic axis in turn. transformers emits a TracerWarning about
+    # baking the sequence length into the attention mask, so the non-traced shapes are the
+    # checks that say whether the warning mattered.
+    # example_inputs is seeded, so the traced entry rebuilds exactly the traced batch.
+    for label, seq, k, batch in VALIDATION_SHAPES:
+        key = "traced_shape" if label == "traced" else label  # the report's historical key
+        report[key] = attempt(label, example_inputs(model, seq=seq, k=k, batch=batch))
+    return report
 
 
-def dump_fixture(
-    onnx_path: Path, model: nn.Module, ckpt: Checkpoint, out_path: Path, attn: str
-) -> dict[str, Any]:
-    """Freeze one forward pass so the Go spike can assert against it (PLAN.md S2.1).
+def _tensor(a: np.ndarray) -> dict[str, Any]:
+    return {"dtype": str(a.dtype), "shape": list(a.shape), "data": a.reshape(-1).tolist()}
+
+
+def _fixture_session(onnx_path: Path) -> Any:
+    import onnxruntime as ort
+
+    sess = ort.InferenceSession(onnx_path.as_posix(), providers=["CPUExecutionProvider"])
+    got_names = [i.name for i in sess.get_inputs()]
+    if got_names != INPUT_NAMES:
+        raise RuntimeError(f"graph inputs are {got_names}, expected {INPUT_NAMES}")
+    return sess
+
+
+def fixture_case(sess: Any, model: nn.Module, inputs: tuple) -> dict[str, Any]:
+    """One forward pass as the Go tests replay it: the inputs, then both runtimes' outputs.
 
     Stores *both* runtimes' outputs on purpose. Go loads the graph through whatever
     libonnxruntime is installed -- 1.23.x, the only C API version
@@ -382,26 +403,21 @@ def dump_fixture(
     outputs next to the ORT ones separates "the Go binding fed the tensors wrong"
     from "the two ORT builds disagree slightly".
     """
-    import onnxruntime as ort
-
-    inputs = example_inputs(model, seq=FIXTURE_SEQ, k=FIXTURE_K, batch=FIXTURE_BATCH)
-    sess = ort.InferenceSession(onnx_path.as_posix(), providers=["CPUExecutionProvider"])
-
-    got_names = [i.name for i in sess.get_inputs()]
-    if got_names != INPUT_NAMES:
-        raise RuntimeError(f"graph inputs are {got_names}, expected {INPUT_NAMES}")
-
     feed = {n: t.numpy() for n, t in zip(INPUT_NAMES, inputs, strict=True)}
     got = sess.run(OUTPUT_NAMES, feed)
     with torch.no_grad(), _no_mha_fastpath():
         want = model(*inputs, False)
+    return {
+        "inputs": {n: _tensor(feed[n]) for n in INPUT_NAMES},
+        "ort": {n: _tensor(a) for n, a in zip(OUTPUT_NAMES, got, strict=True)},
+        "torch": {n: _tensor(t.numpy()) for n, t in zip(OUTPUT_NAMES, want, strict=True)},
+    }
 
-    def tensor(a: np.ndarray) -> dict[str, Any]:
-        return {"dtype": str(a.dtype), "shape": list(a.shape), "data": a.reshape(-1).tolist()}
 
-    fixture = {
+def _fixture_header(onnx_path: Path, ckpt: Checkpoint, attn: str, flag: str) -> dict[str, Any]:
+    return {
         "_comment": (
-            "Generated by scripts/export_onnx.py --fixture against the pinned reference "
+            f"Generated by scripts/export_onnx.py {flag} against the pinned reference "
             "environment. Do not hand-edit: regenerating it is a reviewed diff (PLAN.md R6)."
         ),
         "checkpoint": ckpt.name,
@@ -410,19 +426,52 @@ def dump_fixture(
         "versions": versions(),
         "input_names": INPUT_NAMES,
         "output_names": OUTPUT_NAMES,
-        "inputs": {n: tensor(feed[n]) for n in INPUT_NAMES},
-        "ort": {n: tensor(a) for n, a in zip(OUTPUT_NAMES, got, strict=True)},
-        "torch": {n: tensor(t.numpy()) for n, t in zip(OUTPUT_NAMES, want, strict=True)},
     }
+
+
+def _ort_vs_torch(case: dict[str, Any]) -> dict[str, float]:
+    def diff(n: str) -> float:
+        return float(np.abs(np.array(case["ort"][n]["data"]) - case["torch"][n]["data"]).max())
+
+    return {n: diff(n) for n in OUTPUT_NAMES}
+
+
+def dump_fixture(
+    onnx_path: Path, model: nn.Module, ckpt: Checkpoint, out_path: Path, attn: str
+) -> dict[str, Any]:
+    """Freeze one forward pass so the Go spike can assert against it (PLAN.md S2.1)."""
+    inputs = example_inputs(model, seq=FIXTURE_SEQ, k=FIXTURE_K, batch=FIXTURE_BATCH)
+    case = fixture_case(_fixture_session(onnx_path), model, inputs)
+    fixture = _fixture_header(onnx_path, ckpt, attn, "--fixture") | case
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(fixture, indent=2) + "\n")
     return {
         "path": out_path.as_posix(),
         "shape": {"batch": FIXTURE_BATCH, "seq": FIXTURE_SEQ, "k": FIXTURE_K},
-        "ort_vs_torch": {
-            n: float(np.abs(a - t.numpy()).max())
-            for n, a, t in zip(OUTPUT_NAMES, got, want, strict=True)
-        },
+        "ort_vs_torch": _ort_vs_torch(case),
+    }
+
+
+def dump_fixture_matrix(
+    onnx_path: Path, model: nn.Module, ckpt: Checkpoint, out_dir: Path, attn: str
+) -> dict[str, Any]:
+    """Freeze a forward pass at each of S1's shapes for the Go matrix test (PLAN.md 6.8.1).
+
+    One file per checkpoint, ``forward-<checkpoint>.json``, with one case per entry of
+    ``VALIDATION_SHAPES`` in that order.
+    """
+    sess = _fixture_session(onnx_path)
+    cases = []
+    for label, seq, k, batch in VALIDATION_SHAPES:
+        case = fixture_case(sess, model, example_inputs(model, seq=seq, k=k, batch=batch))
+        cases.append({"shape": label, "seq": seq, "k": k, "batch": batch} | case)
+    fixture = _fixture_header(onnx_path, ckpt, attn, "--fixture-matrix") | {"cases": cases}
+    out_path = out_dir / f"forward-{ckpt.name}.json"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(fixture, indent=2) + "\n")
+    return {
+        "path": out_path.as_posix(),
+        "ort_vs_torch": {c["shape"]: _ort_vs_torch(c) for c in cases},
     }
 
 
@@ -461,6 +510,7 @@ def run_one(
     opset: int | None = None,
     fixture: Path | None = None,
     attn: str = "eager",
+    fixture_matrix: Path | None = None,
 ) -> dict[str, Any]:
     ckpt_dir = ckpt.dir(models_root)
     print(f"\n=== {ckpt.name} ({ckpt_dir}) ===", flush=True)
@@ -504,12 +554,16 @@ def run_one(
     report["head_ops"] = head_activation(out_path)
     print(f"activation op counts: {report['head_ops']}", flush=True)
 
-    report["ort"] = compare_with_ort(out_path, model, inputs)
+    report["ort"] = compare_with_ort(out_path, model)
     print(f"ORT vs PyTorch: {report['ort']}", flush=True)
 
     if fixture is not None:
         report["fixture"] = dump_fixture(out_path, model, ckpt, fixture, attn)
         print(f"fixture -> {report['fixture']}", flush=True)
+
+    if fixture_matrix is not None:
+        report["fixture_matrix"] = dump_fixture_matrix(out_path, model, ckpt, fixture_matrix, attn)
+        print(f"fixture matrix -> {report['fixture_matrix']}", flush=True)
 
     del model
     gc.collect()
@@ -555,6 +609,13 @@ def main() -> int:
         default=None,
         help="write a one-forward-pass JSON fixture for the Go spike here (PLAN.md S2.1)",
     )
+    ap.add_argument(
+        "--fixture-matrix",
+        type=Path,
+        default=None,
+        help="write forward-<checkpoint>.json at each of S1's four shapes into this directory "
+        "(PLAN.md Task 6.8.1)",
+    )
     args = ap.parse_args()
 
     selected = (
@@ -584,6 +645,7 @@ def main() -> int:
                     args.opset,
                     args.fixture,
                     args.attn,
+                    args.fixture_matrix,
                 )
             )
         except Exception as exc:  # a spike records how it failed; it does not hide it
