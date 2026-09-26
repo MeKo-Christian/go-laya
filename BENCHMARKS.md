@@ -246,6 +246,25 @@ every language switch. Building an ORT session from an already-downloaded ONNX f
 that — but at 1.4 GB resident apiece, holding all three costs about 3.3 GB, which is the real
 constraint on raising `max_loaded`.
 
+### Go or Python, ORT 1.23 or 1.30 — no difference
+
+An early cross-check recorded `english` at 1901 ms from Go on ORT 1.23.0 against 5064 ms from Python
+on ORT 1.30.0 — a 2.7× gap, but only 1.1× on `multilingual`. It did not survive a controlled rerun
+(PLAN.md Task 6.8.3). Both sides on both runtime versions, interleaved over three rounds, batch 1,
+512 tokens, 8 threads; minimum p50 across the rounds:
+
+| checkpoint     | Go + 1.23.0 | Python + 1.23.0 | Go + 1.30.0 | Python + 1.30.0 |
+| -------------- | ----------- | --------------- | ----------- | --------------- |
+| `english`      | 1712 ms     | 1856 ms         | 1684 ms     | 1687 ms         |
+| `multilingual` | 636 ms      | 627 ms          | 657 ms      | 628 ms          |
+
+All four land within about 10% of each other, inside this machine's noise, so neither the binding nor
+the runtime version costs anything measurable. The first round shows how the old number could arise:
+Python on 1.30.0 took 3800 ms on `english` there, against 2174 ms for Go on 1.30.0 in the same round.
+A single back-to-back pair on a throttling laptop is not a comparison. The Python side is
+`scripts/bench_ort.py`, which builds `BenchmarkForward`'s exact inputs. The transcript is
+`docs/benchmarks/raw/ort-version-gap.txt`.
+
 ### What this means
 
 **CPU inference is 9–43× slower than the T4 figure, and that range is honest rather than evasive:**
