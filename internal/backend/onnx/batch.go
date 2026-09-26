@@ -3,6 +3,7 @@ package onnx
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/MeKo-Christian/go-laya/backend"
 )
@@ -38,6 +39,20 @@ type Options struct {
 	// Spike S3 measured the physical core count as the right setting (D6),
 	// but picking it is the caller's job.
 	IntraOpThreads int
+
+	// Device is "cpu", "cuda", "cuda:N", "coreml", or "" / "auto" for the
+	// best one the library advertises. Warnings go to Logger, one per
+	// fallback and none otherwise. An explicitly requested device the library
+	// does not advertise falls back to the CPU with a warning; "auto" passes
+	// over it silently, and "cpu" never warns. A session that fails to build
+	// on a non-CPU device retries on the CPU and warns whether that device
+	// was requested or auto-picked, as upstream's failed .to(device) does
+	// (agent.py:203-227). Anything else is ErrUnknownDevice. The binding cannot enable CUDA yet (PLAN.md Task
+	// 6.3.6), so "cuda" currently always falls back.
+	Device string
+
+	// Logger receives the fallback warnings. Nil means slog.Default().
+	Logger *slog.Logger
 }
 
 // The graph's declared inputs and outputs, as scripts/export_onnx.py names
