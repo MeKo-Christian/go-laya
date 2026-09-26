@@ -225,17 +225,20 @@ Done:
 - **7.1.6:** `ECE` and `Brier` against `ece.jsonl`.
 - **7.1.8:** numpy's float32 exp/log, bit-exact on all 2^32 inputs, with `f32math.jsonl`.
 
-`TestAnswersNumerics` matches all 31 `answers.jsonl` cases exactly after `Round4`.
+`TestAnswersNumerics` matches all 33 `answers.jsonl` cases exactly after `Round4`.
 
 - [x] **7.1.7** Make `answers.jsonl` discriminate precision. (2026-09-27) The generator's
-      `precision_cases` searches seeded draws for one case per field (`probabilities`,
-      `confidence`, `score`, `noul`) that rounds differently under `answer_block(dtype=float64)`,
-      and marks it `discriminates`. The 27 earlier cases are byte-identical.
+      `precision_cases` searches seeded draws for cases that round differently under a wrong port
+      and marks each with `discriminates` (the field) and `against` (the port). Against float64
+      (`answer_block(dtype=float64)`): one case each for `probabilities`, `confidence`, `score`
+      and `noul`. Against a left-to-right sum in place of numpy's pairwise one
+      (`sequential=True`): `probabilities` and `confidence` at k = 10, since the two sums first
+      diverge at k ≥ 8. The 27 earlier cases are byte-identical.
       `go test -count=1 -run 'TestAnswersNumerics|TestAnswersDiscriminatePrecision' -v ./internal/calib/`
-      passes, with `TestAnswersDiscriminatePrecision` requiring a float64 port to miss every marked
-      field. A float64 `Softmax` passed on the 27-case corpus and now fails
-      `precision/choice-confidence`. Summation order is still not discriminated: pairwise and
-      sequential differ only from k ≥ 8, and no case targets it.
+      passes, with `TestAnswersDiscriminatePrecision` requiring each port to miss every field it
+      is marked against. Mutations that passed on the 27-case corpus now fail: a float64
+      `Softmax` fails `precision/choice-confidence`, and a sequential `numpySum` fails both
+      `precision/sum-order-*` cases.
 
 **Task 7.2: The default agent loader.** Until it exists, `NewRouter()` without `WithLoader`
 returns `ErrNoLoader`.
@@ -266,7 +269,7 @@ returns `ErrNoLoader`.
       through `Collate`.
 - [ ] **7.3.7** **Precision and tie-break** (#24a/#30a). Softmax and entropy are numpy float32,
       `score` is float64 over a float32 `p`, `noul` is float64 from a float32 `p[1]`, and the act
-      softmax is torch float32. `p.argmax()` is the **first** max. Acceptance: all 31
+      softmax is torch float32. `p.argmax()` is the **first** max. Acceptance: all 33
       `answers.jsonl` cases byte-equal, plus a test with two exactly equal logits that picks the
       first key.
 - [ ] **7.3.8** `Answer.MarshalJSON` per type via `jsonx.Obj`, with **no `omitempty`**: a
@@ -277,7 +280,7 @@ returns `ErrNoLoader`.
       a Python dict cannot hold them.
 - [ ] **7.3.10** Measure whether the act head's torch float32 softmax (`agent.py:295`) agrees with
       `exp32`, or with narrowed `math.Exp`, after `Round4`. If it does not, decide between porting
-      ATen's exp and accepting a last-digit gap on `act_probability`. `answers.jsonl`'s 31
+      ATen's exp and accepting a last-digit gap on `act_probability`. `answers.jsonl`'s 33
       `act_probability` values came from the dumper's **numpy** copy (`answer_block`), not from
       torch, so they cannot tell the two apart.
 - [ ] **7.3.11** A behavioural test on the Go device-fallback policy, replacing upstream's
