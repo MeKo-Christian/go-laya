@@ -22,18 +22,18 @@ safetensors backend landing later behind the same interface.
 Tick a box only when the work is committed and `just check` is green. `[~]` means started but
 not finished; keep it rare. A milestone is done when every task box under it is ticked.
 
-| Milestone                                                              | Delivers                                         | Status                            |
-| ---------------------------------------------------------------------- | ------------------------------------------------ | --------------------------------- |
-| [M0 — Scaffolding](#m0--scaffolding)                                   | Go module, tooling, CI, frozen Python, `Version` | ✅ 5/6 (0.1 skipped)              |
-| [Spikes S1–S3](#3-spikes--do-these-before-writing-library-code)        | ONNX export, binding choice, latency floor       | 🟢 S1–S3 done                     |
-| [M1 — Reference harness](#m1--the-python-reference-harness)            | `testdata/*.jsonl` golden vectors                | ✅ done                           |
-| [M2 — Tier-1 core](#m2--tier-1-core-no-ml-runtime-620-lines-of-python) | `jsonx`, `lang`, `mailtext`, `presets`, render   | 🟢 2.1–2.4 done; 2.5.4 partial    |
-| [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ✅ done                           |
-| [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | 🟢 4.1–4.5 done; 4.3.9/4.5.5 open |
-| [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ✅ done                           |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | 🟡 6.1, 6.2, 6.10 done; 6.3.1/.5  |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started                    |
-| [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred                       |
+| Milestone                                                              | Delivers                                         | Status                             |
+| ---------------------------------------------------------------------- | ------------------------------------------------ | ---------------------------------- |
+| [M0 — Scaffolding](#m0--scaffolding)                                   | Go module, tooling, CI, frozen Python, `Version` | ✅ 5/6 (0.1 skipped)               |
+| [Spikes S1–S3](#3-spikes--do-these-before-writing-library-code)        | ONNX export, binding choice, latency floor       | 🟢 S1–S3 done                      |
+| [M1 — Reference harness](#m1--the-python-reference-harness)            | `testdata/*.jsonl` golden vectors                | ✅ done                            |
+| [M2 — Tier-1 core](#m2--tier-1-core-no-ml-runtime-620-lines-of-python) | `jsonx`, `lang`, `mailtext`, `presets`, render   | 🟢 2.1–2.4 done; 2.5.4 partial     |
+| [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ✅ done                            |
+| [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | 🟢 4.1–4.5 done; 4.3.9/4.5.5 open  |
+| [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ✅ done                            |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | 🟡 6.1, 6.2, 6.10 done; 6.3 bar .2 |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started                     |
+| [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred                        |
 
 **Critical path:** M1 ✅ → M2 (`jsonx` first) → M4 → M5 → M6 → M7, with M3 off the path. _(Reordered
 on the 2026-09-20 review.)_ _(2026-09-20: M4 was in the event run **in parallel** with M2 from `jsonx`
@@ -1768,10 +1768,31 @@ internal/hub/*_test.go` prints nothing and no test names a real host.
 - [ ] **6.3.2** Device selection (`cpu`/`cuda`/`coreml`) with a logged fallback, replacing Python's
       three `print()` warnings with `slog` — and warn only when a fallback actually happened
       (upstream `e630a68`).
-- [ ] **6.3.3** `Close()` releases the session; assert no leak across a load/evict cycle (Task 3.2.4).
-      (2026-09-26) — partial: `Close` releases session, env and runtime in that order, waits for
-      `Forward` calls in flight, and is idempotent (`TestCloseIsIdempotent`). The leak assertion across a
-      load/evict cycle remains.
+      (2026-09-26) — partial: CUDA cannot be enabled (6.3.6). `Options.Device` takes `""`/`auto`,
+      `cpu`, `cuda`, `cuda:N` and `coreml`, case-sensitive as `torch.device` is; anything else,
+      `mps` included, is `ErrUnknownDevice` before the library loads. `Options.Logger` defaults to
+      `slog.Default()`, and `Backend.Device()` reports where the session landed. A requested device
+      the library does not advertise, or whose session fails to build, falls back to the CPU with one
+      `Warn`. `auto` walks cuda → coreml → cpu silently, and `cpu` never warns.
+      `TestDeviceResolve`/`TestDeviceRejectsUnknown` are pure and pass on js/wasm too.
+      `TestOpenDevice` passes against both local ORT 1.23.0 builds via `just test-onnx`. With
+      `/opt/onnxruntime/cpu`, `cuda` falls back because the provider is not in the build. With
+      `/opt/onnxruntime/gpu`, `cuda` falls back because the binding cannot enable it. A CoreML
+      advertised by a stubbed provider list but rejected by Linux ORT exercises the session-failure
+      retry. Warning on every Open, never warning, or dropping the retry each fail it. **CUDA:** a probe
+      against the GPU build (which lists `CUDAExecutionProvider`) showed ORT's generic
+      `SessionOptionsAppendExecutionProvider`, the only one the binding calls, rejecting both `CUDA`
+      and `CUDAExecutionProvider` as "Unknown provider name". So `cuda` always falls back for now
+      (user decision). CoreML was only exercised through that stub, since nothing here runs macOS.
+- [x] **6.3.3** `Close()` releases the session; assert no leak across a load/evict cycle (Task 3.2.4).
+      (2026-09-26) — `Close` releases session, env and runtime in that order, waits for `Forward`
+      calls in flight, and is idempotent (`TestCloseIsIdempotent`). `TestCloseReleasesMemory` runs
+      Open → Forward → Close on the english export (1607 MiB of weights) two times as warm-up and
+      three times measured. It requires VmRSS to grow less than a quarter of the weights, and three
+      runs stayed at 40–53 MiB. It re-runs itself with `MALLOC_MMAP_THRESHOLD_=65536`, because with
+      glibc's threshold left dynamic, identical runs ended warm-up at 42 or 1482 MiB. Releasing
+      nothing in `Close` fails it at +4274 MiB (≈1425 MiB per cycle). Linux only; it skips in CI with
+      the other ORT tests.
 - [x] **6.3.5** _(new, 2026-09-26, read-only recon)_ The binding's `Session.Run` takes a `ctx` but
       never uses it (it passes NULL `RunOptions`), so a started forward pass cannot be cancelled;
       `Forward` checks `ctx` before and after, and says so in its doc comment.
@@ -1782,6 +1803,20 @@ internal/hub/*_test.go` prints nothing and no test names a real host.
 - [ ] **6.3.4** The ONNX backend lives in `internal/backend/onnx`; the §8 check is D9's
       `go list -deps` assertion over `lang`/`mailtext`/`presets`/`backend`. `Route` lives in the root
       package, which is allowed to depend on the binding — `dlopen` happens only in `Open`.
+      (2026-09-26) — `deps_test.go` in the root package, so every CI `go test` runs it.
+      `TestNoMLDependency` runs `go list -deps` over the four packages with `GOOS=linux` pinned (the
+      binding is constrained away elsewhere, which would pass vacuously) and rejects both
+      `onnxruntime-purego` and `ebitengine/purego`. `TestRuntimeImportedOnlyByBackend` requires
+      `internal/backend/onnx` to be the binding's only direct importer. A `presets` file importing
+      `internal/backend/onnx` fails the first, and a root file importing the binding fails the
+      second. This is the CI-level check 6.1.1 left open. §8's box stays for the 1.0 sweep.
+- [ ] **6.3.6** _(new, 2026-09-26, from 6.3.2)_ Enable CUDA. ORT's generic
+      `SessionOptionsAppendExecutionProvider` rejects `CUDA` (probed against ORT 1.23.0's GPU
+      build), and the binding at D5's pin neither registers `SessionOptionsAppendExecutionProvider_CUDA_V2`
+      nor exposes its `OrtSessionOptions`, so it cannot be done from this repo. It needs a binding
+      change (upstream PR, or a fork via a module `replace`), which moves D5's pin. Until then
+      `cuda` falls back to the CPU with a warning, and 7.5.3 has to say so. The T550 and
+      `/opt/onnxruntime/gpu` on the dev box are enough to verify it.
 
 **Task 6.4: Checkpoint validation.** Port `_verify_compatibility`'s intent.
 
