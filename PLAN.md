@@ -22,18 +22,18 @@ safetensors backend landing later behind the same interface.
 Tick a box only when the work is committed and `just check` is green. `[~]` means started but
 not finished; keep it rare. A milestone is done when every task box under it is ticked.
 
-| Milestone                                                              | Delivers                                         | Status                             |
-| ---------------------------------------------------------------------- | ------------------------------------------------ | ---------------------------------- |
-| [M0 — Scaffolding](#m0--scaffolding)                                   | Go module, tooling, CI, frozen Python, `Version` | ✅ 5/6 (0.1 skipped)               |
-| [Spikes S1–S3](#3-spikes--do-these-before-writing-library-code)        | ONNX export, binding choice, latency floor       | 🟢 S1–S3 done                      |
-| [M1 — Reference harness](#m1--the-python-reference-harness)            | `testdata/*.jsonl` golden vectors                | ✅ done                            |
-| [M2 — Tier-1 core](#m2--tier-1-core-no-ml-runtime-620-lines-of-python) | `jsonx`, `lang`, `mailtext`, `presets`, render   | 🟢 2.1–2.4 done; 2.5.4 partial     |
-| [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ✅ done                            |
-| [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | 🟢 4.1–4.5 done; 4.3.9/4.5.5 open  |
-| [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ✅ done                            |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | 🟡 6.1, 6.2, 6.10 done; 6.3 bar .2 |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started                     |
-| [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred                        |
+| Milestone                                                              | Delivers                                         | Status                                       |
+| ---------------------------------------------------------------------- | ------------------------------------------------ | -------------------------------------------- |
+| [M0 — Scaffolding](#m0--scaffolding)                                   | Go module, tooling, CI, frozen Python, `Version` | ✅ 5/6 (0.1 skipped)                         |
+| [Spikes S1–S3](#3-spikes--do-these-before-writing-library-code)        | ONNX export, binding choice, latency floor       | 🟢 S1–S3 done                                |
+| [M1 — Reference harness](#m1--the-python-reference-harness)            | `testdata/*.jsonl` golden vectors                | ✅ done                                      |
+| [M2 — Tier-1 core](#m2--tier-1-core-no-ml-runtime-620-lines-of-python) | `jsonx`, `lang`, `mailtext`, `presets`, render   | 🟢 2.1–2.4 done; 2.5.4 partial               |
+| [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ✅ done                                      |
+| [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | 🟢 4.1–4.5 done; 4.3.9/4.5.5 open            |
+| [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ✅ done                                      |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | 🟡 6.1, 6.2, 6.10 done; 6.3.2 partial (CUDA) |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started                               |
+| [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred                                  |
 
 **Critical path:** M1 ✅ → M2 (`jsonx` first) → M4 → M5 → M6 → M7, with M3 off the path. _(Reordered
 on the 2026-09-20 review.)_ _(2026-09-20: M4 was in the event run **in parallel** with M2 from `jsonx`
