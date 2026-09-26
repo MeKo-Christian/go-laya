@@ -1134,6 +1134,105 @@ def round4_cases() -> list[dict[str, Any]]:
     ]
 
 
+# ------------------------------------------------------------------- 7.1.6 ece
+
+
+def _float_rec(key: str, v: float) -> dict[str, Any]:
+    """A result that may be NaN, which JSON cannot carry: null plus a flag."""
+    nan = math.isnan(v)
+    return {key: None if nan else v, f"{key}_is_nan": nan, f"{key}_repr": repr(v)}
+
+
+def ece_cases() -> list[dict[str, Any]]:
+    """`ece_score` (common.py:187-197) and the plan's multi-class Brier score.
+
+    Task 7.1.6. ECE is upstream's own function, called as is. Brier has no upstream
+    counterpart; it is PLAN.md's definition for Task 6.9.3 -- the mean over rows of
+    sum_j (p_j - [j == y])^2, each row a float64 numpy array so that both sums are
+    numpy's pairwise order -- computed here so the Go port has one reference.
+    """
+    from laya.common import ece_score
+
+    cases: list[dict[str, Any]] = []
+
+    def ece(name: str, conf: list[float], correct: list[bool], bins: int = 15) -> None:
+        v = ece_score(np.array(conf, dtype=np.float64), np.array(correct, dtype=bool), bins)
+        cases.append(
+            {
+                "name": f"ece/{name}",
+                "fn": "ece_score",
+                "conf": conf,
+                "correct": correct,
+                "bins": bins,
+                **_float_rec("ece", v),
+            }
+        )
+
+    def rand(name: str, n: int, bins: int = 15) -> None:
+        rng = np.random.default_rng(stable_seed(name))
+        conf = rng.random(n)
+        correct = rng.random(n) < conf  # roughly calibrated, so no bin is trivially 0
+        ece(name, [float(c) for c in conf], [bool(c) for c in correct], bins)
+
+    ece("empty", [], [])
+    ece("all-zero", [0.0, 0.0, 0.0], [True, False, True])
+    ece("zero-and-half", [0.0, 0.5], [True, False])
+    ece("one", [1.0], [True])
+    ece("single", [0.73], [False])
+    edges = [float(e) for e in np.linspace(0, 1, 16)]
+    ece("on-every-edge", edges, [i % 2 == 0 for i in range(len(edges))])
+    # Alternating labels, because with every answer correct the ECE is linear in
+    # the confidences and cannot see which bin a value landed in. At 10 bins,
+    # linspace's i*(1/10) differs from i/10 at edges 3, 6 and 7; at 49, i*(1/49)
+    # misses 1.0 at the last edge, which linspace forces back to `stop`.
+    for bins in (10, 49):
+        edges = [float(e) for e in np.linspace(0, 1, bins + 1)]
+        ece(f"on-every-edge-bins{bins}", edges, [i % 2 == 0 for i in range(bins + 1)], bins)
+    ece("all-correct", [0.2, 0.4, 0.6, 0.8, 0.95], [True] * 5)
+    ece("none-correct", [0.2, 0.4, 0.6, 0.8, 0.95], [False] * 5)
+    for n in (7, 64, 200, 1000):
+        rand(f"random-n{n}", n)
+    rand("random-bins1", 50, 1)
+    rand("random-bins10", 200, 10)
+
+    def brier(name: str, probs: list[list[float]], labels: list[int]) -> None:
+        if probs:
+            rows = [
+                np.sum((np.array(p, dtype=np.float64) - np.eye(len(p))[y]) ** 2)
+                for p, y in zip(probs, labels, strict=True)
+            ]
+            v = float(np.mean(np.array(rows, dtype=np.float64)))
+        else:
+            v = float("nan")
+        cases.append(
+            {
+                "name": f"brier/{name}",
+                "fn": "brier",
+                "probs": probs,
+                "labels": labels,
+                **_float_rec("brier", v),
+            }
+        )
+
+    brier("empty", [], [])
+    brier("certain-right", [[1.0, 0.0, 0.0]], [0])
+    brier("certain-wrong", [[1.0, 0.0, 0.0]], [2])
+    brier("uniform-k2", [[0.5, 0.5]], [1])
+    for n, name in ((7, "random-n7"), (300, "random-n300")):
+        rng = np.random.default_rng(stable_seed(f"brier/{name}"))
+        probs, labels = [], []
+        for _ in range(n):
+            k = int(rng.integers(2, 14))  # ragged: choice k varies per question
+            # Softmax output is float32; the caller widens it, so the fixture does too.
+            z = rng.normal(size=k).astype(np.float32)
+            p = np.exp(z - z.max())
+            p = (p / p.sum()).astype(np.float32)
+            probs.append([float(x) for x in p])
+            labels.append(int(rng.integers(0, k)))
+        brier(name, probs, labels)
+    return cases
+
+
 # --------------------------------------------------------------------- 1.3.5 logits
 
 
@@ -1363,6 +1462,7 @@ FIXTURES = (
     "render",
     "answers",
     "round4",
+    "ece",
     "mailtext",
     "logits",
 )
@@ -1413,6 +1513,8 @@ def main() -> int:
         )
     if "round4" in wanted:
         write_jsonl(args.out / "round4.jsonl", header("round4", args.models_root), round4_cases())
+    if "ece" in wanted:
+        write_jsonl(args.out / "ece.jsonl", header("ece", args.models_root), ece_cases())
     if "mailtext" in wanted:
         write_jsonl(
             args.out / "mailtext.jsonl", header("mailtext", args.models_root), mailtext_cases()
