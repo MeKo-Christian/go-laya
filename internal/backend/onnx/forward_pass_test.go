@@ -160,6 +160,9 @@ func wantFloats(t *testing.T, name string, tj tensorJSON) []float32 {
 // length mismatch. The floor of 1 keeps it an absolute comparison for small values and
 // turns it into a relative one for the large ones, so a single tolerance covers both the
 // -1e4 mask sentinel in logits and the thousands act_logits comes out in.
+//
+// A NaN or Inf on either side is +Inf, beyond every tolerance: a NaN delta compares
+// false against the running worst, so it would otherwise be skipped silently.
 func maxScaledDiff(got, want []float32) float64 {
 	if len(got) != len(want) {
 		return -1
@@ -169,12 +172,42 @@ func maxScaledDiff(got, want []float32) float64 {
 
 	for i := range got {
 		d := math.Abs(float64(got[i])-float64(want[i])) / max(1, math.Abs(float64(want[i])))
+		if math.IsNaN(d) || math.IsInf(d, 0) {
+			return math.Inf(1)
+		}
+
 		if d > worst {
 			worst = d
 		}
 	}
 
 	return worst
+}
+
+// TestMaxScaledDiff pins the metric's edge cases. A NaN delta compares false
+// against everything, so without the explicit check an all-NaN output would
+// score 0 and pass every tolerance (PR #19 review).
+func TestMaxScaledDiff(t *testing.T) {
+	nan, inf := float32(math.NaN()), float32(math.Inf(1))
+	cases := []struct {
+		name      string
+		got, want []float32
+		wantDiff  float64
+	}{
+		{"equal", []float32{1, -2}, []float32{1, -2}, 0},
+		{"absolute below 1", []float32{0.5}, []float32{0.25}, 0.25},
+		{"relative above 1", []float32{-1.1e4}, []float32{-1e4}, 0.1},
+		{"length mismatch", []float32{1}, []float32{1, 2}, -1},
+		{"NaN output", []float32{nan, nan}, []float32{1, 2}, math.Inf(1)},
+		{"one NaN among finite", []float32{1, nan}, []float32{1, 2}, math.Inf(1)},
+		{"Inf output", []float32{inf}, []float32{1}, math.Inf(1)},
+		{"NaN reference", []float32{1}, []float32{nan}, math.Inf(1)},
+	}
+	for _, tc := range cases {
+		if got := maxScaledDiff(tc.got, tc.want); got != tc.wantDiff && !(math.Abs(got-tc.wantDiff) <= 1e-6) {
+			t.Errorf("%s: maxScaledDiff = %v, want %v", tc.name, got, tc.wantDiff)
+		}
+	}
 }
 
 // TestForwardPass is S2.1: load the S1 export and run one forward pass, CGO-free.
