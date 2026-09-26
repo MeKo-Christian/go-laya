@@ -7,6 +7,6 @@ require github.com/shota3506/onnxruntime-purego v0.0.0-20260315223538-8db8bd7424
 require google.golang.org/protobuf v1.36.12
 
 require (
-	github.com/ebitengine/purego v0.9.0 // indirect
+	github.com/ebitengine/purego v0.9.0
 	golang.org/x/text v0.41.0
 )

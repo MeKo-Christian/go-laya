@@ -268,3 +268,39 @@ func TestHeads(t *testing.T) {
 		})
 	}
 }
+
+// TestOpenRuntimeVersion is Task 6.6.2 against real libraries: the pinned
+// runtime opens and reports its version, and a shared library that is not ONNX
+// Runtime at all is ErrRuntimeVersion before the binding touches it. Set
+// LAYA_ORT_OLD_LIB to a pre-1.23 libonnxruntime to also check that one is
+// refused by name rather than by the binding's unnamed "failed to get OrtAPI".
+func TestOpenRuntimeVersion(t *testing.T) {
+	if testing.Short() {
+		t.Skip("-short: needs an ONNX Runtime library and the S1 exports")
+	}
+	lib := requireORTLibrary(t)
+	model, err := findModel("laya-" + golden.TypedDecisions + "-dynamo.onnx")
+	if err != nil {
+		t.Skipf("no export: %v", err)
+	}
+
+	v, err := runtimeVersion(lib)
+	if err != nil || checkRuntimeVersion(v) != nil {
+		t.Fatalf("runtimeVersion(%s) = %q, %v; want a 1.23+ version", lib, v, err)
+	}
+	t.Logf("%s reports %s", lib, v)
+
+	notORT := map[string]string{"linux": "libc.so.6", "darwin": "/usr/lib/libSystem.B.dylib", "netbsd": "libc.so"}[runtime.GOOS]
+	_, err = Open(model, Options{Library: notORT})
+	if !errors.Is(err, ErrRuntimeVersion) || !strings.Contains(err.Error(), "OrtGetApiBase") {
+		t.Errorf("Open(Library %s) = %v, want ErrRuntimeVersion naming OrtGetApiBase", notORT, err)
+	}
+
+	if old := os.Getenv("LAYA_ORT_OLD_LIB"); old != "" {
+		_, err := Open(model, Options{Library: old})
+		if !errors.Is(err, ErrRuntimeVersion) || !strings.Contains(err.Error(), `"1.2`) {
+			t.Errorf("Open(Library %s) = %v, want ErrRuntimeVersion naming its version", old, err)
+		}
+		t.Logf("old library: %v", err)
+	}
+}
