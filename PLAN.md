@@ -1850,10 +1850,33 @@ internal/hub/*_test.go` prints nothing and no test names a real host.
 - [ ] **6.4.3** Fail with a wrapped `ErrIncompatibleCheckpoint` naming what was wrong.
       (2026-09-26) — partial: the sentinel is `backend.ErrIncompatibleCheckpoint` in the leaf, so a
       `Backend` (which the root imports) can wrap it. `laya.ErrIncompatibleCheckpoint` is the same
-      value (`TestErrIncompatibleCheckpoint`). 6.4.1 and 6.4.2 wrap it; 6.4.4 and 6.4.5 have to wrap
-      it too once they exist.
-- [ ] **6.4.4** Validate the ONNX/safetensors header **before** handing the bytes to the runtime, and
+      value (`TestErrIncompatibleCheckpoint`). 6.4.1, 6.4.2 and 6.4.4 wrap it; 6.4.5 has to wrap it
+      too once it exists.
+- [x] **6.4.4** Validate the ONNX/safetensors header **before** handing the bytes to the runtime, and
       never `os/exec` or `encoding/gob` a downloaded artifact (R7, Task 0.4's deferred item).
+      (2026-09-26) — two new pure packages, neither behind a build tag, so both run in CI.
+      `internal/onnxheader.Read` walks the graph file with `protowire` (the only use of the new
+      `google.golang.org/protobuf` dependency; no generated ONNX types). It requires a regular file
+      of at most 64 MiB, well-formed wire bytes, a graph, IR version 3–11 and an `ai.onnx` opset of at
+      most 23. Those are the bounds ORT 1.23.0 loads, found by handing it models at each bound: IR 12
+      and opset 24 fail. Every tensor it can reach (initializers, sparse initializers, node
+      attributes, subgraphs to depth 32, functions, training graphs) that keeps its data externally
+      must name a `filepath.IsLocal` location that is a regular file, not a symlink, beside the graph,
+      with its byte range inside that file. An unknown `external_data` key is an error. It returns
+      the main graph's declared IO with element types and dims, which 6.4.5 needs. `onnx.Open` calls
+      it before the library is even loaded (`TestOpenChecksHeader`). `internal/safetensors.ReadHeader`
+      applies the safetensors library's own rules: a header of at most 100 MB inside the file, a JSON
+      object, known dtypes, non-negative dims, each span exactly dtype width × element count
+      (overflow-checked), and tensors tiling the data buffer to EOF with no gap or overlap. Nothing
+      calls it yet; M8 and the hub loader will. Coverage: `TestRead` has 33 cases, `TestReadFile`
+      covers the symlink, the directory and the oversized cases, `TestReadHeader` has 26 cases, and
+      both packages have fuzz targets (30 s each, no failures). The gated tests read all three
+      dynamo exports (IO as `export_onnx.py` writes it, `act_logits` `[batch, 2]`) and all three
+      shipped `model.safetensors`. Each of these mutations fails a test:
+      dropping `IsLocal`, the subgraph, function or sparse walk, the range bound, the depth limit,
+      the unknown-key check, the symlink check, the safetensors tiling, coverage, size, cap,
+      negative-dim or overflow check, or the error wrap. `just test-onnx` still replays all three
+      exports. No `os/exec` or `encoding/gob` outside tests (CI's grep).
 - [ ] **6.4.5** _(new, 2026-09-20, review)_ Validate the graph's `act_logits` width against
       `len(cfg["act_costs"]) + 1` (§1.3) and `logits` width against `kmax`; a mismatch fails with
       `ErrIncompatibleCheckpoint` naming the shape. All three shipped checkpoints have width 2, which is
@@ -1863,6 +1886,8 @@ internal/hub/*_test.go` prints nothing and no test names a real host.
       own read of the ONNX graph. `scripts/export_onnx.py`'s `DYNAMIC_AXES` makes only the batch axis
       of `act_logits` dynamic; the exported graphs' declared dims were not inspected. `logits`' width is `k`, which is dynamic,
       so it can only be checked per `Forward` against the batch's `kmax`.
+      _(2026-09-26, from 6.4.4)_ — `onnxheader.Header.Outputs` now carries the declared dims:
+      `act_logits` is `[batch, 2]` in all three exports.
 
 **Task 6.5: Decide which attention implementation the shipped export uses.** _(new, 2026-09-20)_
 Spike S1 exports with `attn_implementation="eager"` because S1.1 says to. Upstream runs `sdpa`
