@@ -10,12 +10,10 @@
 // by an int64 arange. Doing it all in float64 moves the fourth decimal after
 // rounding.
 //
-// Not bit-exact: exp and log. They are the float64 functions narrowed to
-// float32, whereas numpy runs its own float32 kernel, chosen per CPU (SIMD
-// with FMA where available, libm otherwise). Against numpy 2.5.3's AVX2
-// kernel, exp differs by up to 2 ULP and log by up to 4, and 32 of 200 000
-// random softmaxes changed a rounded probability. PLAN.md Task 7.1.8 tracks
-// porting the kernel.
+// exp and log are numpy's own float32 kernel, not libm: npyf32.go ports the
+// AVX2+FMA3 lane the golden vectors came from, bit for bit. A reference host
+// with AVX-512 or without FMA runs a different kernel and gets different last
+// bits, which is why the generator refuses to regenerate on one.
 //
 // Nothing here rounds. Python applies round(x, 4) in the agent, after these
 // functions return, and a caller does the same with jsonx.Round4.
@@ -78,8 +76,7 @@ func (t Temperatures) Scale(qt question.QType, k int) float64 {
 
 // Softmax is agent.py:305-307: a max-subtracted softmax over exactly the first
 // k logits, each divided by max(1e-3, temp). The tail past k is the head's
-// padding and never takes part. It computes in float32, as numpy does, apart
-// from exp (see the package comment).
+// padding and never takes part. It computes in float32, as numpy does.
 func Softmax(logits []float32, k int, temp float64) []float32 {
 	div := float32(max(minTemperature, temp))
 	z := make([]float32, k)
@@ -91,7 +88,7 @@ func Softmax(logits []float32, k int, temp float64) []float32 {
 		top = max(top, v)
 	}
 	for i, v := range z {
-		z[i] = float32(math.Exp(float64(v - top)))
+		z[i] = exp32(v - top)
 	}
 	sum := numpySum(z)
 	for i := range z {
@@ -106,9 +103,9 @@ const logClip = 1e-12
 // Confidence is confidence_from_probs (common.py:200-206), the confidence of a
 // choice or score answer: 1 - H(p)/ln k clipped to [0, 1], with the entropy
 // over the first k entries and p clipped to 1e-12 inside the log. k < 2 is
-// fully confident. The entropy is float32 arithmetic, apart from log (see
-// the package comment), and the result is widened as Python's float() widens
-// it.
+// fully confident. The entropy is float32 arithmetic, and the result is
+// widened as Python's float() widens it. The ln k it divides by is
+// math.log(k), a float64 that numpy's weak-scalar rule narrows to float32.
 //
 // A noul answer does not use this; see NoulConfidence.
 func Confidence(p []float32, k int) float64 {
@@ -118,7 +115,7 @@ func Confidence(p []float32, k int) float64 {
 	terms := make([]float32, k)
 	for i, v := range p[:k] {
 		c := min(max(v, float32(logClip)), 1)
-		terms[i] = v * float32(math.Log(float64(c)))
+		terms[i] = v * log32(c)
 	}
 	ent := -numpySum(terms)
 	conf := 1 - ent/float32(math.Log(float64(k)))
