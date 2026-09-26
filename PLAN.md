@@ -1898,7 +1898,8 @@ internal/hub/*_test.go` prints nothing and no test names a real host.
       cases; `TestConfigActWidthShipped`: 2 for all three). The config reaches the graph through the
       new `onnx.Options.ActWidth`, since `Open` sees a graph path and no config. `Open` checks the
       declared `act_logits` against it before the library loads: rank 2, and a static width equal to
-      `ActWidth` (`checkHeadWidth`, untagged, `TestCheckHeadWidth`, 8 cases), so the real exports
+      `ActWidth` (`checkHeadWidth`, untagged, `TestCheckHeadWidth`, 9 cases; a declared scalar
+      fails, an undeclared shape is left to `Forward`, PR #16 review), so the real exports
       fail with `ActWidth` 1 or 3 naming `[batch 2]` and open with 2 (`TestOpenHeadWidth`). `kmax`
       is per batch (`common.py:223`), so `logits`' width is checked per `Forward`, against the
       batch's marker width, and `act_logits`' against `ActWidth` or else the declared width, which
