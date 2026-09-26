@@ -22,18 +22,18 @@ safetensors backend landing later behind the same interface.
 Tick a box only when the work is committed and `just check` is green. `[~]` means started but
 not finished; keep it rare. A milestone is done when every task box under it is ticked.
 
-| Milestone                                                              | Delivers                                         | Status                                                  |
-| ---------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------- |
-| [M0 — Scaffolding](#m0--scaffolding)                                   | Go module, tooling, CI, frozen Python, `Version` | ✅ 5/6 (0.1 skipped)                                    |
-| [Spikes S1–S3](#3-spikes--do-these-before-writing-library-code)        | ONNX export, binding choice, latency floor       | 🟢 S1–S3 done                                           |
-| [M1 — Reference harness](#m1--the-python-reference-harness)            | `testdata/*.jsonl` golden vectors                | ✅ done                                                 |
-| [M2 — Tier-1 core](#m2--tier-1-core-no-ml-runtime-620-lines-of-python) | `jsonx`, `lang`, `mailtext`, `presets`, render   | 🟢 2.1–2.4 done; 2.5.4 partial                          |
-| [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ✅ done                                                 |
-| [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | 🟢 4.1–4.5 done; 4.3.9/4.5.5 open                       |
-| [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ✅ done                                                 |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | 🟡 6.1–6.4, 6.6, 6.10 done bar 6.3.2 (CUDA); 6.5.1 done |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started                                          |
-| [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred                                             |
+| Milestone                                                              | Delivers                                         | Status                                                           |
+| ---------------------------------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------- |
+| [M0 — Scaffolding](#m0--scaffolding)                                   | Go module, tooling, CI, frozen Python, `Version` | ✅ 5/6 (0.1 skipped)                                             |
+| [Spikes S1–S3](#3-spikes--do-these-before-writing-library-code)        | ONNX export, binding choice, latency floor       | 🟢 S1–S3 done                                                    |
+| [M1 — Reference harness](#m1--the-python-reference-harness)            | `testdata/*.jsonl` golden vectors                | ✅ done                                                          |
+| [M2 — Tier-1 core](#m2--tier-1-core-no-ml-runtime-620-lines-of-python) | `jsonx`, `lang`, `mailtext`, `presets`, render   | 🟢 2.1–2.4 done; 2.5.4 partial                                   |
+| [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ✅ done                                                          |
+| [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | 🟢 4.1–4.5 done; 4.3.9/4.5.5 open                                |
+| [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ✅ done                                                          |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | 🟡 6.1–6.4, 6.6, 6.10 done bar 6.3.2 (CUDA); 6.5.1, 6.8.1–2 done |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started                                                   |
+| [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred                                                      |
 
 **Critical path:** M1 ✅ → M2 (`jsonx` first) → M4 → M5 → M6 → M7, with M3 off the path. _(Reordered
 on the 2026-09-20 review.)_ _(2026-09-20: M4 was in the event run **in parallel** with M2 from `jsonx`
@@ -2038,12 +2038,32 @@ rather than testing it, so today the honest claim is "untested", not "unsupporte
 **Task 6.8: Go-vs-Python ONNX Runtime parity across the whole matrix.** _(new, 2026-09-20)_
 Spike S2 proved one forward pass, on one checkpoint, at one shape. M6 owes the rest.
 
-- [ ] **6.8.1** All three checkpoints at S1's four shapes, against fixtures generated by
+- [x] **6.8.1** All three checkpoints at S1's four shapes, against fixtures generated by
       `scripts/export_onnx.py --fixture`, using the fixture schema and the `maxScaledDiff` metric
       `internal/onnxspike/spike_test.go` already implements (Task 6.10 moves them; do not re-derive).
-- [ ] **6.8.2** Set the tolerance **per checkpoint** from the measured numbers — S1 recorded
+      (2026-09-26) — `export_onnx.py` now keeps S1's shapes in one `VALIDATION_SHAPES` table:
+      traced (seq 48, k 4, batch 2), then seq 61, k 7 and batch 3 in turn. `compare_with_ort` reads
+      that table, and so does the new `--fixture-matrix DIR`. The flag writes
+      `testdata/matrix/forward-<checkpoint>.json`, one case per shape in `--fixture`'s schema
+      (inputs, Python ORT 1.30.0 outputs, PyTorch outputs). The regenerated report reproduces S1's
+      table exactly, and `--fixture` still regenerates `forward_pass.json` with the same content
+      plus PR #17's `attn` key. `TestForwardMatrix` replays all 12 cases through `Open` and
+      `Forward` on ORT 1.23.0, so the product path's flattening is covered, not raw tensors. It
+      passes via `just test-onnx`, with identical numbers over three runs. Forcing `marker_mask`
+      all-true fails every case at scaled diff 1. Before this, only Python ORT had run the
+      non-traced shapes.
+- [x] **6.8.2** Set the tolerance **per checkpoint** from the measured numbers — S1 recorded
       `multilingual` as an order of magnitude looser than the other two — rather than picking one
       global constant.
+      (2026-09-26) — `matrixTol` holds a per-checkpoint pair (vs Python ORT, vs PyTorch). Each
+      value is the measured worst over four shapes and both outputs, times about 5 and rounded up.
+      Measured worst cases: english 7.0e-05 / 3.1e-05, multilingual 6.4e-05 / **4.7e-04**,
+      typed-decisions 2.6e-05 / 3.2e-05. S1 holds against PyTorch: multilingual is about 15×
+      looser (on `act_logits`, other_batch). Against Python ORT the three agree. Mutations:
+      lowering each checkpoint's tolerance just below its worst fails exactly that checkpoint's
+      case. Giving multilingual english's PyTorch tolerance fails three of its four shapes.
+      `goldenTol` (6.3.1) stays as it is: at `logits.jsonl`'s real prompts, multilingual measured
+      no looser, and these are random-token inputs.
 - [ ] **6.8.3** _(new, 2026-09-20)_ Explain the S3 timing gap: at a matched thread count and thermal
       state the same graph ran 2.7× faster under ORT 1.23.0 from Go than under ORT 1.30.0 from
       Python on `english`, but only 1.1× faster on `multilingual`. Numerics agreed to 3.8e-06, so
