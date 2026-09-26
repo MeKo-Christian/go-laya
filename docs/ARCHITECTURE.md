@@ -284,18 +284,18 @@ torch_threads: 1}`. `TestGoldenProvenance` globs every file and checks the heade
 Regeneration is deterministic (per-case sha256 seeds, sorted cases, one thread) and is a reviewed
 diff (R6).
 
-| File                      | Holds                                                                                                                                                  |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `tokenizer_{en,ml}.jsonl` | 103 cases each, ids **and** token strings, bare and with a leading space. Needs `LAYA_MODELS`, so this is a local gate.                                |
-| `pretok_{en,ml}.jsonl`    | Normalizer output and pre-tokenizer pieces, so CI tests those stages without checkpoints.                                                              |
-| `render.jsonl`            | `render_options`, `render_criterion`, `serialize_state`, byte for byte; inputs are key-ordered objects.                                                |
-| `sequence.jsonl`          | 45 `build_sequence` cases over all three checkpoints.                                                                                                  |
-| `logits.jsonl`            | 10 states × 3 questions × 3 checkpoints, batch-level: the collated tensors and the PyTorch outputs.                                                    |
-| `answers.jsonl`           | 27 `system_one` results, including `temperature_by_options` buckets and exact `answer_json` bytes. Checked against a real `Agent` by `--verify-agent`. |
-| `mailtext.jsonl`          | 26 `email.py` cases (upstream has no tests for it).                                                                                                    |
-| `round4.jsonl`            | 26 `round()` ties, including `-2.5e-05 → -0.0`.                                                                                                        |
-| `ece.jsonl`               | 16 upstream `ece_score` cases, plus 6 Brier cases (our definition).                                                                                    |
-| `f32math.jsonl`           | numpy float32 exp/log on 15 423 inputs, plus 64 softmax rows, all as bit patterns.                                                                     |
+| File                      | Holds                                                                                                                                                                                                                    |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `tokenizer_{en,ml}.jsonl` | 103 cases each, ids **and** token strings, bare and with a leading space. Needs `LAYA_MODELS`, so this is a local gate.                                                                                                  |
+| `pretok_{en,ml}.jsonl`    | Normalizer output and pre-tokenizer pieces, so CI tests those stages without checkpoints.                                                                                                                                |
+| `render.jsonl`            | `render_options`, `render_criterion`, `serialize_state`, byte for byte; inputs are key-ordered objects.                                                                                                                  |
+| `sequence.jsonl`          | 45 `build_sequence` cases over all three checkpoints.                                                                                                                                                                    |
+| `logits.jsonl`            | 10 states × 3 questions × 3 checkpoints, batch-level: the collated tensors and the PyTorch outputs.                                                                                                                      |
+| `answers.jsonl`           | 31 `system_one` results, including `temperature_by_options` buckets, four `precision/*` cases that a float64 port rounds differently, and exact `answer_json` bytes. Checked against a real `Agent` by `--verify-agent`. |
+| `mailtext.jsonl`          | 26 `email.py` cases (upstream has no tests for it).                                                                                                                                                                      |
+| `round4.jsonl`            | 26 `round()` ties, including `-2.5e-05 → -0.0`.                                                                                                                                                                          |
+| `ece.jsonl`               | 16 upstream `ece_score` cases, plus 6 Brier cases (our definition).                                                                                                                                                      |
+| `f32math.jsonl`           | numpy float32 exp/log on 15 423 inputs, plus 64 softmax rows, all as bit patterns.                                                                                                                                       |
 
 The ONNX fixtures live beside the backend: `internal/backend/onnx/testdata/forward_pass.json` and
 `matrix/forward-<checkpoint>.json` (S1's four shapes, from `export_onnx.py --fixture-matrix`).

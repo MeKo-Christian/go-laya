@@ -30,19 +30,19 @@ finished tasks cited in code comments refer to that history.
 Tick a box only when the work is committed and `just ci` is green. A milestone is done when every
 box under it is ticked.
 
-| Milestone                                                       | Delivers                                                | Status                |
-| --------------------------------------------------------------- | ------------------------------------------------------- | --------------------- |
-| [M0 — Scaffolding](#m0--scaffolding)                            | Go module, tooling, CI, frozen Python, `Version`        | ✅ done               |
-| [Spikes S1–S3](#3-spikes)                                       | ONNX export, binding choice, latency floor              | ✅ done               |
-| [M1 — Reference harness](#m1--the-python-reference-harness)     | `testdata/*.jsonl` golden vectors                       | ✅ done               |
-| [M2 — Tier-1 core](#m2--tier-1-core)                            | `jsonx`, `lang`, `mailtext`, `presets`, render          | ✅ done               |
-| [M3 — Router](#m3--router)                                      | `Route`, model registry, LRU                            | ✅ done               |
-| [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done               |
-| [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done               |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done               |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | 🟡 7.1 done bar 7.1.7 |
-| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | ⬜ open               |
-| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred           |
+| Milestone                                                       | Delivers                                                | Status      |
+| --------------------------------------------------------------- | ------------------------------------------------------- | ----------- |
+| [M0 — Scaffolding](#m0--scaffolding)                            | Go module, tooling, CI, frozen Python, `Version`        | ✅ done     |
+| [Spikes S1–S3](#3-spikes)                                       | ONNX export, binding choice, latency floor              | ✅ done     |
+| [M1 — Reference harness](#m1--the-python-reference-harness)     | `testdata/*.jsonl` golden vectors                       | ✅ done     |
+| [M2 — Tier-1 core](#m2--tier-1-core)                            | `jsonx`, `lang`, `mailtext`, `presets`, render          | ✅ done     |
+| [M3 — Router](#m3--router)                                      | `Route`, model registry, LRU                            | ✅ done     |
+| [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done     |
+| [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done     |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done     |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | 🟡 7.1 done |
+| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | ⬜ open     |
+| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred |
 
 **Critical path to 1.0:** M7 (loader → `SystemOne` → answer parity → e2e parity → README). The
 Backlog and M8 do not gate 1.0.
@@ -225,16 +225,17 @@ Done:
 - **7.1.6:** `ECE` and `Brier` against `ece.jsonl`.
 - **7.1.8:** numpy's float32 exp/log, bit-exact on all 2^32 inputs, with `f32math.jsonl`.
 
-`TestAnswersNumerics` matches all 27 `answers.jsonl` cases exactly after `Round4`.
+`TestAnswersNumerics` matches all 31 `answers.jsonl` cases exactly after `Round4`.
 
-- [ ] **7.1.7** Make `answers.jsonl` discriminate precision. All 27 cases still pass with the
-      softmax and entropy in float64, or with a different summation order. At four decimals the
-      corpus cannot tell #24a's float32 path from the obvious one. Add generator cases whose
-      rounded output differs between float32 and float64 (a probability or confidence within
-      ~1e-7 of a `.00005` boundary), selected by the generator in the pinned environment, not by
-      hand. This is a reviewed `testdata/` regeneration. 7.3.7's acceptance has the same blind
-      spot. Now unblocked: 7.1.8 made exp/log bit-exact, so a near-boundary case cannot flip on
-      the kernel.
+- [x] **7.1.7** Make `answers.jsonl` discriminate precision. (2026-09-27) The generator's
+      `precision_cases` searches seeded draws for one case per field (`probabilities`,
+      `confidence`, `score`, `noul`) that rounds differently under `answer_block(dtype=float64)`,
+      and marks it `discriminates`. The 27 earlier cases are byte-identical.
+      `go test -count=1 -run 'TestAnswersNumerics|TestAnswersDiscriminatePrecision' -v ./internal/calib/`
+      passes, with `TestAnswersDiscriminatePrecision` requiring a float64 port to miss every marked
+      field. A float64 `Softmax` passed on the 27-case corpus and now fails
+      `precision/choice-confidence`. Summation order is still not discriminated: pairwise and
+      sequential differ only from k ≥ 8, and no case targets it.
 
 **Task 7.2: The default agent loader.** Until it exists, `NewRouter()` without `WithLoader`
 returns `ErrNoLoader`.
@@ -265,7 +266,7 @@ returns `ErrNoLoader`.
       through `Collate`.
 - [ ] **7.3.7** **Precision and tie-break** (#24a/#30a). Softmax and entropy are numpy float32,
       `score` is float64 over a float32 `p`, `noul` is float64 from a float32 `p[1]`, and the act
-      softmax is torch float32. `p.argmax()` is the **first** max. Acceptance: all 27
+      softmax is torch float32. `p.argmax()` is the **first** max. Acceptance: all 31
       `answers.jsonl` cases byte-equal, plus a test with two exactly equal logits that picks the
       first key.
 - [ ] **7.3.8** `Answer.MarshalJSON` per type via `jsonx.Obj`, with **no `omitempty`**: a
@@ -276,7 +277,7 @@ returns `ErrNoLoader`.
       a Python dict cannot hold them.
 - [ ] **7.3.10** Measure whether the act head's torch float32 softmax (`agent.py:295`) agrees with
       `exp32`, or with narrowed `math.Exp`, after `Round4`. If it does not, decide between porting
-      ATen's exp and accepting a last-digit gap on `act_probability`. `answers.jsonl`'s 27
+      ATen's exp and accepting a last-digit gap on `act_probability`. `answers.jsonl`'s 31
       `act_probability` values came from the dumper's **numpy** copy (`answer_block`), not from
       torch, so they cannot tell the two apart.
 - [ ] **7.3.11** A behavioural test on the Go device-fallback policy, replacing upstream's
