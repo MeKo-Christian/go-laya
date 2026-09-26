@@ -5,10 +5,17 @@
 // The arithmetic follows numpy's precision rather than Go's default. The
 // logits arrive as float32, and under NumPy 2's weak-scalar promotion dividing
 // them by a Python float keeps them float32, so the softmax and the entropy
-// are float32 end to end (invariant #24a). Only the score expectation and the
+// are float32 arithmetic (invariant #24a). Only the score expectation and the
 // noul confidence widen to float64, where Python calls float() or multiplies
 // by an int64 arange. Doing it all in float64 moves the fourth decimal after
 // rounding.
+//
+// Not bit-exact: exp and log. They are the float64 functions narrowed to
+// float32, whereas numpy runs its own float32 kernel, chosen per CPU (SIMD
+// with FMA where available, libm otherwise). Against numpy 2.5.3's AVX2
+// kernel, exp differs by up to 2 ULP and log by up to 4, and 32 of 200 000
+// random softmaxes changed a rounded probability. PLAN.md Task 7.1.8 tracks
+// porting the kernel.
 //
 // Nothing here rounds. Python applies round(x, 4) in the agent, after these
 // functions return, and a caller does the same with jsonx.Round4.
@@ -71,7 +78,8 @@ func (t Temperatures) Scale(qt question.QType, k int) float64 {
 
 // Softmax is agent.py:305-307: a max-subtracted softmax over exactly the first
 // k logits, each divided by max(1e-3, temp). The tail past k is the head's
-// padding and never takes part. It computes in float32, as numpy does.
+// padding and never takes part. It computes in float32, as numpy does, apart
+// from exp (see the package comment).
 func Softmax(logits []float32, k int, temp float64) []float32 {
 	div := float32(max(minTemperature, temp))
 	z := make([]float32, k)
@@ -98,8 +106,9 @@ const logClip = 1e-12
 // Confidence is confidence_from_probs (common.py:200-206), the confidence of a
 // choice or score answer: 1 - H(p)/ln k clipped to [0, 1], with the entropy
 // over the first k entries and p clipped to 1e-12 inside the log. k < 2 is
-// fully confident. The entropy is float32 arithmetic; the result is widened
-// as Python's float() widens it.
+// fully confident. The entropy is float32 arithmetic, apart from log (see
+// the package comment), and the result is widened as Python's float() widens
+// it.
 //
 // A noul answer does not use this; see NoulConfidence.
 func Confidence(p []float32, k int) float64 {
@@ -136,14 +145,10 @@ func Expectation(p []float32) float64 {
 }
 
 // numpySum adds in the order numpy's add.reduce does over a contiguous 1-D
-// array. The reduction seeds the accumulator with the first element and adds
-// the pairwise sum of the rest to it, so even three elements are not summed
-// left to right. In float32 the order is visible in the last bit.
+// array: pairwise_sum over the whole array, which is left to right below eight
+// elements. In float32 the order is visible in the last bit.
 func numpySum[F float32 | float64](a []F) F {
-	if len(a) == 0 {
-		return 0
-	}
-	return a[0] + pairwiseSum(a[1:])
+	return pairwiseSum(a)
 }
 
 // pairwiseSum is numpy's pairwise_sum (loops_utils.h.src): a plain loop below

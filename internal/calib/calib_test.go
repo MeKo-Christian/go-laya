@@ -138,6 +138,16 @@ func TestConfidence(t *testing.T) {
 	}
 }
 
+// TestNumpySumShortIsLeftToRight pins numpy's base case: below eight elements
+// add.reduce accumulates left to right from the first element. Grouping the
+// tail first gives 1 + 2^-23 here, while numpy gives 1 (PR #21 review).
+func TestNumpySumShortIsLeftToRight(t *testing.T) {
+	e := float32(math.Ldexp(1, -24))
+	if got := numpySum([]float32{1, e, e}); got != 1 {
+		t.Errorf("numpySum([1, 2^-24, 2^-24]) = %v, want 1", got)
+	}
+}
+
 // answerCase is the part of an answers.jsonl record this package reproduces.
 type answerCase struct {
 	QType                string             `json:"qtype"`
