@@ -32,7 +32,7 @@ not finished; keep it rare. A milestone is done when every task box under it is 
 | [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | 🟢 4.1–4.5 done; 4.3.9/4.5.5 open                            |
 | [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ✅ done                                                      |
 | [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | 🟡 6.1–6.4, 6.6, 6.8, 6.10 done bar 6.3.2 (CUDA); 6.5.1 done |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | 🟡 7.1.1–7.1.6 done                                          |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | 🟡 7.1.1–7.1.6, 7.1.8 done                                   |
 | [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred                                                  |
 
 **Critical path:** M1 ✅ → M2 (`jsonx` first) → M4 → M5 → M6 → M7, with M3 off the path. _(Reordered
@@ -2240,7 +2240,7 @@ way to make an agent and says so rather than caching a nil one.
       boundary), selected by the generator itself in the pinned environment, not written by hand.
       This is a reviewed `testdata/` regeneration. 7.2.7's acceptance ("all 27 cases byte-equal")
       has the same blind spot.
-- [ ] **7.1.8** _(new, 2026-09-26, PR #21 review)_ Bit-exact float32 `exp` and `log`. `calib`
+- [x] **7.1.8** _(new, 2026-09-26, PR #21 review)_ Bit-exact float32 `exp` and `log`. `calib`
       narrows Go's float64 `math.Exp`/`math.Log`, but numpy runs its own float32 kernel, chosen
       per CPU: SIMD with FMA where the host has it (AVX2 or AVX512F), libm otherwise. Measured
       in `.venv-ref` (numpy 2.5.3, X86_V3), on 2 M random inputs each: `exp` differs by 1 ULP on
@@ -2250,6 +2250,27 @@ way to make an agent and says so rather than caching a nil one.
       double-round. Cross-check bit for bit against numpy in the pinned environment. Record which
       CPU path the golden vectors came from, since a host without FMA gives different reference
       numbers.
+      (2026-09-27) — `internal/calib/npyf32.go` is one lane of numpy 2.5.3's `SIMD_AVX2_FMA3`
+      `simd_exp_FLOAT`/`simd_log_FLOAT`, which `opt_func_info` shows as the `X86_V3` target in
+      `.venv-ref`. `Softmax` and `Confidence` now call it. `ln k` stays `math.Log` narrowed,
+      because `common.py:206` divides by `math.log(k)`, a Python float. `fma32` rounds once:
+      the float64 product is exact, the sum rounds to odd via TwoSum, and then it narrows.
+      `TestFMA32` checks it against `math/big` on up to 1.02 M random and adversarial triples,
+      including a constructed double-rounding tie. New fixture `testdata/f32math.jsonl` (generator `f32math`): 12 exp/log
+      cases, 15 423 inputs over the softmax and entropy domains plus every kernel branch, all as
+      bit patterns. Also 64 `softmax` rows compared in bits, not after `Round4`. The header
+      records `"simd": "X86_V3"`, and the generator now refuses to write `f32math` or `answers`
+      on any other dispatch target. `answers.jsonl` itself is unchanged. `TestExp32Fixture`,
+      `TestLog32Fixture` and `TestSoftmaxBits` require exact bits (NaN by sign). A throwaway
+      cross-check streamed numpy's output for **all 2^32 float32 inputs** of each function: 0 of
+      4 294 967 296 differ for exp and 0 for log. Mutations, each caught: narrowing `math.FMA`
+      fails `TestFMA32`; dropping the Cody–Waite low step fails exp, `TestSoftmaxBits` and
+      `TestAnswersNumerics`; `<` for `≤` at the √½ fold, dropping the subnormal 2^100 scaling or
+      emitting +NaN for log(x<0) each fail `TestLog32Fixture`; dropping the subnormal scalef
+      branch fails `TestExp32Fixture`; putting `math.Exp` back in `Softmax` or `math.Log` back in
+      `Confidence` fails `TestSoftmaxBits`, although `answers.jsonl` passes either way. One
+      mutation survives and is equivalent: un-fusing the high Cody–Waite step. `c1` is `0xbf317200`
+      with 15 significant bits, so `quadrant·c1` is exact for |quadrant| ≤ 150.
 
 **Task 7.2: `Agent.SystemOne`.** Invariants §5 items 19–34.
 
@@ -2262,6 +2283,8 @@ way to make an agent and says so rather than caching a nil one.
       then `action.act_probability = round(act[r, 0], 4)` (`agent.py:310`). **Column 0 only; there is
       no threshold and no decision upstream** _(corrected 2026-09-20 — the task used to ask for "its
       threshold")_. The width is `len(cfg["act_costs"]) + 1`, validated in 6.4.5.
+      _(2026-09-27, from 7.1.8)_ This is **torch's** CPU exp (ATen's vectorised kernel), not
+      numpy's, so `calib`'s `exp32` does not make it bit-exact. See 7.2.10.
 - [ ] **7.2.6** Batching: several questions in one forward pass, with per-question `qtype`, through
       Task 5.3's `Collate`.
 - [ ] **7.2.7** _(new, 2026-09-20, review)_ **Precision and tie-break** (invariants #24a/#30a). Softmax
@@ -2278,6 +2301,12 @@ way to make an agent and says so rather than caching a nil one.
 - [ ] **7.2.9** _(new, 2026-09-20, review)_ `Router.SystemOne` as an alias of `Router.Predict`
       (invariant #53, `router.py:311`); `Questions.Validate` rejects duplicate IDs with
       `ErrDuplicateQuestionID` — a Python dict cannot hold them, so this is an error, not a last-wins.
+- [ ] **7.2.10** _(new, 2026-09-27, from 7.1.8)_ Measure whether the act head's torch float32
+      softmax (`agent.py:295`) agrees with `exp32`, or with narrowed `math.Exp`, after `Round4`.
+      If it does not, decide whether to port ATen's exp or accept a last-digit gap on
+      `act_probability`. `answers.jsonl` has 27 `act_probability` values, but they were computed
+      by the dumper's **numpy** copy (`dump_python_parity.py`'s `answer_block`), not by torch, so
+      they cannot tell the two apart.
 
 **Task 7.3: Answer-formatting parity.**
 

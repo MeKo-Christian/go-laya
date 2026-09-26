@@ -1134,6 +1134,132 @@ def round4_cases() -> list[dict[str, Any]]:
     ]
 
 
+# --------------------------------------------------------------- 7.1.8 f32math
+
+
+# numpy's float32 exp and log are not libm: FLOAT_exp/FLOAT_log dispatch per CPU, and
+# the golden vectors -- this file and answers.jsonl, whose softmax and entropy call
+# them -- come from the X86_V3 (AVX2 + FMA3) instantiation of simd_exp_FLOAT /
+# simd_log_FLOAT in loops_exponent_log.dispatch.c.src. X86_V4 runs the AVX512F
+# instantiation and a baseline host runs npy_expf/npy_logf, both with different
+# last bits, so regenerating on either would silently move the reference numbers.
+F32_SIMD_TARGET = "X86_V3"
+
+
+def f32_simd_target() -> str:
+    """The dispatch target numpy runs for float32 exp and log on this host."""
+    from numpy.lib.introspect import opt_func_info
+
+    info = opt_func_info(func_name="^(exp|log)$", signature="float32")
+    targets = {info[fn]["ff"]["current"] for fn in ("exp", "log")}
+    if len(targets) != 1:
+        raise SystemExit(f"exp and log dispatch to different targets: {sorted(targets)}")
+    return targets.pop()
+
+
+def require_f32_simd_target() -> None:
+    got = f32_simd_target()
+    if got != F32_SIMD_TARGET:
+        raise SystemExit(
+            f"numpy runs float32 exp/log as {got}, the golden vectors need "
+            f"{F32_SIMD_TARGET}; regenerate on an AVX2+FMA3 host without AVX-512"
+        )
+
+
+def _bits(a: np.ndarray) -> list[str]:
+    return [f"0x{int(b):08x}" for b in np.asarray(a, dtype=np.float32).view(np.uint32)]
+
+
+def _f32(bits: list[int]) -> np.ndarray:
+    return np.array(bits, dtype=np.uint32).view(np.float32)
+
+
+def f32math_cases() -> list[dict[str, Any]]:
+    """numpy's float32 exp and log, bit for bit (Task 7.1.8).
+
+    Inputs and outputs are float32 bit patterns in hex, so neither JSON nor a
+    float printer can round them. The ranges are the domains calib feeds the two
+    functions -- exp gets z - max(z) <= 0 in the softmax, log gets p clipped to
+    [1e-12, 1] in the entropy -- plus the rest of the line and each branch of the
+    kernel: the overflow/underflow masks, the denormal scalef split, the
+    denormal exponent/mantissa extraction and the sqrt(1/2) fold. The "softmax"
+    records then run both through agent.py's softmax and confidence_from_probs.
+    """
+    cases: list[dict[str, Any]] = []
+
+    def add(name: str, fn: str, x: np.ndarray) -> None:
+        x = np.ascontiguousarray(x, dtype=np.float32)
+        with np.errstate(all="ignore"):
+            y = np.exp(x) if fn == "exp" else np.log(x)
+        cases.append({"name": f"{fn}/{name}", "fn": fn, "in": _bits(x), "out": _bits(y)})
+
+    def uniform(name: str, lo: float, hi: float, n: int) -> np.ndarray:
+        rng = np.random.default_rng(stable_seed(name))
+        return rng.uniform(lo, hi, n).astype(np.float32)
+
+    def any_bits(name: str, n: int) -> np.ndarray:
+        rng = np.random.default_rng(stable_seed(name))
+        return rng.integers(0, 2**32, n, dtype=np.uint64).astype(np.uint32).view(np.float32)
+
+    def around(bits: int, radius: int = 2) -> list[int]:
+        return [bits + d for d in range(-radius, radius + 1)]
+
+    xmax = 0x42B17218  # 88.72283935546875f
+    xmin = 0xC2CFF1B5  # -103.97208404541015625f
+    add("softmax-domain", "exp", uniform("exp/softmax-domain", -104.0, 0.0, 4096))
+    add("near-zero", "exp", uniform("exp/near-zero", -1.0, 0.0, 1024))
+    add("positive", "exp", uniform("exp/positive", 0.0, 89.0, 1024))
+    add("any-bits", "exp", any_bits("exp/any-bits", 1024))
+    # quadrant <= -125 takes fma_scalef_ps's denormal branch.
+    add("denormal-result", "exp", uniform("exp/denormal-result", -104.0, -86.0, 512))
+    edges = around(xmax) + around(xmin) + around(0xC2781E37)  # the kernel's worst ULP
+    edges += [0x00000000, 0x80000000, 0x7F800000, 0xFF800000, 0x7FC00000, 0xFFC00000]
+    edges += [0x00000001, 0x80000001, 0x3F800000, 0xBF800000, 0x3F317218, 0xBF317218]
+    add("edges", "exp", _f32(edges))
+
+    add("entropy-domain", "log", np.exp(uniform("log/entropy-domain", np.log(1e-12), 0.0, 4096)))
+    add("unit", "log", uniform("log/unit", 0.0, 1.0, 1024))
+    add("above-one", "log", np.exp(uniform("log/above-one", 0.0, np.log(1e6), 1024)))
+    add("any-bits", "log", any_bits("log/any-bits", 1024))
+    rng = np.random.default_rng(stable_seed("log/denormal"))
+    add("denormal", "log", _f32(rng.integers(1, 0x00800000, 512).tolist()))
+    sqrt_half = 0x3F3504F3  # NPY_SQRT1_2f, the fold boundary on the mantissa
+    edges = around(sqrt_half) + around(sqrt_half + (1 << 23)) + around(0x3F486945)  # worst ULP
+    edges += around(0x00800000) + around(0x3F800000)  # FLT_MIN, 1
+    edges += [0x00000000, 0x80000000, 0x00000001, 0x007FFFFF, 0x7F7FFFFF, 0x7F800000]
+    edges += [0xFF800000, 0x7FC00000, 0xFFC00000, 0xBF800000, 0x2B8CBCCC]  # 1e-12
+    add("edges", "log", _f32(edges))
+
+    # The same kernels as calib calls them: agent.py:305-307's softmax and
+    # confidence_from_probs, compared in bits rather than after Round4, so that a
+    # softmax or entropy still on libm's exp/log fails here even where
+    # answers.jsonl's four decimals cannot see it.
+    from laya.common import confidence_from_probs
+
+    rng = np.random.default_rng(stable_seed("softmax/rows"))
+    for i in range(64):
+        k = int(rng.integers(2, 14))
+        t = float(rng.choice([1.0, 0.5, 1.983399510383606]))
+        logits = (rng.standard_normal(k) * 3.0).astype(np.float32)
+        z = logits / max(1e-3, t)
+        p = np.exp(z - z.max())
+        p = p / p.sum()
+        conf = confidence_from_probs(p, k)
+        cases.append(
+            {
+                "name": f"softmax/{i:02d}",
+                "fn": "softmax",
+                "k": k,
+                "temperature": t,
+                "logits": _bits(logits),
+                "probs": _bits(p),
+                "confidence": conf,
+                "confidence_repr": repr(conf),
+            }
+        )
+    return cases
+
+
 # ------------------------------------------------------------------- 7.1.6 ece
 
 
@@ -1463,6 +1589,7 @@ FIXTURES = (
     "answers",
     "round4",
     "ece",
+    "f32math",
     "mailtext",
     "logits",
 )
@@ -1506,6 +1633,7 @@ def main() -> int:
     if "render" in wanted:
         write_jsonl(args.out / "render.jsonl", header("render", args.models_root), render_cases())
     if "answers" in wanted:
+        require_f32_simd_target()
         write_jsonl(
             args.out / "answers.jsonl",
             header("answers", args.models_root),
@@ -1515,6 +1643,13 @@ def main() -> int:
         write_jsonl(args.out / "round4.jsonl", header("round4", args.models_root), round4_cases())
     if "ece" in wanted:
         write_jsonl(args.out / "ece.jsonl", header("ece", args.models_root), ece_cases())
+    if "f32math" in wanted:
+        require_f32_simd_target()
+        write_jsonl(
+            args.out / "f32math.jsonl",
+            header("f32math", args.models_root, simd=f32_simd_target()),
+            f32math_cases(),
+        )
     if "mailtext" in wanted:
         write_jsonl(
             args.out / "mailtext.jsonl", header("mailtext", args.models_root), mailtext_cases()
