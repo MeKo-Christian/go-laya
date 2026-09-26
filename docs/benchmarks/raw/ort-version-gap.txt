@@ -1,5 +1,9 @@
 # PLAN.md Task 6.8.3: {Go, Python} x {ORT 1.23.0, ORT 1.30.0}, interleaved, 2026-09-26.
 #
+# Superseded by ort-version-gap-balanced.txt. This first run kept one fixed order within
+# each round and recorded no thermal state, so order and heat were confounded with the
+# configuration (PR #20 review). Kept because PLAN.md and the review cite it.
+#
 # batch 1, 512 tokens, k 4, 8 intra-op threads, 10 timed runs after one warm-up, p50/p90
 # nearest rank. Three rounds; within a round each checkpoint runs all four configurations
 # back to back, so every cell of a round shares the machine's thermal state.

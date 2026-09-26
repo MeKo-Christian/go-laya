@@ -1,0 +1,140 @@
+# PLAN.md Task 6.8.3, counterbalanced rerun (PR #20 review), 2026-09-26.
+#
+# {Go, Python} x {ORT 1.23.0, ORT 1.30.0}, batch 1, 512 tokens, k 4, 8 intra-op threads,
+# 10 timed runs after one warm-up per cell, p50/p90 nearest rank.
+#
+# Order: per checkpoint, four rounds in a balanced 4x4 Latin square (Williams design) over
+#   A = go 1.23.0, B = python 1.23.0, C = go 1.30.0, D = python 1.30.0:
+#   round 1 A B D C, round 2 B C A D, round 3 C D B A, round 4 D A C B.
+# Every configuration runs once in every position, and every ordered pair of neighbours
+# occurs exactly once, so run order and heat carried over from the previous cell are
+# balanced across configurations instead of confounded with them.
+#
+# Thermal state: before each cell the runner waits until x86_pkg_temp is at or below 70 C,
+# for at most 120 s, then logs the package temperature, the mean scaling_cur_freq over all
+# CPUs and the 1-minute load; it logs the same after the cell. The desktop session stayed
+# up (load about 1 at idle).
+#
+#   Go:     go test -c ./internal/backend/onnx/, then per cell
+#           LAYA_ORT_LIB=<lib> LAYA_ONNX_DIR=build/onnx ./onnx.test -test.run '^$' \
+#             -test.bench 'BenchmarkForward/^<ck>$/^threads=8$/^b1_s512_k4$' -test.benchtime=10x -test.v
+#   Python: <venv>/bin/python scripts/bench_ort.py --model build/onnx/laya-<ck>-dynamo.onnx --threads 8 --reps 10
+#
+#   ORT 1.23.0: Go /opt/onnxruntime/cpu (byte-identical to internal/ortlib's pin),
+#               Python a scratch venv with onnxruntime==1.23.0 + numpy.
+#   ORT 1.30.0: Go the official onnxruntime-linux-x64-1.30.0.tgz, sha256 a5ed5a3c...b3fd as
+#               GitHub publishes it; Python .venv-ref (scripts/requirements-ref.txt).
+#
+# 2026-09-26T21:18:35+02:00  12th Gen Intel(R) Core(TM) i7-1255U governor=powersave
+## round=1 pos=1 checkpoint=english side=go ort=1.23.0 before: pkg_temp_c=70 mean_freq_mhz=1409 load1=3.11
+    bench_test.go:230: ONNX Runtime 1.23.0 (C API 23) from /opt/onnxruntime/cpu/lib/libonnxruntime.so.1.23.0, GOMAXPROCS=12
+BenchmarkForward/english/threads=8/b1_s512_k4-12         	      10	2161538476 ns/op	      2100 p50_ms	      2635 p90_ms
+## after: pkg_temp_c=78 mean_freq_mhz=2754 load1=7.70
+## round=1 pos=2 checkpoint=english side=python ort=1.23.0 before: pkg_temp_c=67 mean_freq_mhz=2133 load1=5.05
+{"onnxruntime": "1.23.0", "model": "laya-english-dynamo.onnx", "threads": 8, "graph_optimization_level": "GraphOptimizationLevel.ORT_ENABLE_ALL", "shape": "b1_s512_k4", "reps": 10, "load_ms": 1112.3, "p50_ms": 1785.8, "p90_ms": 1858.8}
+## after: pkg_temp_c=70 mean_freq_mhz=1924 load1=6.16
+## round=1 pos=3 checkpoint=english side=python ort=1.30.0 before: pkg_temp_c=68 mean_freq_mhz=2244 load1=6.16
+{"onnxruntime": "1.30.0", "model": "laya-english-dynamo.onnx", "threads": 8, "graph_optimization_level": "GraphOptimizationLevel.ORT_ENABLE_ALL", "shape": "b1_s512_k4", "reps": 10, "load_ms": 1149.9, "p50_ms": 1776.1, "p90_ms": 2124.4}
+## after: pkg_temp_c=71 mean_freq_mhz=2088 load1=7.89
+## round=1 pos=4 checkpoint=english side=go ort=1.30.0 before: pkg_temp_c=67 mean_freq_mhz=2008 load1=7.89
+    bench_test.go:230: ONNX Runtime 1.30.0 (C API 23) from ort-1.30.0/onnxruntime-linux-x64-1.30.0/lib/libonnxruntime.so.1.30.0, GOMAXPROCS=12
+BenchmarkForward/english/threads=8/b1_s512_k4-12         	      10	1625440938 ns/op	      1629 p50_ms	      1690 p90_ms
+## after: pkg_temp_c=71 mean_freq_mhz=1864 load1=8.39
+## round=2 pos=1 checkpoint=english side=python ort=1.23.0 before: pkg_temp_c=69 mean_freq_mhz=1957 load1=8.39
+{"onnxruntime": "1.23.0", "model": "laya-english-dynamo.onnx", "threads": 8, "graph_optimization_level": "GraphOptimizationLevel.ORT_ENABLE_ALL", "shape": "b1_s512_k4", "reps": 10, "load_ms": 1223.0, "p50_ms": 1704.6, "p90_ms": 1775.8}
+## after: pkg_temp_c=76 mean_freq_mhz=1947 load1=9.11
+## round=2 pos=2 checkpoint=english side=go ort=1.30.0 before: pkg_temp_c=68 mean_freq_mhz=1852 load1=9.11
+    bench_test.go:230: ONNX Runtime 1.30.0 (C API 23) from ort-1.30.0/onnxruntime-linux-x64-1.30.0/lib/libonnxruntime.so.1.30.0, GOMAXPROCS=12
+BenchmarkForward/english/threads=8/b1_s512_k4-12         	      10	2226554604 ns/op	      2254 p50_ms	      3214 p90_ms
+## after: pkg_temp_c=75 mean_freq_mhz=2433 load1=11.33
+## round=2 pos=3 checkpoint=english side=go ort=1.23.0 before: pkg_temp_c=77 mean_freq_mhz=3229 load1=9.43
+    bench_test.go:230: ONNX Runtime 1.23.0 (C API 23) from /opt/onnxruntime/cpu/lib/libonnxruntime.so.1.23.0, GOMAXPROCS=12
+BenchmarkForward/english/threads=8/b1_s512_k4-12         	      10	2136774326 ns/op	      2146 p50_ms	      2255 p90_ms
+## after: pkg_temp_c=79 mean_freq_mhz=2766 load1=10.77
+## round=2 pos=4 checkpoint=english side=python ort=1.30.0 before: pkg_temp_c=67 mean_freq_mhz=2995 load1=10.77
+{"onnxruntime": "1.30.0", "model": "laya-english-dynamo.onnx", "threads": 8, "graph_optimization_level": "GraphOptimizationLevel.ORT_ENABLE_ALL", "shape": "b1_s512_k4", "reps": 10, "load_ms": 1231.3, "p50_ms": 2001.3, "p90_ms": 2596.2}
+## after: pkg_temp_c=70 mean_freq_mhz=2754 load1=11.83
+## round=3 pos=1 checkpoint=english side=go ort=1.30.0 before: pkg_temp_c=63 mean_freq_mhz=1702 load1=11.83
+    bench_test.go:230: ONNX Runtime 1.30.0 (C API 23) from ort-1.30.0/onnxruntime-linux-x64-1.30.0/lib/libonnxruntime.so.1.30.0, GOMAXPROCS=12
+BenchmarkForward/english/threads=8/b1_s512_k4-12         	      10	1705120090 ns/op	      1707 p50_ms	      1808 p90_ms
+## after: pkg_temp_c=71 mean_freq_mhz=1589 load1=10.83
+## round=3 pos=2 checkpoint=english side=python ort=1.30.0 before: pkg_temp_c=68 mean_freq_mhz=2183 load1=10.83
+{"onnxruntime": "1.30.0", "model": "laya-english-dynamo.onnx", "threads": 8, "graph_optimization_level": "GraphOptimizationLevel.ORT_ENABLE_ALL", "shape": "b1_s512_k4", "reps": 10, "load_ms": 1264.4, "p50_ms": 1677.1, "p90_ms": 1716.9}
+## after: pkg_temp_c=70 mean_freq_mhz=2133 load1=10.22
+## round=3 pos=3 checkpoint=english side=python ort=1.23.0 before: pkg_temp_c=71 mean_freq_mhz=2105 load1=10.22
+{"onnxruntime": "1.23.0", "model": "laya-english-dynamo.onnx", "threads": 8, "graph_optimization_level": "GraphOptimizationLevel.ORT_ENABLE_ALL", "shape": "b1_s512_k4", "reps": 10, "load_ms": 1275.9, "p50_ms": 1869.3, "p90_ms": 2288.8}
+## after: pkg_temp_c=78 mean_freq_mhz=2865 load1=10.98
+## round=3 pos=4 checkpoint=english side=go ort=1.23.0 before: pkg_temp_c=62 mean_freq_mhz=1174 load1=10.98
+    bench_test.go:230: ONNX Runtime 1.23.0 (C API 23) from /opt/onnxruntime/cpu/lib/libonnxruntime.so.1.23.0, GOMAXPROCS=12
+BenchmarkForward/english/threads=8/b1_s512_k4-12         	      10	1838599040 ns/op	      1850 p50_ms	      2094 p90_ms
+## after: pkg_temp_c=69 mean_freq_mhz=2372 load1=11.32
+## round=4 pos=1 checkpoint=english side=python ort=1.30.0 before: pkg_temp_c=71 mean_freq_mhz=2560 load1=11.32
+{"onnxruntime": "1.30.0", "model": "laya-english-dynamo.onnx", "threads": 8, "graph_optimization_level": "GraphOptimizationLevel.ORT_ENABLE_ALL", "shape": "b1_s512_k4", "reps": 10, "load_ms": 1256.8, "p50_ms": 1654.1, "p90_ms": 1819.3}
+## after: pkg_temp_c=80 mean_freq_mhz=2343 load1=10.58
+## round=4 pos=2 checkpoint=english side=go ort=1.23.0 before: pkg_temp_c=62 mean_freq_mhz=1542 load1=10.58
+    bench_test.go:230: ONNX Runtime 1.23.0 (C API 23) from /opt/onnxruntime/cpu/lib/libonnxruntime.so.1.23.0, GOMAXPROCS=12
+BenchmarkForward/english/threads=8/b1_s512_k4-12         	      10	1857369351 ns/op	      1755 p50_ms	      2362 p90_ms
+## after: pkg_temp_c=69 mean_freq_mhz=2508 load1=10.45
+## round=4 pos=3 checkpoint=english side=go ort=1.30.0 before: pkg_temp_c=68 mean_freq_mhz=2519 load1=10.45
+    bench_test.go:230: ONNX Runtime 1.30.0 (C API 23) from ort-1.30.0/onnxruntime-linux-x64-1.30.0/lib/libonnxruntime.so.1.30.0, GOMAXPROCS=12
+BenchmarkForward/english/threads=8/b1_s512_k4-12         	      10	2147900662 ns/op	      2051 p50_ms	      2831 p90_ms
+## after: pkg_temp_c=75 mean_freq_mhz=2600 load1=11.68
+## round=4 pos=4 checkpoint=english side=python ort=1.23.0 before: pkg_temp_c=69 mean_freq_mhz=2417 load1=9.88
+{"onnxruntime": "1.23.0", "model": "laya-english-dynamo.onnx", "threads": 8, "graph_optimization_level": "GraphOptimizationLevel.ORT_ENABLE_ALL", "shape": "b1_s512_k4", "reps": 10, "load_ms": 1281.6, "p50_ms": 2092.4, "p90_ms": 2643.4}
+## after: pkg_temp_c=71 mean_freq_mhz=2183 load1=10.05
+## round=1 pos=1 checkpoint=multilingual side=go ort=1.23.0 before: pkg_temp_c=66 mean_freq_mhz=2115 load1=9.64
+    bench_test.go:230: ONNX Runtime 1.23.0 (C API 23) from /opt/onnxruntime/cpu/lib/libonnxruntime.so.1.23.0, GOMAXPROCS=12
+BenchmarkForward/multilingual/threads=8/b1_s512_k4-12         	      10	 698564442 ns/op	       698.2 p50_ms	       759.3 p90_ms
+## after: pkg_temp_c=75 mean_freq_mhz=2338 load1=9.63
+## round=1 pos=2 checkpoint=multilingual side=python ort=1.23.0 before: pkg_temp_c=66 mean_freq_mhz=1234 load1=9.63
+{"onnxruntime": "1.23.0", "model": "laya-multilingual-dynamo.onnx", "threads": 8, "graph_optimization_level": "GraphOptimizationLevel.ORT_ENABLE_ALL", "shape": "b1_s512_k4", "reps": 10, "load_ms": 416.6, "p50_ms": 643.6, "p90_ms": 718.1}
+## after: pkg_temp_c=73 mean_freq_mhz=2054 load1=9.50
+## round=1 pos=3 checkpoint=multilingual side=python ort=1.30.0 before: pkg_temp_c=68 mean_freq_mhz=1906 load1=9.50
+{"onnxruntime": "1.30.0", "model": "laya-multilingual-dynamo.onnx", "threads": 8, "graph_optimization_level": "GraphOptimizationLevel.ORT_ENABLE_ALL", "shape": "b1_s512_k4", "reps": 10, "load_ms": 607.5, "p50_ms": 679.2, "p90_ms": 718.7}
+## after: pkg_temp_c=73 mean_freq_mhz=2394 load1=9.93
+## round=1 pos=4 checkpoint=multilingual side=go ort=1.30.0 before: pkg_temp_c=62 mean_freq_mhz=1367 load1=9.93
+    bench_test.go:230: ONNX Runtime 1.30.0 (C API 23) from ort-1.30.0/onnxruntime-linux-x64-1.30.0/lib/libonnxruntime.so.1.30.0, GOMAXPROCS=12
+BenchmarkForward/multilingual/threads=8/b1_s512_k4-12         	      10	 609259216 ns/op	       611.3 p50_ms	       649.7 p90_ms
+## after: pkg_temp_c=68 mean_freq_mhz=2187 load1=9.63
+## round=2 pos=1 checkpoint=multilingual side=python ort=1.23.0 before: pkg_temp_c=68 mean_freq_mhz=1876 load1=9.63
+{"onnxruntime": "1.23.0", "model": "laya-multilingual-dynamo.onnx", "threads": 8, "graph_optimization_level": "GraphOptimizationLevel.ORT_ENABLE_ALL", "shape": "b1_s512_k4", "reps": 10, "load_ms": 592.4, "p50_ms": 632.7, "p90_ms": 679.4}
+## after: pkg_temp_c=70 mean_freq_mhz=1651 load1=9.58
+## round=2 pos=2 checkpoint=multilingual side=go ort=1.30.0 before: pkg_temp_c=68 mean_freq_mhz=1917 load1=8.89
+    bench_test.go:230: ONNX Runtime 1.30.0 (C API 23) from ort-1.30.0/onnxruntime-linux-x64-1.30.0/lib/libonnxruntime.so.1.30.0, GOMAXPROCS=12
+BenchmarkForward/multilingual/threads=8/b1_s512_k4-12         	      10	 808456307 ns/op	       826.3 p50_ms	       969.4 p90_ms
+## after: pkg_temp_c=69 mean_freq_mhz=1850 load1=10.78
+## round=2 pos=3 checkpoint=multilingual side=go ort=1.23.0 before: pkg_temp_c=68 mean_freq_mhz=1847 load1=10.78
+    bench_test.go:230: ONNX Runtime 1.23.0 (C API 23) from /opt/onnxruntime/cpu/lib/libonnxruntime.so.1.23.0, GOMAXPROCS=12
+BenchmarkForward/multilingual/threads=8/b1_s512_k4-12         	      10	 670805125 ns/op	       659.2 p50_ms	       738.6 p90_ms
+## after: pkg_temp_c=69 mean_freq_mhz=1880 load1=10.72
+## round=2 pos=4 checkpoint=multilingual side=python ort=1.30.0 before: pkg_temp_c=68 mean_freq_mhz=2126 load1=10.72
+{"onnxruntime": "1.30.0", "model": "laya-multilingual-dynamo.onnx", "threads": 8, "graph_optimization_level": "GraphOptimizationLevel.ORT_ENABLE_ALL", "shape": "b1_s512_k4", "reps": 10, "load_ms": 435.9, "p50_ms": 623.4, "p90_ms": 728.5}
+## after: pkg_temp_c=67 mean_freq_mhz=1980 load1=10.45
+## round=3 pos=1 checkpoint=multilingual side=go ort=1.30.0 before: pkg_temp_c=67 mean_freq_mhz=2292 load1=10.45
+    bench_test.go:230: ONNX Runtime 1.30.0 (C API 23) from ort-1.30.0/onnxruntime-linux-x64-1.30.0/lib/libonnxruntime.so.1.30.0, GOMAXPROCS=12
+BenchmarkForward/multilingual/threads=8/b1_s512_k4-12         	      10	 635431038 ns/op	       629.4 p50_ms	       714.4 p90_ms
+## after: pkg_temp_c=69 mean_freq_mhz=2286 load1=10.30
+## round=3 pos=2 checkpoint=multilingual side=python ort=1.30.0 before: pkg_temp_c=67 mean_freq_mhz=2130 load1=10.30
+{"onnxruntime": "1.30.0", "model": "laya-multilingual-dynamo.onnx", "threads": 8, "graph_optimization_level": "GraphOptimizationLevel.ORT_ENABLE_ALL", "shape": "b1_s512_k4", "reps": 10, "load_ms": 647.8, "p50_ms": 628.4, "p90_ms": 709.4}
+## after: pkg_temp_c=69 mean_freq_mhz=2420 load1=10.19
+## round=3 pos=3 checkpoint=multilingual side=python ort=1.23.0 before: pkg_temp_c=67 mean_freq_mhz=2230 load1=10.19
+{"onnxruntime": "1.23.0", "model": "laya-multilingual-dynamo.onnx", "threads": 8, "graph_optimization_level": "GraphOptimizationLevel.ORT_ENABLE_ALL", "shape": "b1_s512_k4", "reps": 10, "load_ms": 566.2, "p50_ms": 662.0, "p90_ms": 677.5}
+## after: pkg_temp_c=73 mean_freq_mhz=2063 load1=9.93
+## round=3 pos=4 checkpoint=multilingual side=go ort=1.23.0 before: pkg_temp_c=70 mean_freq_mhz=2021 load1=9.93
+    bench_test.go:230: ONNX Runtime 1.23.0 (C API 23) from /opt/onnxruntime/cpu/lib/libonnxruntime.so.1.23.0, GOMAXPROCS=12
+BenchmarkForward/multilingual/threads=8/b1_s512_k4-12         	      10	 645057057 ns/op	       646.2 p50_ms	       696.8 p90_ms
+## after: pkg_temp_c=71 mean_freq_mhz=1818 load1=9.93
+## round=4 pos=1 checkpoint=multilingual side=python ort=1.30.0 before: pkg_temp_c=68 mean_freq_mhz=1972 load1=9.93
+{"onnxruntime": "1.30.0", "model": "laya-multilingual-dynamo.onnx", "threads": 8, "graph_optimization_level": "GraphOptimizationLevel.ORT_ENABLE_ALL", "shape": "b1_s512_k4", "reps": 10, "load_ms": 449.4, "p50_ms": 620.1, "p90_ms": 645.8}
+## after: pkg_temp_c=70 mean_freq_mhz=1953 load1=9.93
+## round=4 pos=2 checkpoint=multilingual side=go ort=1.23.0 before: pkg_temp_c=68 mean_freq_mhz=1969 load1=9.93
+    bench_test.go:230: ONNX Runtime 1.23.0 (C API 23) from /opt/onnxruntime/cpu/lib/libonnxruntime.so.1.23.0, GOMAXPROCS=12
+BenchmarkForward/multilingual/threads=8/b1_s512_k4-12         	      10	 822863702 ns/op	       806.5 p50_ms	      1037 p90_ms
+## after: pkg_temp_c=68 mean_freq_mhz=2102 load1=10.28
+## round=4 pos=3 checkpoint=multilingual side=go ort=1.30.0 before: pkg_temp_c=68 mean_freq_mhz=2232 load1=10.28
+    bench_test.go:230: ONNX Runtime 1.30.0 (C API 23) from ort-1.30.0/onnxruntime-linux-x64-1.30.0/lib/libonnxruntime.so.1.30.0, GOMAXPROCS=12
+BenchmarkForward/multilingual/threads=8/b1_s512_k4-12         	      10	 608234573 ns/op	       607.7 p50_ms	       643.3 p90_ms
+## after: pkg_temp_c=71 mean_freq_mhz=1738 load1=10.17
+## round=4 pos=4 checkpoint=multilingual side=python ort=1.23.0 before: pkg_temp_c=68 mean_freq_mhz=1717 load1=10.17
+{"onnxruntime": "1.23.0", "model": "laya-multilingual-dynamo.onnx", "threads": 8, "graph_optimization_level": "GraphOptimizationLevel.ORT_ENABLE_ALL", "shape": "b1_s512_k4", "reps": 10, "load_ms": 566.5, "p50_ms": 654.9, "p90_ms": 696.6}
+## after: pkg_temp_c=70 mean_freq_mhz=1610 load1=10.47
