@@ -66,7 +66,9 @@ type deviceChoice struct {
 
 // resolveDevice picks the device for req, given the execution providers the
 // loaded library reports. Only an explicit request that cannot be met is a
-// fallback; "auto" moves down its preference list silently, as upstream does.
+// fallback here; "auto" moves down its preference list silently, as upstream
+// does. A session that then fails to build is openSession's fallback, and
+// warns for auto too.
 func resolveDevice(req string, available []string) (deviceChoice, error) {
 	name, err := parseDevice(req)
 	if err != nil {

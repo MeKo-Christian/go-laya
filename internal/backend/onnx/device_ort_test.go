@@ -88,6 +88,14 @@ func TestOpenDevice(t *testing.T) {
 			advertise: []string{"CoreMLExecutionProvider", "CPUExecutionProvider"},
 			want:      deviceCPU, warnings: 1,
 		},
+		// Auto picks the advertised CoreML and its session fails: a fallback
+		// that happened, so it warns like the explicit request above, as
+		// upstream's failed .to(device) warns for an auto-picked device.
+		{
+			name: "auto picks coreml, session fails", device: "auto",
+			advertise: []string{"CoreMLExecutionProvider", "CPUExecutionProvider"},
+			want:      deviceCPU, warnings: 1,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.advertise != nil {

@@ -1773,7 +1773,9 @@ internal/hub/*_test.go` prints nothing and no test names a real host.
       `mps` included, is `ErrUnknownDevice` before the library loads. `Options.Logger` defaults to
       `slog.Default()`, and `Backend.Device()` reports where the session landed. A requested device
       the library does not advertise, or whose session fails to build, falls back to the CPU with one
-      `Warn`. `auto` walks cuda → coreml → cpu silently, and `cpu` never warns.
+      `Warn`. `auto` walks cuda → coreml → cpu past unadvertised devices silently, and `cpu` never
+      warns. A failed session warns even for an auto-picked device, as upstream's failed
+      `.to(device)` does (`agent.py:203-227`), which the test pins (PR #11 review).
       `TestDeviceResolve`/`TestDeviceRejectsUnknown` are pure and pass on js/wasm too.
       `TestOpenDevice` passes against both local ORT 1.23.0 builds via `just test-onnx`. With
       `/opt/onnxruntime/cpu`, `cuda` falls back because the provider is not in the build. With
