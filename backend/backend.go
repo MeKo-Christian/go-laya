@@ -6,7 +6,18 @@
 // the ONNX binding the default implementation uses.
 package backend
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrIncompatibleCheckpoint reports a model that is not a laya decision model
+// of the shape this package drives: a missing input or output, a missing
+// config key, a head of the wrong width. Implementations wrap it with what
+// was wrong. It lives here rather than in the root package so that a Backend,
+// which the root package imports, can return it; laya.ErrIncompatibleCheckpoint
+// is the same value.
+var ErrIncompatibleCheckpoint = errors.New("laya: incompatible checkpoint")
 
 // Backend runs the decision model's forward pass.
 type Backend interface {
