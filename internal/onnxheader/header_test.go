@@ -175,6 +175,11 @@ func TestRead(t *testing.T) {
 			want: []string{`"/x"`},
 		},
 		{
+			name: "function default attribute escapes", body: model(10, 18, ok).bytes(25, msg{}.bytes(11,
+				msg{}.str(1, "value").bytes(5, external("c", []uint64{8}, "location", "/z")))),
+			want: []string{`"/z"`},
+		},
+		{
 			name: "sparse initializer escapes", body: model(10, 18, ok.bytes(15, msg{}.bytes(1, external("s", []uint64{8}, "location", "/y")))),
 			want: []string{`"/y"`},
 		},
@@ -273,6 +278,29 @@ func TestReadFile(t *testing.T) {
 		_, err := Read(path)
 		if !errors.Is(err, backend.ErrIncompatibleCheckpoint) || !strings.Contains(err.Error(), "not a regular file") {
 			t.Errorf("Read = %v, want ErrIncompatibleCheckpoint for a symlink", err)
+		}
+	})
+	t.Run("symlinked directory", func(t *testing.T) {
+		path := writeModel(t, model(10, 18, exportIO().bytes(5, external("w", []uint64{2}, "location", "linked/"+dataFile))))
+		if err := os.Symlink(filepath.Dir(path), filepath.Join(filepath.Dir(path), "linked")); err != nil {
+			t.Skip(err)
+		}
+		_, err := Read(path)
+		if !errors.Is(err, backend.ErrIncompatibleCheckpoint) || !strings.Contains(err.Error(), "not a directory") {
+			t.Errorf("Read = %v, want ErrIncompatibleCheckpoint for a symlinked parent", err)
+		}
+	})
+	t.Run("real subdirectory", func(t *testing.T) {
+		path := writeModel(t, model(10, 18, exportIO().bytes(5, external("w", []uint64{2}, "location", "sub/"+dataFile))))
+		sub := filepath.Join(filepath.Dir(path), "sub")
+		if err := os.Mkdir(sub, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(sub, dataFile), make([]byte, 8), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Read(path); err != nil {
+			t.Errorf("Read = %v, want nil", err)
 		}
 	})
 	t.Run("data is a directory", func(t *testing.T) {

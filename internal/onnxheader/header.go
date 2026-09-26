@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"google.golang.org/protobuf/encoding/protowire"
 
@@ -114,6 +115,27 @@ func regular(path string) (int64, error) {
 		return 0, fmt.Errorf("%s is not a regular file", path)
 	}
 	return fi.Size(), nil
+}
+
+// local returns the size of the regular file loc names below dir. Every
+// directory on the way must be a real directory: Lstat on the joined path
+// alone would follow a symlinked parent out of dir.
+func local(dir, loc string) (int64, error) {
+	segs := strings.Split(filepath.Clean(loc), string(filepath.Separator))
+	p := dir
+	for _, seg := range segs[:len(segs)-1] {
+		p = filepath.Join(p, seg)
+		// #nosec G703 -- stat only, one component of a location already
+		// required to be local to the graph's directory.
+		fi, err := os.Lstat(p)
+		if err != nil {
+			return 0, err
+		}
+		if !fi.IsDir() {
+			return 0, fmt.Errorf("%s is not a directory", p)
+		}
+	}
+	return regular(filepath.Join(p, segs[len(segs)-1]))
 }
 
 // reader walks one graph file, remembering the external-data files it has
@@ -230,9 +252,8 @@ func (r *reader) model(b []byte) (*Header, error) {
 			return nil, wrapWire(err)
 		}
 	}
-	// FunctionProto: node (7).
 	for _, fn := range m.functions {
-		if err := each(fn, 7, 7, func(n []byte) error { return r.node(n, 0) }); err != nil {
+		if err := r.function(fn); err != nil {
 			return nil, wrapWire(err)
 		}
 	}
@@ -349,35 +370,49 @@ func (r *reader) graph(b []byte, depth int, io *Header) error {
 	})
 }
 
-// node walks a NodeProto's attributes (5) for tensors and subgraphs.
-func (r *reader) node(b []byte, depth int) error {
+// function walks a FunctionProto: its nodes (7) and the default values of
+// its attributes (attribute_proto, 11), which are AttributeProtos too.
+func (r *reader) function(b []byte) error {
 	return fields(b, func(f field) error {
-		if f.num != 5 {
+		if f.num != 7 && f.num != 11 {
 			return nil
 		}
-		attr, err := f.bytesOf()
+		sub, err := f.bytesOf()
 		if err != nil {
 			return err
 		}
-		return fields(attr, func(f field) error {
-			switch f.num {
-			case 5, 10, 6, 11, 22, 23:
-			default:
-				return nil
-			}
-			sub, err := f.bytesOf()
-			if err != nil {
-				return err
-			}
-			switch f.num {
-			case 5, 10: // t, tensors
-				return r.tensor(sub)
-			case 6, 11: // g, graphs
-				return r.graph(sub, depth+1, nil)
-			default: // sparse_tensor, sparse_tensors
-				return r.sparse(sub)
-			}
-		})
+		if f.num == 7 {
+			return r.node(sub, 0)
+		}
+		return r.attribute(sub, 0)
+	})
+}
+
+// node walks a NodeProto's attributes (5).
+func (r *reader) node(b []byte, depth int) error {
+	return each(b, 5, 5, func(attr []byte) error { return r.attribute(attr, depth) })
+}
+
+// attribute walks an AttributeProto's tensors and subgraphs.
+func (r *reader) attribute(b []byte, depth int) error {
+	return fields(b, func(f field) error {
+		switch f.num {
+		case 5, 10, 6, 11, 22, 23:
+		default:
+			return nil
+		}
+		sub, err := f.bytesOf()
+		if err != nil {
+			return err
+		}
+		switch f.num {
+		case 5, 10: // t, tensors
+			return r.tensor(sub)
+		case 6, 11: // g, graphs
+			return r.graph(sub, depth+1, nil)
+		default: // sparse_tensor, sparse_tensors
+			return r.sparse(sub)
+		}
 	})
 }
 
@@ -484,7 +519,7 @@ func (r *reader) external(dims []uint64, dtype uint64, ext [][2]string) error {
 	size, ok := r.sizes[loc]
 	if !ok {
 		var err error
-		if size, err = regular(filepath.Join(r.dir, loc)); err != nil {
+		if size, err = local(r.dir, loc); err != nil {
 			return err
 		}
 		r.sizes[loc] = size
