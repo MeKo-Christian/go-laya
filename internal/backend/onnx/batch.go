@@ -21,9 +21,9 @@ var (
 	// rectangular, mutually consistent shapes the graph takes.
 	ErrBadBatch = errors.New("onnx backend: malformed batch")
 
-	// ErrUnsupportedPlatform is Open's error where the binding cannot load a
-	// shared library: purego defines Dlopen only on darwin, freebsd, linux
-	// and netbsd, and Windows is untested (PLAN.md Task 6.7).
+	// ErrUnsupportedPlatform is Open's error on targets the binding does not
+	// compile for; backend.go's build constraint lists the ones it does
+	// (PLAN.md Task 6.7).
 	ErrUnsupportedPlatform = errors.New("onnx backend: not supported on this platform")
 )
 

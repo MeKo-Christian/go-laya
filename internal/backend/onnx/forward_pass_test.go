@@ -1,12 +1,10 @@
-//go:build !windows && !js && !wasm
+//go:build !android && !ios && ((darwin && (amd64 || arm64)) || (linux && (amd64 || arm64 || loong64)) || (netbsd && (amd64 || arm64)))
 
 // One forward pass of the S1 export through github.com/shota3506/onnxruntime-purego (Spike S2).
 //
-// The build constraint is not caution about purego -- it supports Windows -- but about
-// what has actually been exercised. go-pocket-tts stubs the binding out on Windows and
-// js/wasm entirely (internal/onnx/runner_windows.go, runner_wasm.go), so claiming those
-// platforms here would be a claim no command backs. Keeping the constraint on the test
-// file also keeps the binding out of `GOOS=windows go build ./...`.
+// The build constraint is backend.go's: the targets the binding compiles on. Keeping it on
+// the test file keeps the binding out of `GOOS=windows go build ./...` and every other stub
+// target.
 
 package onnx
 

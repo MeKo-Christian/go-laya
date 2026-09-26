@@ -1,4 +1,11 @@
-//go:build !windows && !js && !wasm
+//go:build !android && !ios && ((darwin && (amd64 || arm64)) || (linux && (amd64 || arm64 || loong64)) || (netbsd && (amd64 || arm64)))
+
+// The constraint lists the targets where the binding actually compiles with
+// CGO_ENABLED=0, found by building this package for every linux, darwin,
+// freebsd and netbsd target in `go tool dist list`. It is narrower than
+// purego's Dlopen set: purego's fakecgo does not build on freebsd, linux/386 or
+// linux/riscv64, for example, and android (which implies linux) has no Dlopen
+// without cgo. backend_other.go covers everything else.
 
 package onnx
 

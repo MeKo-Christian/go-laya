@@ -4,7 +4,7 @@ This package started life as `internal/onnxspike` and was absorbed here by `PLAN
 The library-resolution chain, the external-data rule, the fixture schema, the finalizer regression
 and both benchmarks moved as they were; only the name went.
 
-It holds the ONNX Runtime `backend.Backend` (`Open`, `Forward`, `Close`; Task 6.3.1, where Windows and js/wasm get a stub that fails with `ErrUnsupportedPlatform`), and its tests still answer the two spike questions. **S2:** can the S1 ONNX export be executed from Go **without CGO**, and
+It holds the ONNX Runtime `backend.Backend` (`Open`, `Forward`, `Close`; Task 6.3.1, where every target outside darwin/linux/netbsd on amd64/arm64 (plus linux/loong64) gets a stub that fails with `ErrUnsupportedPlatform`), and its tests still answer the two spike questions. **S2:** can the S1 ONNX export be executed from Go **without CGO**, and
 is `github.com/shota3506/onnxruntime-purego` stable enough to build on (risk R5)? **S3:** how long
 does one forward pass actually take on a CPU (risk R3)? See §0 D5 and D6 for the answers, and §3 S2
 and S3 for the evidence.

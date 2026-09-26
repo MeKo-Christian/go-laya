@@ -1,4 +1,4 @@
-//go:build !windows && !js && !wasm
+//go:build !android && !ios && ((darwin && (amd64 || arm64)) || (linux && (amd64 || arm64 || loong64)) || (netbsd && (amd64 || arm64)))
 
 // How long does one forward pass actually take on a CPU? (Spike S3)
 //
