@@ -373,15 +373,18 @@ func WithDefaultModel(name string) RouterOption // default "english"
 func WithAutoTaskDetection(on bool) RouterOption
 func WithStandaloneRepos(on bool) RouterOption
 
-// WithLoader is required until M6 lands the default loader; without it Load
-// returns ErrNoLoader. It is also the seam the upstream LRU tests need, which
-// monkeypatch Router.load (test_router.py:177).
+// WithLoader replaces the default loader, which downloads a checkpoint's config
+// and tokenizer and runs a local ONNX export of it (D24). WithLoader(nil) leaves
+// no loader, and Load returns ErrNoLoader. It is also the seam the upstream LRU
+// tests need, which monkeypatch Router.load (test_router.py:177).
 func WithLoader(fn func(context.Context, string, ModelSpec) (Agent, error)) RouterOption
 
-// Deferred to M7 (PLAN Task 7.2): they configure the agent builder, and until
-// there is one they would store values nothing reads.
-func WithRouterDevice(d string) RouterOption
-func WithRouterToken(tok string) RouterOption // falls back to $HF_TOKEN
+// The default loader's settings; a custom WithLoader ignores all three.
+func WithRouterDevice(d string) RouterOption  // "cpu", "cuda[:N]", "coreml", "" / "auto"
+func WithRouterToken(tok string) RouterOption // falls back to $HF_TOKEN, read by NewRouter
+func WithONNXDir(dir string) RouterOption     // laya-<name>.onnx; else $LAYA_ONNX_DIR, else <cache>/onnx
+// Offline comes from the environment: HF_HUB_OFFLINE (or TRANSFORMERS_OFFLINE), read as
+// huggingface_hub reads it, or LAYA_OFFLINE.
 
 type RouteOption func(*routeRequest)
 

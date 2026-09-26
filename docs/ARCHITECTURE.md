@@ -10,8 +10,8 @@
 ### 1.1 The three checkpoints
 
 `convaiinnovations/laya` bundles all three. It is Apache-2.0, **not gated, and needs no token**.
-Golden vectors describe revision `1c5edc17a7acd8701df6fc341c0d179f1c62c982`. The planned default loader (PLAN Task 7.2)
-will use it as its default revision (D17).
+Golden vectors describe revision `1c5edc17a7acd8701df6fc341c0d179f1c62c982`. The default loader pins the bundle repo
+to it (D17).
 
 | Name            | Subfolder          | Encoder                        | Params      | `max_len` / `head_max_len` | Weights                                 |
 | --------------- | ------------------ | ------------------------------ | ----------- | -------------------------- | --------------------------------------- |
@@ -82,6 +82,7 @@ go-laya/
   laya.go        Agent interface (D13), Version; planned: Open, SystemOne, Result/Answer (PLAN 7.3)
   question.go    type aliases re-exporting question/ (D11)
   router.go      Router, RouteDecision, model registry; lru.go the agent cache
+  loader.go      the default agent loader: snapshot, config, tokenizer, local ONNX export (D24)
   options.go  errors.go
   lang/          script + language detection            (public, zero deps)
   mailtext/      email cleaning                         (public, zero deps)
@@ -221,8 +222,10 @@ version `1.M.P` with M ≥ 23 (D20).
 
 ## 6. Downloads and trust
 
-The planned `laya.Open("someone/their-model")` (PLAN Task 7.2) will parse a remote artefact, so
-the download layer, which exists today, verifies everything before use (R7):
+The default loader downloads a checkpoint's config and tokenizer, and the planned
+`laya.Open("someone/their-model")` (PLAN Task 7.3) will do the same for any repo, so the download
+layer verifies everything before use (R7). The graph itself is never downloaded: it is a local
+export, `laya-<name>.onnx` in `WithONNXDir`, `$LAYA_ONNX_DIR` or `<cache>/onnx` (D24).
 
 - **`internal/hub`**: HEAD then GET on `/{repo}/resolve/{rev}/{path}`. Redirects are followed by
   hand, so the token goes only to the Hub's host. The first hop's `X-Linked-Etag` is the git blob
