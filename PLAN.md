@@ -1920,9 +1920,9 @@ and is larger than the ONNX-vs-PyTorch error on the other two checkpoints.
 - [x] **6.5.1** Try `dynamo=True` with `attn_implementation="sdpa"`; the dynamo exporter may
       handle `scaled_dot_product_attention` where TorchScript would not.
       (2026-09-26) — it does. `export_onnx.py` gained `--attn {eager,sdpa}` (default `eager`),
-      recorded as `attn` in the report and the fixture. `--all --dynamo --attn sdpa
-    --out build/onnx-sdpa --suffix=-dynamo` exported all three with no failures, and Python ORT
-      1.30.0 ran all four S1 shapes. At opset 18 there is no ONNX `Attention` op: both graphs
+      recorded as `attn` in the report and the fixture. Run as
+      `--all --dynamo --attn sdpa --out build/onnx-sdpa --suffix=-dynamo`, it exported all three
+      with no failures, and Python ORT 1.30.0 ran all four S1 shapes. At opset 18 there is no ONNX `Attention` op: both graphs
       lower attention to the same 145 `MatMul` and 25 `Softmax` (multilingual), and sdpa only adds
       22 `Where` and 22 `Mul` for the mask. So neither export runs PyTorch's sdpa kernel.
       `TestForwardGolden` (Go, ORT 1.23.0, all 30 `logits.jsonl` batches, recorded under sdpa),
