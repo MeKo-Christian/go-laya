@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"slices"
 	"sync"
 
 	ort "github.com/shota3506/onnxruntime-purego/onnxruntime"
@@ -41,7 +40,8 @@ var _ backend.Backend = (*Backend)(nil)
 // .onnx.data sibling, which ORT resolves relative to the model path.
 //
 // The graph must declare exactly the five inputs and two outputs
-// scripts/export_onnx.py writes, in any order.
+// scripts/export_onnx.py writes, in any order; anything else is an error
+// wrapping backend.ErrIncompatibleCheckpoint.
 //
 // opts.Device picks the execution provider; see Options.Device for when that
 // falls back to the CPU and warns.
@@ -82,10 +82,8 @@ func Open(modelPath string, opts Options) (*Backend, error) {
 		return nil, errors.Join(err, b.Close())
 	}
 
-	if !sameSet(b.sess.InputNames(), graphInputs) || !sameSet(b.sess.OutputNames(), graphOutputs) {
-		err := fmt.Errorf("onnx backend: %s declares inputs %v and outputs %v, want %v and %v",
-			modelPath, b.sess.InputNames(), b.sess.OutputNames(), graphInputs, graphOutputs)
-		return nil, errors.Join(err, b.Close())
+	if err := checkGraphIO(b.sess.InputNames(), b.sess.OutputNames()); err != nil {
+		return nil, errors.Join(fmt.Errorf("onnx backend: %s: %w", modelPath, err), b.Close())
 	}
 	return b, nil
 }
@@ -243,11 +241,4 @@ func (b *Backend) openSession(modelPath string, opts Options, log *slog.Logger) 
 	}
 	b.sess, b.device = sess, choice.device
 	return nil
-}
-
-func sameSet(got, want []string) bool {
-	a, b := slices.Clone(got), slices.Clone(want)
-	slices.Sort(a)
-	slices.Sort(b)
-	return slices.Equal(a, b)
 }

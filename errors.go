@@ -1,6 +1,10 @@
 package laya
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/MeKo-Christian/go-laya/backend"
+)
 
 // The sentinel errors the public API returns. `.golangci.yml` disables err113
 // on the understanding that dynamic context is wrapped around one of these
@@ -18,4 +22,10 @@ var (
 	// injected with WithLoader. Failing here beats caching a nil agent that
 	// panics at the first use.
 	ErrNoLoader = errors.New("laya: no agent loader configured")
+
+	// ErrIncompatibleCheckpoint reports a checkpoint that is not a laya
+	// decision model, wrapped with what was wrong. Python raises ValueError
+	// from _verify_compatibility (agent.py:49-93). It is
+	// backend.ErrIncompatibleCheckpoint, so errors.Is matches either name.
+	ErrIncompatibleCheckpoint = backend.ErrIncompatibleCheckpoint
 )

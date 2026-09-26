@@ -395,7 +395,7 @@ func ForLang(code string) RouteOption
 var (
 	ErrUnknownModel            = errors.New("laya: unknown model")
 	ErrCheckpointNotFound      = errors.New("laya: checkpoint not found")
-	ErrIncompatibleCheckpoint  = errors.New("laya: incompatible checkpoint")
+	ErrIncompatibleCheckpoint  = backend.ErrIncompatibleCheckpoint // defined in the leaf so a Backend can wrap it
 	ErrOptionsExceedHeadBudget = errors.New("laya: question options exceed head_max_len")
 	ErrEmptyQuestions          = errors.New("laya: no questions")          // Python: TypeError from collate_items returning None
 	ErrDuplicateQuestionID     = errors.New("laya: duplicate question id") // Python: impossible in a dict

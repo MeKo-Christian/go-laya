@@ -22,18 +22,18 @@ safetensors backend landing later behind the same interface.
 Tick a box only when the work is committed and `just check` is green. `[~]` means started but
 not finished; keep it rare. A milestone is done when every task box under it is ticked.
 
-| Milestone                                                              | Delivers                                         | Status                                       |
-| ---------------------------------------------------------------------- | ------------------------------------------------ | -------------------------------------------- |
-| [M0 — Scaffolding](#m0--scaffolding)                                   | Go module, tooling, CI, frozen Python, `Version` | ✅ 5/6 (0.1 skipped)                         |
-| [Spikes S1–S3](#3-spikes--do-these-before-writing-library-code)        | ONNX export, binding choice, latency floor       | 🟢 S1–S3 done                                |
-| [M1 — Reference harness](#m1--the-python-reference-harness)            | `testdata/*.jsonl` golden vectors                | ✅ done                                      |
-| [M2 — Tier-1 core](#m2--tier-1-core-no-ml-runtime-620-lines-of-python) | `jsonx`, `lang`, `mailtext`, `presets`, render   | 🟢 2.1–2.4 done; 2.5.4 partial               |
-| [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ✅ done                                      |
-| [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | 🟢 4.1–4.5 done; 4.3.9/4.5.5 open            |
-| [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ✅ done                                      |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | 🟡 6.1, 6.2, 6.10 done; 6.3.2 partial (CUDA) |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started                               |
-| [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred                                  |
+| Milestone                                                              | Delivers                                         | Status                                              |
+| ---------------------------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------- |
+| [M0 — Scaffolding](#m0--scaffolding)                                   | Go module, tooling, CI, frozen Python, `Version` | ✅ 5/6 (0.1 skipped)                                |
+| [Spikes S1–S3](#3-spikes--do-these-before-writing-library-code)        | ONNX export, binding choice, latency floor       | 🟢 S1–S3 done                                       |
+| [M1 — Reference harness](#m1--the-python-reference-harness)            | `testdata/*.jsonl` golden vectors                | ✅ done                                             |
+| [M2 — Tier-1 core](#m2--tier-1-core-no-ml-runtime-620-lines-of-python) | `jsonx`, `lang`, `mailtext`, `presets`, render   | 🟢 2.1–2.4 done; 2.5.4 partial                      |
+| [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ✅ done                                             |
+| [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | 🟢 4.1–4.5 done; 4.3.9/4.5.5 open                   |
+| [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ✅ done                                             |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | 🟡 6.1–6.3, 6.10 done bar 6.3.2 (CUDA); 6.4 started |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started                                      |
+| [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred                                         |
 
 **Critical path:** M1 ✅ → M2 (`jsonx` first) → M4 → M5 → M6 → M7, with M3 off the path. _(Reordered
 on the 2026-09-20 review.)_ _(2026-09-20: M4 was in the event run **in parallel** with M2 from `jsonx`
@@ -1757,8 +1757,8 @@ internal/hub/*_test.go` prints nothing and no test names a real host.
       (2026-09-26) — `internal/backend/onnx`: `Open(modelPath, Options{Library, IntraOpThreads})`
       builds the session from the path (external data), resolving the library through
       `findORTLibrary` when none is given. It rejects a graph whose input/output names differ from the
-      export's (6.4.2's typed error is still open). `Forward` validates and flattens the batch
-      (`ErrBadBatch` on any ragged or inconsistent shape, `TestFlattenRejectsMalformed`), closes
+      export's (wrapped in `ErrIncompatibleCheckpoint` since 6.4.2). `Forward` validates and flattens
+      the batch (`ErrBadBatch` on any ragged or inconsistent shape, `TestFlattenRejectsMalformed`), closes
       every `*Value` explicitly (D5), and folds the outputs by their returned shape. Batch, seq and k
       all come from the batch. `TestForwardGolden` replays all 30 `logits.jsonl` batches through the
       three dynamo exports under ORT 1.23.0, via `just test-onnx`. The worst scaled diff against the
@@ -1802,7 +1802,7 @@ internal/hub/*_test.go` prints nothing and no test names a real host.
       unopened `Backend` returns `context.Canceled`, not `ErrClosed`, so the ctx check runs before
       the session is touched. The check after `Run` has no discriminating test, because it would need
       a ctx cancelled mid-pass.
-- [ ] **6.3.4** The ONNX backend lives in `internal/backend/onnx`; the §8 check is D9's
+- [x] **6.3.4** The ONNX backend lives in `internal/backend/onnx`; the §8 check is D9's
       `go list -deps` assertion over `lang`/`mailtext`/`presets`/`backend`. `Route` lives in the root
       package, which is allowed to depend on the binding — `dlopen` happens only in `Open`.
       (2026-09-26) — `deps_test.go` in the root package, so every CI `go test` runs it.
@@ -1812,6 +1812,9 @@ internal/hub/*_test.go` prints nothing and no test names a real host.
       `internal/backend/onnx` to be the binding's only direct importer. A `presets` file importing
       `internal/backend/onnx` fails the first, and a root file importing the binding fails the
       second. This is the CI-level check 6.1.1 left open. §8's box stays for the 1.0 sweep.
+      (2026-09-26) — ticked late: re-run after the 6.4 sentinel added an `errors` import to
+      `backend/`, `go test -run 'TestNoMLDependency|TestRuntimeImportedOnlyByBackend' -v .` passes
+      both.
 - [ ] **6.3.6** _(new, 2026-09-26, from 6.3.2)_ Enable CUDA. ORT's generic
       `SessionOptionsAppendExecutionProvider` rejects `CUDA` (probed against ORT 1.23.0's GPU
       build), and the binding at D5's pin neither registers `SessionOptionsAppendExecutionProvider_CUDA_V2`
@@ -1822,16 +1825,44 @@ internal/hub/*_test.go` prints nothing and no test names a real host.
 
 **Task 6.4: Checkpoint validation.** Port `_verify_compatibility`'s intent.
 
-- [ ] **6.4.1** Require cfg keys `encoder` and `head_layers`.
-- [ ] **6.4.2** Require the graph's declared inputs/outputs (`input_ids`, `attention_mask`,
+- [x] **6.4.1** Require cfg keys `encoder` and `head_layers`.
+      (2026-09-26) — the new `internal/checkpoint` package's `LoadConfig(dir)` reads
+      `rl_agent_config.json` (capped at 1 MiB, since it is a downloaded artifact) and requires both
+      keys to be present, whatever their value, as `k not in cfg` does. A config without them fails
+      with `config: <path>: missing keys encoder, head_layers: laya: incompatible checkpoint`, naming
+      only the missing ones in upstream's order. A missing file, invalid JSON, a non-object and an
+      oversized file wrap the same sentinel, and a missing file also wraps `fs.ErrNotExist`.
+      `TestLoadConfig` covers 12 cases, `TestLoadConfigMissingFile` the absent file, and
+      `TestLoadConfigShipped` (gated on the checkpoints) passes all three shipped configs. Dropping
+      `head_layers`, an unwrapped error, no size cap, a null-is-missing check and no object check
+      each fail it. `Config.Field` returns a key's raw JSON as a copy (`TestConfigField`, PR #13
+      review), so 6.4.5 and M7 need not re-read the file. Nothing calls `LoadConfig` yet;
+      6.11.1/M7's loader will.
+- [x] **6.4.2** Require the graph's declared inputs/outputs (`input_ids`, `attention_mask`,
       `marker_pos`, `marker_mask`, `qtype` → `logits`, `act_logits`).
+      (2026-09-26) — `Open`'s inline set comparison became the pure `checkGraphIO` in the untagged
+      `graph.go`, so it is tested in CI and on every platform. It names each missing, unexpected
+      or duplicated tensor (`graph: missing input qtype: laya: incompatible checkpoint`) instead
+      of dumping both lists. `TestCheckGraphIO` covers 13 cases: exact, reordered, each of the
+      seven tensors dropped, an extra input, an extra output, a duplicate, and inputs and outputs
+      swapped. Returning nil, returning an unwrapped error and going back to dumping both lists
+      each fail all 11 error cases. `just test-onnx` still opens and replays all three exports.
 - [ ] **6.4.3** Fail with a wrapped `ErrIncompatibleCheckpoint` naming what was wrong.
+      (2026-09-26) — partial: the sentinel is `backend.ErrIncompatibleCheckpoint` in the leaf, so a
+      `Backend` (which the root imports) can wrap it. `laya.ErrIncompatibleCheckpoint` is the same
+      value (`TestErrIncompatibleCheckpoint`). 6.4.1 and 6.4.2 wrap it; 6.4.4 and 6.4.5 have to wrap
+      it too once they exist.
 - [ ] **6.4.4** Validate the ONNX/safetensors header **before** handing the bytes to the runtime, and
       never `os/exec` or `encoding/gob` a downloaded artifact (R7, Task 0.4's deferred item).
 - [ ] **6.4.5** _(new, 2026-09-20, review)_ Validate the graph's `act_logits` width against
       `len(cfg["act_costs"]) + 1` (§1.3) and `logits` width against `kmax`; a mismatch fails with
       `ErrIncompatibleCheckpoint` naming the shape. All three shipped checkpoints have width 2, which is
       exactly why a hardcoded 2 would pass every test and break on the first fine-tune.
+      _(2026-09-26, recon)_ — the binding exposes names only, no type or shape info
+      (`Session.InputNames`/`OutputNames`), so the static `act_logits` width has to come from 6.4.4's
+      own read of the ONNX graph. `scripts/export_onnx.py`'s `DYNAMIC_AXES` makes only the batch axis
+      of `act_logits` dynamic; the exported graphs' declared dims were not inspected. `logits`' width is `k`, which is dynamic,
+      so it can only be checked per `Forward` against the batch's `kmax`.
 
 **Task 6.5: Decide which attention implementation the shipped export uses.** _(new, 2026-09-20)_
 Spike S1 exports with `attn_implementation="eager"` because S1.1 says to. Upstream runs `sdpa`
