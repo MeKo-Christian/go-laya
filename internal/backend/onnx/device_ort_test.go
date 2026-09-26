@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -55,9 +56,13 @@ func (r *recorder) warnings() []string {
 
 // TestOpenDevice runs device selection against the real library: a device
 // that cannot be used falls back to the CPU with exactly one warning, and one
-// that can be used warns never (upstream e630a68). Run it once with the CPU
-// build and once with the GPU build through LAYA_ORT_LIB: "cuda" falls back in
-// both, for a different reason each time (not built / binding cannot enable).
+// that can be used warns never (upstream e630a68).
+//
+// Every case but one fixes the advertised providers, so the outcome does not
+// depend on which build LAYA_ORT_LIB names: a CoreML-enabled ORT on macOS
+// would otherwise make "auto" pick CoreML and an explicit CoreML session
+// succeed. The session-failure cases need a library that rejects CoreML at
+// session creation, which is Linux's; they skip elsewhere.
 func TestOpenDevice(t *testing.T) {
 	if testing.Short() {
 		t.Skip("-short: needs an ONNX Runtime library and the S1 exports")
@@ -68,36 +73,44 @@ func TestOpenDevice(t *testing.T) {
 		t.Skipf("no export: %v", err)
 	}
 
+	coremlAdvertised := []string{"CoreMLExecutionProvider", "CPUExecutionProvider"}
 	for _, tc := range []struct {
 		name      string
 		device    string
-		advertise []string // replaces GetAvailableProviders' answer when set
+		advertise []string // replaces GetAvailableProviders' answer; nil keeps the library's
+		linuxOnly bool     // needs ORT to reject CoreML when building the session
 		want      string
 		warnings  int
 	}{
-		{name: "auto", device: "", want: deviceCPU},
-		{name: "cpu", device: "cpu", want: deviceCPU},
-		{name: "cuda", device: "cuda", want: deviceCPU, warnings: 1},
-		{name: "coreml", device: "coreml", want: deviceCPU, warnings: 1},
+		// The one case on the library's own providers: "cpu" is the same
+		// everywhere, and it keeps the real GetAvailableProviders call covered.
+		{name: "cpu, library providers", device: "cpu", want: deviceCPU},
+		{name: "auto", device: "", advertise: cpuBuild, want: deviceCPU},
+		{name: "auto skips unusable cuda", device: "auto", advertise: gpuBuild, want: deviceCPU},
+		{name: "cpu", device: "cpu", advertise: gpuBuild, want: deviceCPU},
+		{name: "cuda not built", device: "cuda", advertise: cpuBuild, want: deviceCPU, warnings: 1},
+		{name: "cuda not enableable", device: "cuda", advertise: gpuBuild, want: deviceCPU, warnings: 1},
+		{name: "coreml not built", device: "coreml", advertise: cpuBuild, want: deviceCPU, warnings: 1},
 		// A library that advertises CoreML but cannot create a session with
 		// it: the session-creation fallback, upstream's failed .to(device)
 		// (agent.py:203-216). Linux ORT rejects CoreML at append time, which
 		// is exactly such a failure without needing Apple hardware.
 		{
 			name: "coreml advertised, session fails", device: "coreml",
-			advertise: []string{"CoreMLExecutionProvider", "CPUExecutionProvider"},
-			want:      deviceCPU, warnings: 1,
+			advertise: coremlAdvertised, linuxOnly: true, want: deviceCPU, warnings: 1,
 		},
 		// Auto picks the advertised CoreML and its session fails: a fallback
 		// that happened, so it warns like the explicit request above, as
 		// upstream's failed .to(device) warns for an auto-picked device.
 		{
 			name: "auto picks coreml, session fails", device: "auto",
-			advertise: []string{"CoreMLExecutionProvider", "CPUExecutionProvider"},
-			want:      deviceCPU, warnings: 1,
+			advertise: coremlAdvertised, linuxOnly: true, want: deviceCPU, warnings: 1,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.linuxOnly && runtime.GOOS != "linux" {
+				t.Skipf("needs an ORT that rejects CoreML sessions; %s may build one", runtime.GOOS)
+			}
 			if tc.advertise != nil {
 				saved := availableProviders
 				availableProviders = func(*ort.Runtime) ([]string, error) { return tc.advertise, nil }
