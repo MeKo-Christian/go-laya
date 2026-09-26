@@ -22,18 +22,18 @@ safetensors backend landing later behind the same interface.
 Tick a box only when the work is committed and `just check` is green. `[~]` means started but
 not finished; keep it rare. A milestone is done when every task box under it is ticked.
 
-| Milestone                                                              | Delivers                                         | Status                                              |
-| ---------------------------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------- |
-| [M0 — Scaffolding](#m0--scaffolding)                                   | Go module, tooling, CI, frozen Python, `Version` | ✅ 5/6 (0.1 skipped)                                |
-| [Spikes S1–S3](#3-spikes--do-these-before-writing-library-code)        | ONNX export, binding choice, latency floor       | 🟢 S1–S3 done                                       |
-| [M1 — Reference harness](#m1--the-python-reference-harness)            | `testdata/*.jsonl` golden vectors                | ✅ done                                             |
-| [M2 — Tier-1 core](#m2--tier-1-core-no-ml-runtime-620-lines-of-python) | `jsonx`, `lang`, `mailtext`, `presets`, render   | 🟢 2.1–2.4 done; 2.5.4 partial                      |
-| [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ✅ done                                             |
-| [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | 🟢 4.1–4.5 done; 4.3.9/4.5.5 open                   |
-| [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ✅ done                                             |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | 🟡 6.1–6.3, 6.10 done bar 6.3.2 (CUDA); 6.4 started |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started                                      |
-| [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred                                         |
+| Milestone                                                              | Delivers                                         | Status                                             |
+| ---------------------------------------------------------------------- | ------------------------------------------------ | -------------------------------------------------- |
+| [M0 — Scaffolding](#m0--scaffolding)                                   | Go module, tooling, CI, frozen Python, `Version` | ✅ 5/6 (0.1 skipped)                               |
+| [Spikes S1–S3](#3-spikes--do-these-before-writing-library-code)        | ONNX export, binding choice, latency floor       | 🟢 S1–S3 done                                      |
+| [M1 — Reference harness](#m1--the-python-reference-harness)            | `testdata/*.jsonl` golden vectors                | ✅ done                                            |
+| [M2 — Tier-1 core](#m2--tier-1-core-no-ml-runtime-620-lines-of-python) | `jsonx`, `lang`, `mailtext`, `presets`, render   | 🟢 2.1–2.4 done; 2.5.4 partial                     |
+| [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ✅ done                                            |
+| [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | 🟢 4.1–4.5 done; 4.3.9/4.5.5 open                  |
+| [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ✅ done                                            |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | 🟡 6.1–6.4, 6.10 done bar 6.3.2 (CUDA); 6.5.1 done |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started                                     |
+| [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred                                        |
 
 **Critical path:** M1 ✅ → M2 (`jsonx` first) → M4 → M5 → M6 → M7, with M3 off the path. _(Reordered
 on the 2026-09-20 review.)_ _(2026-09-20: M4 was in the event run **in parallel** with M2 from `jsonx`
@@ -1917,12 +1917,33 @@ Spike S1 exports with `attn_implementation="eager"` because S1.1 says to. Upstre
 which is a floor on how close the Go port can get to golden vectors generated from the Python,
 and is larger than the ONNX-vs-PyTorch error on the other two checkpoints.
 
-- [ ] **6.5.1** Try `dynamo=True` with `attn_implementation="sdpa"`; the dynamo exporter may
+- [x] **6.5.1** Try `dynamo=True` with `attn_implementation="sdpa"`; the dynamo exporter may
       handle `scaled_dot_product_attention` where TorchScript would not.
+      (2026-09-26) — it does. `export_onnx.py` gained `--attn {eager,sdpa}` (default `eager`),
+      recorded as `attn` in the report and the fixture. `--all --dynamo --attn sdpa
+    --out build/onnx-sdpa --suffix=-dynamo` exported all three with no failures, and Python ORT
+      1.30.0 ran all four S1 shapes. At opset 18 there is no ONNX `Attention` op: both graphs
+      lower attention to the same 145 `MatMul` and 25 `Softmax` (multilingual), and sdpa only adds
+      22 `Where` and 22 `Mul` for the mask. So neither export runs PyTorch's sdpa kernel.
+      `TestForwardGolden` (Go, ORT 1.23.0, all 30 `logits.jsonl` batches, recorded under sdpa),
+      worst scaled diff for logits / act_logits, eager → sdpa: english 9.36e-06 / 3.89e-06 →
+      1.18e-05 / 4.61e-06, multilingual 9.78e-06 / 1.36e-06 → 7.39e-06 / 1.36e-06,
+      typed-decisions 5.84e-06 / 1.22e-06 → 7.27e-06 / 1.02e-06. The sdpa export is no closer.
 - [ ] **6.5.2** If sdpa exports, make it the default and re-measure — the export should match the
       reference path, not merely be close to it.
+      (2026-09-26) — not done, **by decision (user): keep eager.** sdpa exports, but it matched
+      the reference no better (6.5.1): worse on english and typed-decisions, better on
+      multilingual, all within ~1e-05 scaled. The rule's premise, that sdpa would be the reference
+      path, does not hold at opset 18. `build/onnx/` and `forward_pass.json` are unchanged.
 - [ ] **6.5.3** If it does not, set the M7 parity tolerance from the measured eager-vs-sdpa gap
       **per checkpoint** and say so in the test, rather than picking a round number.
+      (2026-09-26) — partial: with eager kept, the gap still applies. Measured through Go at real
+      prompts, it is already inside the eager export's worst diffs above (≤ 9.8e-06 scaled),
+      and `goldenTol`'s comment in `internal/backend/onnx/backend_test.go` now says so. PyTorch
+      eager vs sdpa on S1's random inputs is english 1.0e-06 / 4.9e-04, multilingual 5.1e-05 /
+      1.2e-02, typed-decisions 1.5e-06 / 7.3e-04 (absolute, logits / act_logits). What remains:
+      the M7 parity test (7.4.2) does not exist yet and has to take its per-checkpoint tolerance
+      from these numbers.
 
 **Task 6.6: Acquire and pin the ONNX Runtime shared library.** _(new, 2026-09-20)_
 R7 requires a pinned runtime, and S2.4 could only pin half of it: `go.mod` pins the binding, and the
