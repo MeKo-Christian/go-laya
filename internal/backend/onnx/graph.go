@@ -62,11 +62,12 @@ func diffNames(kind string, got, want []string) []string {
 // the len(act_costs)+1 the checkpoint config derives, and returns the
 // declared width. A declared act_logits must be 2-D, and a static width other
 // than want is an error wrapping backend.ErrIncompatibleCheckpoint. A
-// symbolic or undeclared width is anyWidth and passes, leaving Forward to
-// check the width the graph produces; want 0 checks nothing but the rank.
+// symbolic width, or a shape left undeclared (ONNX allows that; its rank is
+// unknown), is anyWidth and passes, leaving Forward to check the output's
+// rank and width; want 0 checks nothing but the rank.
 func checkHeadWidth(outputs []onnxheader.Tensor, want int) (int, error) {
 	i := slices.IndexFunc(outputs, func(t onnxheader.Tensor) bool { return t.Name == "act_logits" })
-	if i < 0 || len(outputs[i].Dims) == 0 {
+	if i < 0 || outputs[i].Dims == nil {
 		return anyWidth, nil
 	}
 	dims := outputs[i].Dims

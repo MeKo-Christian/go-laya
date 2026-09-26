@@ -227,6 +227,26 @@ func TestReadHeader(t *testing.T) {
 	checkExportIO(t, h)
 }
 
+// Dims tells an undeclared shape (nil: the rank is unknown) from a declared
+// scalar (empty), so a caller can reject the one without the other.
+func TestReadHeaderShapes(t *testing.T) {
+	unshaped := msg{}.str(1, "act_logits").bytes(2, msg{}.bytes(1, msg{}.varint(1, elemFloat)))
+	io := msg{}.bytes(12, ioTensor("logits", elemFloat)).bytes(12, unshaped)
+	h, err := Read(writeModel(t, model(10, 18, io)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(h.Outputs) != 2 {
+		t.Fatalf("Outputs = %v, want 2", h.Outputs)
+	}
+	if d := h.Outputs[0].Dims; d == nil || len(d) != 0 {
+		t.Errorf("scalar Dims = %#v, want empty and non-nil", d)
+	}
+	if d := h.Outputs[1].Dims; d != nil {
+		t.Errorf("unshaped Dims = %#v, want nil", d)
+	}
+}
+
 // checkExportIO asserts the IO scripts/export_onnx.py writes.
 func checkExportIO(t *testing.T, h *Header) {
 	t.Helper()

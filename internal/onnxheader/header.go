@@ -53,7 +53,9 @@ type Dim struct {
 }
 
 // Tensor is one of the graph's declared inputs or outputs. ElemType is the
-// ONNX TensorProto.DataType, 0 for a value that is not a tensor.
+// ONNX TensorProto.DataType, 0 for a value that is not a tensor. Dims is nil
+// when the shape is undeclared, so the rank is unknown, and empty for a
+// declared scalar.
 type Tensor struct {
 	Name     string
 	ElemType int32
@@ -606,7 +608,7 @@ func tensorType(b []byte, t *Tensor) error {
 			if err != nil {
 				return err
 			}
-			t.Dims = nil
+			t.Dims = []Dim{}
 			return fields(shape, func(f field) error {
 				if f.num != 1 {
 					return nil

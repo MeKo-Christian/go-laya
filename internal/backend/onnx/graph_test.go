@@ -126,6 +126,7 @@ func TestCheckHeadWidth(t *testing.T) {
 			err: []string{"act_logits", "[batch 2 1]", "2-D"},
 		},
 		{name: "no act_logits", outputs: act()[:1], want: 2, got: anyWidth},
+		{name: "scalar", outputs: act([]onnxheader.Dim{}...), want: 2, err: []string{"act_logits", "[]", "2-D"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
