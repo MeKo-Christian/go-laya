@@ -1,0 +1,81 @@
+# PLAN.md Task 6.8.3: {Go, Python} x {ORT 1.23.0, ORT 1.30.0}, interleaved, 2026-09-26.
+#
+# Superseded by ort-version-gap-balanced.txt. This first run kept one fixed order within
+# each round and recorded no thermal state, so order and heat were confounded with the
+# configuration (PR #20 review). Kept because PLAN.md and the review cite it.
+#
+# batch 1, 512 tokens, k 4, 8 intra-op threads, 10 timed runs after one warm-up, p50/p90
+# nearest rank. Three rounds; within a round each checkpoint runs all four configurations
+# back to back, so every cell of a round shares the machine's thermal state.
+#
+#   Go:     go test -c ./internal/backend/onnx/, then per cell
+#           LAYA_ORT_LIB=<lib> LAYA_ONNX_DIR=build/onnx ./onnx.test -test.run '^$' \
+#             -test.bench 'BenchmarkForward/^<ck>$/^threads=8$/^b1_s512_k4$' -test.benchtime=10x -test.v
+#   Python: <venv>/bin/python scripts/bench_ort.py --model build/onnx/laya-<ck>-dynamo.onnx --threads 8 --reps 10
+#
+#   ORT 1.23.0: Go /opt/onnxruntime/cpu (byte-identical to internal/ortlib's pin),
+#               Python a scratch venv with onnxruntime==1.23.0 + numpy.
+#   ORT 1.30.0: Go the official onnxruntime-linux-x64-1.30.0.tgz, sha256 a5ed5a3c...b3fd as
+#               GitHub publishes it; Python .venv-ref (scripts/requirements-ref.txt).
+#
+# 2026-09-26T18:46:25+02:00  12th Gen Intel(R) Core(TM) i7-1255U governor=powersave
+## round=1 checkpoint=english side=go ort=1.23.0
+    bench_test.go:230: ONNX Runtime 1.23.0 (C API 23) from /opt/onnxruntime/cpu/lib/libonnxruntime.so.1.23.0, GOMAXPROCS=12
+BenchmarkForward/english/threads=8/b1_s512_k4-12         	      10	2326263667 ns/op	      2489 p50_ms	      3243 p90_ms
+## round=1 checkpoint=english side=python ort=1.23.0
+{"onnxruntime": "1.23.0", "model": "laya-english-dynamo.onnx", "threads": 8, "graph_optimization_level": "GraphOptimizationLevel.ORT_ENABLE_ALL", "shape": "b1_s512_k4", "reps": 10, "load_ms": 2130.0, "p50_ms": 2154.5, "p90_ms": 2543.0}
+## round=1 checkpoint=english side=go ort=1.30.0
+    bench_test.go:230: ONNX Runtime 1.30.0 (C API 23) from build/ort-1.30.0/onnxruntime-linux-x64-1.30.0/lib/libonnxruntime.so.1.30.0, GOMAXPROCS=12
+BenchmarkForward/english/threads=8/b1_s512_k4-12         	      10	2593248674 ns/op	      2174 p50_ms	      4401 p90_ms
+## round=1 checkpoint=english side=python ort=1.30.0
+{"onnxruntime": "1.30.0", "model": "laya-english-dynamo.onnx", "threads": 8, "graph_optimization_level": "GraphOptimizationLevel.ORT_ENABLE_ALL", "shape": "b1_s512_k4", "reps": 10, "load_ms": 2391.2, "p50_ms": 3800.0, "p90_ms": 4341.4}
+## round=1 checkpoint=multilingual side=go ort=1.23.0
+    bench_test.go:230: ONNX Runtime 1.23.0 (C API 23) from /opt/onnxruntime/cpu/lib/libonnxruntime.so.1.23.0, GOMAXPROCS=12
+BenchmarkForward/multilingual/threads=8/b1_s512_k4-12         	      10	1697348591 ns/op	      1649 p50_ms	      2347 p90_ms
+## round=1 checkpoint=multilingual side=python ort=1.23.0
+{"onnxruntime": "1.23.0", "model": "laya-multilingual-dynamo.onnx", "threads": 8, "graph_optimization_level": "GraphOptimizationLevel.ORT_ENABLE_ALL", "shape": "b1_s512_k4", "reps": 10, "load_ms": 1015.5, "p50_ms": 1274.6, "p90_ms": 1401.8}
+## round=1 checkpoint=multilingual side=go ort=1.30.0
+    bench_test.go:230: ONNX Runtime 1.30.0 (C API 23) from build/ort-1.30.0/onnxruntime-linux-x64-1.30.0/lib/libonnxruntime.so.1.30.0, GOMAXPROCS=12
+BenchmarkForward/multilingual/threads=8/b1_s512_k4-12         	      10	 679932588 ns/op	       689.7 p50_ms	       725.3 p90_ms
+## round=1 checkpoint=multilingual side=python ort=1.30.0
+{"onnxruntime": "1.30.0", "model": "laya-multilingual-dynamo.onnx", "threads": 8, "graph_optimization_level": "GraphOptimizationLevel.ORT_ENABLE_ALL", "shape": "b1_s512_k4", "reps": 10, "load_ms": 597.8, "p50_ms": 648.7, "p90_ms": 782.1}
+## round=2 checkpoint=english side=go ort=1.23.0
+    bench_test.go:230: ONNX Runtime 1.23.0 (C API 23) from /opt/onnxruntime/cpu/lib/libonnxruntime.so.1.23.0, GOMAXPROCS=12
+BenchmarkForward/english/threads=8/b1_s512_k4-12         	      10	1769633758 ns/op	      1791 p50_ms	      1861 p90_ms
+## round=2 checkpoint=english side=python ort=1.23.0
+{"onnxruntime": "1.23.0", "model": "laya-english-dynamo.onnx", "threads": 8, "graph_optimization_level": "GraphOptimizationLevel.ORT_ENABLE_ALL", "shape": "b1_s512_k4", "reps": 10, "load_ms": 1681.0, "p50_ms": 1884.9, "p90_ms": 2165.5}
+## round=2 checkpoint=english side=go ort=1.30.0
+    bench_test.go:230: ONNX Runtime 1.30.0 (C API 23) from build/ort-1.30.0/onnxruntime-linux-x64-1.30.0/lib/libonnxruntime.so.1.30.0, GOMAXPROCS=12
+BenchmarkForward/english/threads=8/b1_s512_k4-12         	      10	1769994766 ns/op	      1769 p50_ms	      1917 p90_ms
+## round=2 checkpoint=english side=python ort=1.30.0
+{"onnxruntime": "1.30.0", "model": "laya-english-dynamo.onnx", "threads": 8, "graph_optimization_level": "GraphOptimizationLevel.ORT_ENABLE_ALL", "shape": "b1_s512_k4", "reps": 10, "load_ms": 1274.9, "p50_ms": 1733.0, "p90_ms": 2021.9}
+## round=2 checkpoint=multilingual side=go ort=1.23.0
+    bench_test.go:230: ONNX Runtime 1.23.0 (C API 23) from /opt/onnxruntime/cpu/lib/libonnxruntime.so.1.23.0, GOMAXPROCS=12
+BenchmarkForward/multilingual/threads=8/b1_s512_k4-12         	      10	 674868159 ns/op	       635.5 p50_ms	       831.8 p90_ms
+## round=2 checkpoint=multilingual side=python ort=1.23.0
+{"onnxruntime": "1.23.0", "model": "laya-multilingual-dynamo.onnx", "threads": 8, "graph_optimization_level": "GraphOptimizationLevel.ORT_ENABLE_ALL", "shape": "b1_s512_k4", "reps": 10, "load_ms": 565.9, "p50_ms": 627.0, "p90_ms": 735.9}
+## round=2 checkpoint=multilingual side=go ort=1.30.0
+    bench_test.go:230: ONNX Runtime 1.30.0 (C API 23) from build/ort-1.30.0/onnxruntime-linux-x64-1.30.0/lib/libonnxruntime.so.1.30.0, GOMAXPROCS=12
+BenchmarkForward/multilingual/threads=8/b1_s512_k4-12         	      10	 650609824 ns/op	       658.4 p50_ms	       695.6 p90_ms
+## round=2 checkpoint=multilingual side=python ort=1.30.0
+{"onnxruntime": "1.30.0", "model": "laya-multilingual-dynamo.onnx", "threads": 8, "graph_optimization_level": "GraphOptimizationLevel.ORT_ENABLE_ALL", "shape": "b1_s512_k4", "reps": 10, "load_ms": 590.2, "p50_ms": 627.6, "p90_ms": 769.8}
+## round=3 checkpoint=english side=go ort=1.23.0
+    bench_test.go:230: ONNX Runtime 1.23.0 (C API 23) from /opt/onnxruntime/cpu/lib/libonnxruntime.so.1.23.0, GOMAXPROCS=12
+BenchmarkForward/english/threads=8/b1_s512_k4-12         	      10	1750946809 ns/op	      1712 p50_ms	      1915 p90_ms
+## round=3 checkpoint=english side=python ort=1.23.0
+{"onnxruntime": "1.23.0", "model": "laya-english-dynamo.onnx", "threads": 8, "graph_optimization_level": "GraphOptimizationLevel.ORT_ENABLE_ALL", "shape": "b1_s512_k4", "reps": 10, "load_ms": 1215.2, "p50_ms": 1856.4, "p90_ms": 2214.2}
+## round=3 checkpoint=english side=go ort=1.30.0
+    bench_test.go:230: ONNX Runtime 1.30.0 (C API 23) from build/ort-1.30.0/onnxruntime-linux-x64-1.30.0/lib/libonnxruntime.so.1.30.0, GOMAXPROCS=12
+BenchmarkForward/english/threads=8/b1_s512_k4-12         	      10	1679426037 ns/op	      1684 p50_ms	      1759 p90_ms
+## round=3 checkpoint=english side=python ort=1.30.0
+{"onnxruntime": "1.30.0", "model": "laya-english-dynamo.onnx", "threads": 8, "graph_optimization_level": "GraphOptimizationLevel.ORT_ENABLE_ALL", "shape": "b1_s512_k4", "reps": 10, "load_ms": 1270.8, "p50_ms": 1686.5, "p90_ms": 1792.5}
+## round=3 checkpoint=multilingual side=go ort=1.23.0
+    bench_test.go:230: ONNX Runtime 1.23.0 (C API 23) from /opt/onnxruntime/cpu/lib/libonnxruntime.so.1.23.0, GOMAXPROCS=12
+BenchmarkForward/multilingual/threads=8/b1_s512_k4-12         	      10	 665733236 ns/op	       662.5 p50_ms	       754.8 p90_ms
+## round=3 checkpoint=multilingual side=python ort=1.23.0
+{"onnxruntime": "1.23.0", "model": "laya-multilingual-dynamo.onnx", "threads": 8, "graph_optimization_level": "GraphOptimizationLevel.ORT_ENABLE_ALL", "shape": "b1_s512_k4", "reps": 10, "load_ms": 649.1, "p50_ms": 777.6, "p90_ms": 1230.8}
+## round=3 checkpoint=multilingual side=go ort=1.30.0
+    bench_test.go:230: ONNX Runtime 1.30.0 (C API 23) from build/ort-1.30.0/onnxruntime-linux-x64-1.30.0/lib/libonnxruntime.so.1.30.0, GOMAXPROCS=12
+BenchmarkForward/multilingual/threads=8/b1_s512_k4-12         	      10	 671486207 ns/op	       656.9 p50_ms	       767.1 p90_ms
+## round=3 checkpoint=multilingual side=python ort=1.30.0
+{"onnxruntime": "1.30.0", "model": "laya-multilingual-dynamo.onnx", "threads": 8, "graph_optimization_level": "GraphOptimizationLevel.ORT_ENABLE_ALL", "shape": "b1_s512_k4", "reps": 10, "load_ms": 591.7, "p50_ms": 633.7, "p90_ms": 647.1}

@@ -246,6 +246,32 @@ every language switch. Building an ORT session from an already-downloaded ONNX f
 that — but at 1.4 GB resident apiece, holding all three costs about 3.3 GB, which is the real
 constraint on raising `max_loaded`.
 
+### Go or Python, ORT 1.23 or 1.30 — no difference beyond the noise
+
+An early cross-check recorded `english` at 1901 ms from Go on ORT 1.23.0 against 5064 ms from Python
+on ORT 1.30.0, a 2.7× gap, but only 1.1× on `multilingual`. It did not survive a controlled rerun
+(PLAN.md Task 6.8.3). The rerun ran both sides on both runtime versions at batch 1, 512 tokens and
+8 threads. It used four rounds per checkpoint, ordered as a balanced Latin square, so every
+configuration ran once in every position. Each cell waited for the package to cool, and the
+temperature and clock were logged before and after. Median p50 over the four rounds:
+
+| checkpoint     | Go + 1.23.0 | Python + 1.23.0 | Go + 1.30.0 | Python + 1.30.0 |
+| -------------- | ----------- | --------------- | ----------- | --------------- |
+| `english`      | 1975 ms     | 1828 ms         | 1879 ms     | 1727 ms         |
+| `multilingual` | 679 ms      | 649 ms          | 620 ms      | 626 ms          |
+
+The widest spread is 1.14× (`english`) and 1.09× (`multilingual`). Run order alone moves
+`english` by as much: the median of the cells run first in their round is 1706 ms, against 1960 ms
+for those run third. What is left between configurations is therefore not separable from the
+machine's noise. Nothing here comes near 2.7×, so neither the binding nor the runtime version costs
+anything worth chasing. The measurement cannot rank the four configurations beyond that.
+
+A single back-to-back pair is not a comparison on this laptop. In the first, uncontrolled run,
+Python on 1.30.0 took 3800 ms on `english` against 2174 ms for Go on 1.30.0 in the same round.
+The Python side is `scripts/bench_ort.py`, which builds `BenchmarkForward`'s exact inputs. The
+transcripts are `docs/benchmarks/raw/ort-version-gap-balanced.txt` (the evidence) and
+`ort-version-gap.txt` (the first, fixed-order run).
+
 ### What this means
 
 **CPU inference is 9–43× slower than the T4 figure, and that range is honest rather than evasive:**

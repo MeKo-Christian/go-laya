@@ -22,18 +22,18 @@ safetensors backend landing later behind the same interface.
 Tick a box only when the work is committed and `just check` is green. `[~]` means started but
 not finished; keep it rare. A milestone is done when every task box under it is ticked.
 
-| Milestone                                                              | Delivers                                         | Status                                                           |
-| ---------------------------------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------- |
-| [M0 — Scaffolding](#m0--scaffolding)                                   | Go module, tooling, CI, frozen Python, `Version` | ✅ 5/6 (0.1 skipped)                                             |
-| [Spikes S1–S3](#3-spikes--do-these-before-writing-library-code)        | ONNX export, binding choice, latency floor       | 🟢 S1–S3 done                                                    |
-| [M1 — Reference harness](#m1--the-python-reference-harness)            | `testdata/*.jsonl` golden vectors                | ✅ done                                                          |
-| [M2 — Tier-1 core](#m2--tier-1-core-no-ml-runtime-620-lines-of-python) | `jsonx`, `lang`, `mailtext`, `presets`, render   | 🟢 2.1–2.4 done; 2.5.4 partial                                   |
-| [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ✅ done                                                          |
-| [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | 🟢 4.1–4.5 done; 4.3.9/4.5.5 open                                |
-| [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ✅ done                                                          |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | 🟡 6.1–6.4, 6.6, 6.10 done bar 6.3.2 (CUDA); 6.5.1, 6.8.1–2 done |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started                                                   |
-| [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred                                                      |
+| Milestone                                                              | Delivers                                         | Status                                                       |
+| ---------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------ |
+| [M0 — Scaffolding](#m0--scaffolding)                                   | Go module, tooling, CI, frozen Python, `Version` | ✅ 5/6 (0.1 skipped)                                         |
+| [Spikes S1–S3](#3-spikes--do-these-before-writing-library-code)        | ONNX export, binding choice, latency floor       | 🟢 S1–S3 done                                                |
+| [M1 — Reference harness](#m1--the-python-reference-harness)            | `testdata/*.jsonl` golden vectors                | ✅ done                                                      |
+| [M2 — Tier-1 core](#m2--tier-1-core-no-ml-runtime-620-lines-of-python) | `jsonx`, `lang`, `mailtext`, `presets`, render   | 🟢 2.1–2.4 done; 2.5.4 partial                               |
+| [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ✅ done                                                      |
+| [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | 🟢 4.1–4.5 done; 4.3.9/4.5.5 open                            |
+| [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ✅ done                                                      |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | 🟡 6.1–6.4, 6.6, 6.8, 6.10 done bar 6.3.2 (CUDA); 6.5.1 done |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started                                               |
+| [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred                                                  |
 
 **Critical path:** M1 ✅ → M2 (`jsonx` first) → M4 → M5 → M6 → M7, with M3 off the path. _(Reordered
 on the 2026-09-20 review.)_ _(2026-09-20: M4 was in the event run **in parallel** with M2 from `jsonx`
@@ -551,6 +551,15 @@ same ONNX Runtime does the arithmetic in both — and it is not explained: the o
 is the runtime version, since the binding speaks C API 23 only while the reference environment has
 1.30.0. It favours our path, so it threatens no claim here, but a 2.7× gap on ModernBERT-large and
 1.1× on mmBERT-base is a shape worth understanding. **Task 6.8** is where it gets chased.
+
+> **(2026-09-26) — the 2.7× did not reproduce (Task 6.8.3).** A counterbalanced rerun (Latin-square
+> order, cooled and logged per cell) puts Go and Python on both ORT 1.23.0 and 1.30.0 within 1.14× of
+> each other. Median p50: `english` 1727–1975 ms, `multilingual` 620–679 ms. Run order alone moves
+> `english` by about 15%. The `5064 ms` above has no surviving script. It equals, to the
+> millisecond, the `multilingual` batch-8 p50 in `docs/benchmarks/raw/bench-onnx-sweep-a.txt:61`,
+> so it may be a transcription slip. It may also be one throttled run: a first, fixed-order rerun
+> produced a 1.75× gap of its own (see `BENCHMARKS.md`). The conclusion drawn from it still
+> stands: the binding costs nothing.
 
 **Exit criteria**
 
@@ -2068,11 +2077,31 @@ Spike S2 proved one forward pass, on one checkpoint, at one shape. M6 owes the r
       case. Giving multilingual english's PyTorch tolerance fails three of its four shapes.
       `goldenTol` (6.3.1) stays as it is: at `logits.jsonl`'s real prompts, multilingual measured
       no looser, and these are random-token inputs.
-- [ ] **6.8.3** _(new, 2026-09-20)_ Explain the S3 timing gap: at a matched thread count and thermal
+- [x] **6.8.3** _(new, 2026-09-20)_ Explain the S3 timing gap: at a matched thread count and thermal
       state the same graph ran 2.7× faster under ORT 1.23.0 from Go than under ORT 1.30.0 from
       Python on `english`, but only 1.1× faster on `multilingual`. Numerics agreed to 3.8e-06, so
       this is a kernel-selection or version difference, not a correctness one — but it is the kind of
       difference that turns into a tolerance surprise when the pinned runtime moves (Task 6.6).
+      (2026-09-26) — **the 2.7× does not reproduce. No configuration differs from another by more
+      than the machine's own noise, so there is no version or binding gap to explain.** The
+      rerun is a 2×2 of {Go, Python} × {ORT 1.23.0, ORT 1.30.0} at batch 1, 512 tokens and
+      8 threads. - Go loaded the official 1.30.0 library, which 6.6.2 accepts, after checking its sha256
+      against GitHub's digest. - Python ran from a scratch venv with `onnxruntime==1.23.0` alongside `.venv-ref`, through
+      the new `scripts/bench_ort.py`, which builds `BenchmarkForward`'s exact inputs and quantile. - A first run used a fixed order within each round and recorded no thermal state. _(PR #20
+      review)_ — so order and heat were confounded with the configuration. The evidence is now
+      a counterbalanced rerun: four rounds per checkpoint in a balanced 4×4 Latin square, so
+      every configuration runs once in every position and every ordered pair of neighbours
+      occurs once. Each cell cooled to ≤ 70 °C (capped at 120 s; cells started at 62–77 °C),
+      and the package temperature, mean clock and load were logged before and after. - Median p50 over the four rounds, in ms: `english` Go 1975 / 1879 and Python 1828 / 1727
+      (ORT 1.23.0 / 1.30.0); `multilingual` Go 679 / 620 and Python 649 / 626. - The widest spread is 1.14× and 1.09×, while run position alone moves `english` by 15%
+      (median 1706 ms first against 1960 ms third). The design cancels that effect rather than
+      removing it, so the remaining gaps cannot be told apart from noise, and the four
+      configurations cannot be ranked. - The first run's round 1 showed a 1.75× gap on its own (Python 3800 against Go 2174 on
+      `english`, both on 1.30.0). That is how a single back-to-back pair could have produced
+      2.7×. - The optimised-graph diff the plan kept in reserve was not needed. - Transcripts: `docs/benchmarks/raw/ort-version-gap-balanced.txt` (the evidence) and
+      `ort-version-gap.txt` (the first run). The write-up is in `BENCHMARKS.md` and under S3's
+      table. - For 6.6: moving the pin from 1.23.0 to 1.30.0 shows no speed cost here larger than the
+      noise.
 
 **Task 6.9: int8 dynamic quantization — latency and calibration in one task.** _(new, 2026-09-20)_
 Carries Spike S3.4 and S3.5 forward. S3 measured 0.6–1.9 s per question on CPU and the condition for

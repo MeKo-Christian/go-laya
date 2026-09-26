@@ -10,6 +10,7 @@ Python in `original/`.
 | `export_onnx.py`                  | Export the whole `DecisionModel` graph (encoder + head) to ONNX                        | Spike S1   |
 | `export_onnx.py --fixture`        | One forward pass with inputs, Python-ORT and PyTorch outputs, for the Go binding tests | Spike S2   |
 | `export_onnx.py --fixture-matrix` | The same at each of S1's four shapes, one file per checkpoint, for `TestForwardMatrix` | Task 6.8.1 |
+| `bench_ort.py`                    | One forward pass timed through Python's onnxruntime, with `BenchmarkForward`'s inputs  | Task 6.8.3 |
 | `dump_python_parity.py`           | Generate the golden vectors under `testdata/`                                          | Task 1.3   |
 | `crosscheck_transformers.py`      | Diff a transformers 4.x build against the pinned 5.17.0                                | Task 1.6   |
 | `build_corpus.py`                 | Assemble the ~157k-line tokenizer differential corpus into `build/corpus/`             | Task 4.5.3 |
