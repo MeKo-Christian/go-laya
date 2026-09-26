@@ -1994,7 +1994,13 @@ nothing pins the `.so` itself. No in-house repo solves this; `go-pocket-tts` is 
       `cmd/laya-ort`. Falling through on a set-but-missing variable fails both of those cases.
       **Widened by 6.6.1:** 6.6.1's verified download now sits between the variables and the
       candidates, and a download that fails its hash is an error. A platform without a download
-      falls through.
+      falls through. _(PR #18 review)_ — only "not downloaded" and "no download for this
+      platform" fall through now. Any other cache error, an unreadable file for one, is returned
+      rather than loading an unpinned system library (case `unreadable download is an error`).
+      With no cache directory at all, `Cached` reports `ErrNotCached`, as the
+      `no cache directory` case of `TestCached` shows. `laya-ort` lost its `-dir` flag:
+      `LAYA_CACHE` chooses the cache for the command and for `Open` alike, so a download can no
+      longer land where `Open` never looks.
 
 **Task 6.7: Decide the Windows and js/wasm story for the ONNX backend.** _(new, 2026-09-20)_
 `release.yml` builds `windows/amd64`, but `go-pocket-tts` stubs purego out on Windows and js/wasm
