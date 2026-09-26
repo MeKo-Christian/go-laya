@@ -31,6 +31,10 @@ type Backend struct {
 	env    *ort.Env
 	sess   *ort.Session
 	device string
+
+	// actWidth is the width act_logits must have: Options.ActWidth, else
+	// the graph's declared width, else anyWidth.
+	actWidth int
 }
 
 var _ backend.Backend = (*Backend)(nil)
@@ -44,8 +48,8 @@ var _ backend.Backend = (*Backend)(nil)
 // well-formed, an IR version and opset the pinned runtime supports, and all
 // external data in regular files beside it. The session's graph must then
 // declare exactly the five inputs and two outputs scripts/export_onnx.py
-// writes, in any order. Either failure is an error wrapping
-// backend.ErrIncompatibleCheckpoint.
+// writes, in any order, and a static act_logits width must be opts.ActWidth.
+// Each failure is an error wrapping backend.ErrIncompatibleCheckpoint.
 //
 // opts.Device picks the execution provider; see Options.Device for when that
 // falls back to the CPU and warns.
@@ -64,13 +68,20 @@ func Open(modelPath string, opts Options) (*Backend, error) {
 	if _, err := os.Stat(modelPath); err != nil {
 		return nil, fmt.Errorf("onnx backend: model: %w", err)
 	}
-	if _, err := onnxheader.Read(modelPath); err != nil {
+	header, err := onnxheader.Read(modelPath)
+	if err != nil {
 		return nil, fmt.Errorf("onnx backend: %w", err)
+	}
+	actWidth, err := checkHeadWidth(header.Outputs, opts.ActWidth)
+	if err != nil {
+		return nil, fmt.Errorf("onnx backend: %s: %w", modelPath, err)
+	}
+	if opts.ActWidth > 0 {
+		actWidth = opts.ActWidth
 	}
 
 	lib := opts.Library
 	if lib == "" {
-		var err error
 		if lib, err = findORTLibrary(); err != nil {
 			return nil, fmt.Errorf("onnx backend: %w", err)
 		}
@@ -80,7 +91,7 @@ func Open(modelPath string, opts Options) (*Backend, error) {
 	if err != nil {
 		return nil, fmt.Errorf("onnx backend: load %s (C API %d): %w", lib, APIVersion, err)
 	}
-	b := &Backend{rt: rt}
+	b := &Backend{rt: rt, actWidth: actWidth}
 
 	if b.env, err = rt.NewEnv("laya", ort.LoggingLevelWarning); err != nil {
 		return nil, errors.Join(fmt.Errorf("onnx backend: env: %w", err), b.Close())
@@ -108,7 +119,9 @@ func (b *Backend) Device() string {
 }
 
 // Forward runs one forward pass and returns logits (n×kmax) and act_logits
-// (n×len(act_costs)+1).
+// (n×len(act_costs)+1). An output of another width is an error wrapping
+// backend.ErrIncompatibleCheckpoint: logits must be as wide as in.MarkerPos,
+// and act_logits as wide as Options.ActWidth or the graph declares.
 //
 // ctx is checked before and after the pass but cannot interrupt it: the
 // binding's Session.Run takes a ctx and never reads it (it passes NULL
@@ -166,16 +179,22 @@ func (b *Backend) Forward(ctx context.Context, in backend.Batch) (logits, act []
 		return nil, nil, err
 	}
 
-	if logits, err = output(outputs, "logits", f.rows); err != nil {
+	return heads(outputs, f.rows, f.k, b.actWidth)
+}
+
+// heads reads the two outputs of a pass over rows questions: logits k wide,
+// the batch's kmax, and act_logits actWidth wide.
+func heads(outputs map[string]*ort.Value, rows, k, actWidth int) (logits, act [][]float32, err error) {
+	if logits, err = output(outputs, "logits", rows, k); err != nil {
 		return nil, nil, err
 	}
-	if act, err = output(outputs, "act_logits", f.rows); err != nil {
+	if act, err = output(outputs, "act_logits", rows, actWidth); err != nil {
 		return nil, nil, err
 	}
 	return logits, act, nil
 }
 
-func output(outputs map[string]*ort.Value, name string, rows int) ([][]float32, error) {
+func output(outputs map[string]*ort.Value, name string, rows, width int) ([][]float32, error) {
 	v, ok := outputs[name]
 	if !ok {
 		return nil, fmt.Errorf("onnx backend: run returned no %s", name)
@@ -184,7 +203,7 @@ func output(outputs map[string]*ort.Value, name string, rows int) ([][]float32, 
 	if err != nil {
 		return nil, fmt.Errorf("onnx backend: %s: %w", name, err)
 	}
-	return unflatten(name, data, shape, rows)
+	return unflatten(name, data, shape, rows, width)
 }
 
 // Close releases the session, the environment and the runtime, in that order.

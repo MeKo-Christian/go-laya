@@ -3,6 +3,7 @@ package onnx
 import (
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/MeKo-Christian/go-laya/backend"
@@ -72,7 +73,7 @@ func TestFlattenRejectsMalformed(t *testing.T) {
 }
 
 func TestUnflatten(t *testing.T) {
-	got, err := unflatten("logits", []float32{1, 2, 3, 4, 5, 6}, []int64{2, 3}, 2)
+	got, err := unflatten("logits", []float32{1, 2, 3, 4, 5, 6}, []int64{2, 3}, 2, 3)
 	if err != nil {
 		t.Fatalf("unflatten: %v", err)
 	}
@@ -95,8 +96,30 @@ func TestUnflatten(t *testing.T) {
 		"short buffer":   {[]float32{1, 2, 3}, []int64{2, 2}},
 		"negative width": {nil, []int64{2, -1}},
 	} {
-		if _, err := unflatten("logits", tc.data, tc.shape, 2); err == nil {
+		if _, err := unflatten("logits", tc.data, tc.shape, 2, anyWidth); err == nil {
 			t.Errorf("%s: unflatten accepted shape %v over %d values", name, tc.shape, len(tc.data))
+		}
+	}
+}
+
+// A graph whose output is not as wide as the batch and the config say is not
+// a malformed run but the wrong checkpoint: logits must be kmax wide and
+// act_logits len(act_costs)+1 wide (PLAN.md 6.4.5). anyWidth skips the
+// check for a width nothing pinned.
+func TestUnflattenWidth(t *testing.T) {
+	data := []float32{1, 2, 3, 4, 5, 6}
+	if _, err := unflatten("act_logits", data, []int64{2, 3}, 2, anyWidth); err != nil {
+		t.Fatalf("anyWidth: %v", err)
+	}
+	for _, name := range []string{"logits", "act_logits"} {
+		_, err := unflatten(name, data, []int64{2, 3}, 2, 2)
+		if !errors.Is(err, backend.ErrIncompatibleCheckpoint) {
+			t.Fatalf("%s 3 wide, want 2: %v, want ErrIncompatibleCheckpoint", name, err)
+		}
+		for _, w := range []string{name, "[2 3]", "2 wide"} {
+			if !strings.Contains(err.Error(), w) {
+				t.Errorf("error %q does not mention %q", err, w)
+			}
 		}
 	}
 }
