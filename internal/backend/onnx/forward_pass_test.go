@@ -1,14 +1,12 @@
-//go:build !windows && !js && !wasm
+//go:build !android && !ios && ((darwin && (amd64 || arm64)) || (linux && (amd64 || arm64 || loong64)) || (netbsd && (amd64 || arm64)))
 
-// Spike S2: one forward pass of the S1 export through github.com/shota3506/onnxruntime-purego.
+// One forward pass of the S1 export through github.com/shota3506/onnxruntime-purego (Spike S2).
 //
-// The build constraint is not caution about purego -- it supports Windows -- but about
-// what has actually been exercised. go-pocket-tts stubs the binding out on Windows and
-// js/wasm entirely (internal/onnx/runner_windows.go, runner_wasm.go), so claiming those
-// platforms here would be a claim no command backs. Keeping the constraint on the test
-// file also keeps the binding out of `GOOS=windows go build ./...`.
+// The build constraint is backend.go's: the targets the binding compiles on. Keeping it on
+// the test file keeps the binding out of `GOOS=windows go build ./...` and every other stub
+// target.
 
-package onnxspike
+package onnx
 
 import (
 	"context"
@@ -22,10 +20,6 @@ import (
 
 	ort "github.com/shota3506/onnxruntime-purego/onnxruntime"
 )
-
-// ortAPIVersion is the only C API version the binding implements
-// (onnxruntime/runtime.go: `supportedAPIVersions = []uint32{23}`), i.e. ONNX Runtime 1.23.x.
-const ortAPIVersion = 23
 
 // Tolerances for the fixture comparison, scaled -- see maxScaledDiff.
 //
@@ -94,9 +88,9 @@ func requireORTLibrary(t testing.TB) string {
 func newRuntime(t testing.TB, lib string) *ort.Runtime {
 	t.Helper()
 
-	rt, err := ort.NewRuntime(lib, ortAPIVersion)
+	rt, err := ort.NewRuntime(lib, APIVersion)
 	if err != nil {
-		t.Fatalf("NewRuntime(%q, %d): %v", lib, ortAPIVersion, err)
+		t.Fatalf("NewRuntime(%q, %d): %v", lib, APIVersion, err)
 	}
 
 	t.Cleanup(func() {
@@ -207,7 +201,7 @@ func TestForwardPass(t *testing.T) {
 
 	rt := newRuntime(t, lib)
 
-	env, err := rt.NewEnv("laya-onnxspike", ort.LoggingLevelWarning)
+	env, err := rt.NewEnv("laya-onnx", ort.LoggingLevelWarning)
 	if err != nil {
 		t.Fatalf("NewEnv: %v", err)
 	}
@@ -288,7 +282,7 @@ func outputNames(m map[string]*ort.Value) []string {
 
 // finalizerEnv opts into the subtest that abandons values instead of closing them.
 // That subtest is a known-failing reproduction, not an assertion -- see TestValueCleanup.
-const finalizerEnv = "LAYA_ONNXSPIKE_FINALIZER"
+const finalizerEnv = "LAYA_ORT_FINALIZER"
 
 // TestValueCleanup is S2.2: does a finalizer defect reproduce under -race, in a loop?
 //
