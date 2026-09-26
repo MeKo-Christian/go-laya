@@ -128,20 +128,29 @@ type Client struct {
 // $LAYA_CACHE and no user cache directory); one that is there but differs is
 // ErrHashMismatch. Any other error, such as an unreadable cache, is returned
 // as it is.
+//
+// Every component below the cache root is Lstat'ed, not just the file: a
+// symlinked directory on the way would put the library outside the cache.
 func (c *Client) Cached(rel Release) (string, error) {
-	lib, err := c.path(rel)
+	root, parts, err := c.path(rel)
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", ErrNotCached, err)
 	}
-	fi, err := os.Lstat(lib)
-	if errors.Is(err, fs.ErrNotExist) {
-		return "", fmt.Errorf("%w: %s", ErrNotCached, lib)
-	}
-	if err != nil {
-		return "", err
-	}
-	if !fi.Mode().IsRegular() {
-		return "", fmt.Errorf("%w: %s is not a regular file", ErrHashMismatch, lib)
+	lib := root
+	for i, part := range parts {
+		lib = filepath.Join(lib, part)
+		fi, err := os.Lstat(lib)
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("%w: %s", ErrNotCached, lib)
+		}
+		if err != nil {
+			return "", err
+		}
+		if last := i == len(parts)-1; !last && !fi.IsDir() {
+			return "", fmt.Errorf("%w: %s is not a directory", ErrHashMismatch, lib)
+		} else if last && !fi.Mode().IsRegular() {
+			return "", fmt.Errorf("%w: %s is not a regular file", ErrHashMismatch, lib)
+		}
 	}
 	// #nosec G304 -- lib is built from the cache root and the pinned table, never from remote input.
 	f, err := os.Open(lib)
@@ -164,12 +173,14 @@ func (c *Client) Download(ctx context.Context, rel Release) (string, error) {
 	if err == nil || !errors.Is(err, ErrNotCached) {
 		return lib, err
 	}
-	if lib, err = c.path(rel); err != nil {
+	root, parts, err := c.path(rel)
+	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(filepath.Dir(lib), 0o750); err != nil {
+	if err := cacheDirs(root, parts[:len(parts)-1]); err != nil {
 		return "", err
 	}
+	lib = filepath.Join(append([]string{root}, parts...)...)
 
 	archive, err := c.fetch(ctx, rel, filepath.Dir(lib))
 	if err != nil {
@@ -178,23 +189,47 @@ func (c *Client) Download(ctx context.Context, rel Release) (string, error) {
 	defer func() { _ = os.Remove(archive.Name()) }()
 	defer archive.Close()
 
-	if err := extract(archive, rel, lib); err != nil {
+	if err := extract(ctx, archive, rel, lib); err != nil {
 		return "", err
 	}
 	return lib, nil
 }
 
-// path is where rel's library lives in the cache:
-// Dir/onnxruntime/<archive name without .tgz>/<library file name>.
-func (c *Client) path(rel Release) (string, error) {
-	dir := c.Dir
-	if dir == "" {
-		var err error
-		if dir, err = hub.DefaultDir(); err != nil {
-			return "", err
+// path is where rel's library lives in the cache, as the cache root and the
+// components below it: onnxruntime, the archive name without .tgz, and the
+// library's file name.
+func (c *Client) path(rel Release) (root string, parts []string, err error) {
+	root = c.Dir
+	if root == "" {
+		if root, err = hub.DefaultDir(); err != nil {
+			return "", nil, err
 		}
 	}
-	return filepath.Join(dir, "onnxruntime", strings.TrimSuffix(rel.Archive, ".tgz"), pathpkg.Base(rel.Member)), nil
+	return root, []string{"onnxruntime", strings.TrimSuffix(rel.Archive, ".tgz"), pathpkg.Base(rel.Member)}, nil
+}
+
+// cacheDirs creates dirs below root one at a time and fails on any that is not
+// a real directory: MkdirAll would follow a symlinked one and write outside the
+// cache (as internal/hub's cacheDir guards against too).
+func cacheDirs(root string, dirs []string) error {
+	if err := os.MkdirAll(root, 0o750); err != nil {
+		return err
+	}
+	p := root
+	for _, d := range dirs {
+		p = filepath.Join(p, d)
+		if err := os.Mkdir(p, 0o750); err != nil && !errors.Is(err, fs.ErrExist) {
+			return err
+		}
+		fi, err := os.Lstat(p)
+		if err != nil {
+			return err
+		}
+		if !fi.IsDir() {
+			return fmt.Errorf("%w: %s is not a directory", ErrHashMismatch, p)
+		}
+	}
+	return nil
 }
 
 // fetch downloads rel's archive into a temporary file in dir and returns it
@@ -251,7 +286,7 @@ func (c *Client) fetch(ctx context.Context, rel Release, dir string) (*os.File, 
 
 // extract writes rel.Member from the verified archive to lib, by rename after
 // its size and sha256 matched, so lib never exists half-written.
-func extract(archive io.Reader, rel Release, lib string) error {
+func extract(ctx context.Context, archive io.Reader, rel Release, lib string) error {
 	gz, err := gzip.NewReader(archive)
 	if err != nil {
 		return fmt.Errorf("%w: %s: gzip: %w", ErrBadArchive, rel.Archive, err)
@@ -275,18 +310,26 @@ func extract(archive io.Reader, rel Release, lib string) error {
 		if hdr.Size != rel.LibSize {
 			return fmt.Errorf("%w: %s is %d bytes, pinned %d", ErrBadArchive, rel.Member, hdr.Size, rel.LibSize)
 		}
-		return writeVerified(tr, rel, lib)
+		return writeVerified(ctx, tr, rel, lib)
 	}
 }
 
-func writeVerified(r io.Reader, rel Release, lib string) error {
+// writeVerified copies the member to a temporary file beside lib, syncs it and
+// renames it into place only if its hash matched and ctx is still live, as
+// internal/hub's store does. A library renamed before it reached the disk could
+// survive a crash half-written, and Download refuses to replace a cached copy
+// that fails its hash.
+func writeVerified(ctx context.Context, r io.Reader, rel Release, lib string) error {
 	tmp, err := os.CreateTemp(filepath.Dir(lib), ".partial-*")
 	if err != nil {
 		return err
 	}
 	defer func() { _ = os.Remove(tmp.Name()) }() // a no-op once renamed
 	h := sha256.New()
-	_, err = io.Copy(io.MultiWriter(tmp, h), io.LimitReader(r, rel.LibSize))
+	_, err = io.Copy(io.MultiWriter(tmp, h), ctxReader{ctx, io.LimitReader(r, rel.LibSize)})
+	if err == nil {
+		err = tmp.Sync()
+	}
 	if closeErr := tmp.Close(); err == nil {
 		err = closeErr
 	}
@@ -296,7 +339,24 @@ func writeVerified(r io.Reader, rel Release, lib string) error {
 	if got := hex.EncodeToString(h.Sum(nil)); got != rel.LibSHA256 {
 		return fmt.Errorf("%w: %s: sha256 %s, pinned %s", ErrHashMismatch, rel.Member, got, rel.LibSHA256)
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return os.Rename(tmp.Name(), lib)
+}
+
+// ctxReader stops a copy once ctx is done, so a cancelled Download stops
+// extracting as well as downloading.
+type ctxReader struct {
+	ctx context.Context //nolint:containedctx // lives for one io.Copy
+	r   io.Reader
+}
+
+func (c ctxReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
 }
 
 // verify reads all of r and requires exactly size bytes hashing to want.

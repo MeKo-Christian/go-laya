@@ -329,6 +329,70 @@ func TestCached(t *testing.T) {
 	})
 }
 
+// TestSymlinkedCacheDir: a symlink anywhere below the cache root would move
+// the library outside the cache, so neither Cached nor Download follows one --
+// not for the final file only, but for every directory on the way to it.
+func TestSymlinkedCacheDir(t *testing.T) {
+	archive := tgz(t, entry{name: member, body: libBytes})
+	rel := release(archive)
+	srv, _ := server(t, rel.Archive, archive)
+
+	for _, link := range []string{"onnxruntime", filepath.Join("onnxruntime", "onnxruntime-test-1.23.0")} {
+		t.Run(link, func(t *testing.T) {
+			// A complete, genuine download elsewhere, which the symlink points at.
+			outside := &Client{BaseURL: srv.URL, Dir: t.TempDir()}
+			if _, err := outside.Download(context.Background(), rel); err != nil {
+				t.Fatal(err)
+			}
+			c := &Client{BaseURL: srv.URL, Dir: t.TempDir()}
+			if err := os.MkdirAll(filepath.Dir(filepath.Join(c.Dir, link)), 0o750); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(outside.Dir, link), filepath.Join(c.Dir, link)); err != nil {
+				t.Fatal(err)
+			}
+
+			if lib, err := c.Cached(rel); !errors.Is(err, ErrHashMismatch) || !strings.Contains(err.Error(), "not a directory") {
+				t.Fatalf("Cached = %q, %v; want ErrHashMismatch naming the symlinked directory", lib, err)
+			}
+			if lib, err := c.Download(context.Background(), rel); err == nil {
+				t.Fatalf("Download through a symlinked %s = %q, want an error", link, lib)
+			}
+
+			// Nor does a fresh download write through one: with the target
+			// emptied, Download must not recreate the library over there.
+			if err := os.RemoveAll(filepath.Join(outside.Dir, "onnxruntime")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Join(outside.Dir, link), 0o750); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.Download(context.Background(), rel); err == nil {
+				t.Fatal("Download wrote through a symlinked cache directory")
+			}
+			if left := files(t, outside.Dir); len(left) != 0 {
+				t.Fatalf("Download wrote %v outside the cache", left)
+			}
+		})
+	}
+}
+
+// TestExtractHonoursContext: once the archive is in, a cancelled context
+// still stops the library from being published (hub.store does the same).
+func TestExtractHonoursContext(t *testing.T) {
+	archive := tgz(t, entry{name: member, body: libBytes})
+	rel := release(archive)
+	lib := filepath.Join(t.TempDir(), "libonnxruntime.so.1.23.0")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := extract(ctx, bytes.NewReader(archive), rel, lib); !errors.Is(err, context.Canceled) {
+		t.Fatalf("extract = %v, want context.Canceled", err)
+	}
+	if left := files(t, filepath.Dir(lib)); len(left) != 0 {
+		t.Fatalf("a cancelled extract left %v behind", left)
+	}
+}
+
 // TestPinned: the table covers exactly the platforms Microsoft publishes a
 // CPU archive for that the ONNX backend builds on, all at Version.
 func TestPinned(t *testing.T) {
