@@ -342,3 +342,42 @@ func TestDefaultLoaderReal(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 }
+
+// Task 7.2.2: the token goes to the Hub client, falling back to $HF_TOKEN as
+// `token or os.environ.get("HF_TOKEN")` does (router.py:159). The fallback is
+// read when the Router is built, as Python reads it in __init__.
+func TestRouterToken(t *testing.T) {
+	for _, tc := range []struct {
+		name, env, opt, want string
+	}{
+		{"none", "", "", ""},
+		{"env only", "hf_env", "", "hf_env"},
+		{"explicit", "", "hf_opt", "hf_opt"},
+		{"explicit wins", "hf_env", "hf_opt", "hf_opt"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HF_TOKEN", tc.env)
+			l, _, _ := stubbedLoader(t, t.TempDir(), WithRouterToken(tc.opt))
+			if l.hub.Token != tc.want {
+				t.Errorf("token = %q, want %q", l.hub.Token, tc.want)
+			}
+		})
+	}
+}
+
+// Task 7.2.2: the device reaches the backend unchanged. Validating it is the
+// backend's job (onnx.ErrUnknownDevice), and like Python's Agent
+// construction it happens at load time.
+func TestRouterDevice(t *testing.T) {
+	ck, graphs := t.TempDir(), t.TempDir()
+	writeCheckpoint(t, ck)
+	writeGraph(t, graphs, ModelEnglish)
+
+	l, calls, _ := stubbedLoader(t, graphs, WithRouterDevice("cuda:1"))
+	if _, err := l.load(context.Background(), ModelEnglish, ModelSpecFromString(ck)); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := (*calls)[0].opts.Device; got != "cuda:1" {
+		t.Errorf("Device = %q, want %q", got, "cuda:1")
+	}
+}

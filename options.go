@@ -18,6 +18,8 @@ type routerConfig struct {
 	loader            func(context.Context, string, ModelSpec) (Agent, error)
 	loaderSet         bool
 	onnxDir           string
+	device            string
+	token             string
 	overrides         map[string]ModelSpec
 	defaultModel      string
 	autoTaskDetection bool
@@ -142,6 +144,29 @@ func WithLoader(fn func(context.Context, string, ModelSpec) (Agent, error)) Rout
 	return func(c *routerConfig) error {
 		c.loader = fn
 		c.loaderSet = true
+		return nil
+	}
+}
+
+// WithRouterDevice is the device every agent the default loader builds runs
+// on: "cpu", "cuda", "cuda:N", "coreml", or "" / "auto" for the best one the
+// ONNX Runtime library offers (router.py:158). An unusable device falls back
+// to the CPU with a warning, and a name that is no device fails the load with
+// the backend's ErrUnknownDevice. A custom WithLoader ignores it.
+func WithRouterDevice(d string) RouterOption {
+	return func(c *routerConfig) error {
+		c.device = d
+		return nil
+	}
+}
+
+// WithRouterToken is the Hub token the default loader downloads with. Empty
+// falls back to $HF_TOKEN, read once by NewRouter, as upstream's
+// `token or os.environ.get("HF_TOKEN")` is (router.py:159). The token is sent
+// only to the Hub's own host. A custom WithLoader ignores it.
+func WithRouterToken(tok string) RouterOption {
+	return func(c *routerConfig) error {
+		c.token = tok
 		return nil
 	}
 }

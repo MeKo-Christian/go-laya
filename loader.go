@@ -32,6 +32,7 @@ const pinnedRevision = "1c5edc17a7acd8701df6fc341c0d179f1c62c982"
 type defaultLoader struct {
 	hub     *hub.Client
 	onnxDir string // "" is onnx/ under the laya cache, resolved per load
+	device  string
 
 	// snapshot and open are the network and the runtime. They are fields so
 	// that tests can stand in for both; CI has neither.
@@ -40,9 +41,14 @@ type defaultLoader struct {
 }
 
 func newDefaultLoader(cfg routerConfig) *defaultLoader {
+	token := cfg.token
+	if token == "" {
+		token = os.Getenv("HF_TOKEN")
+	}
 	l := &defaultLoader{
-		hub:     &hub.Client{},
+		hub:     &hub.Client{Token: token},
 		onnxDir: cfg.onnxDir,
+		device:  cfg.device,
 	}
 	if l.onnxDir == "" {
 		l.onnxDir = os.Getenv("LAYA_ONNX_DIR")
@@ -77,7 +83,7 @@ func (l *defaultLoader) load(ctx context.Context, name string, spec ModelSpec) (
 	if err != nil {
 		return nil, err
 	}
-	be, err := l.open(graph, onnx.Options{ActWidth: actWidth})
+	be, err := l.open(graph, onnx.Options{Device: l.device, ActWidth: actWidth})
 	if err != nil {
 		return nil, err
 	}
