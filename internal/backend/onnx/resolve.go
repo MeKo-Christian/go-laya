@@ -15,6 +15,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+
+	"github.com/MeKo-Christian/go-laya/internal/ortlib"
 )
 
 // errNotFound is returned when neither the environment nor the fallback
@@ -37,7 +40,20 @@ var ortLibraryCandidates = []string{
 	"/usr/local/lib/libonnxruntime.dylib",
 }
 
-// findORTLibrary resolves the ONNX Runtime shared library.
+// cachedORTLibrary is the pinned download cmd/laya-ort fetches into the laya
+// cache (Task 6.6.1), re-verified on every call. A variable so tests do not
+// depend on what the machine running them has downloaded.
+var cachedORTLibrary = func() (string, error) {
+	rel, err := ortlib.Pinned(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return "", err
+	}
+	return (&ortlib.Client{}).Cached(rel)
+}
+
+// findORTLibrary resolves the ONNX Runtime shared library: LAYA_ORT_LIB, then
+// ORT_LIBRARY_PATH, then the verified download in the laya cache, then the
+// platform's install locations.
 //
 // A variable that is set but points nowhere is an error rather than a fallback:
 // silently ignoring it would run against a different runtime than the caller
@@ -58,13 +74,25 @@ func findORTLibrary() (string, error) {
 		return path, nil
 	}
 
+	// Only "not downloaded" and "no download for this platform" fall through.
+	// Anything else -- a copy that fails its pinned hash, a cache that cannot
+	// be read -- is an error: falling through would quietly load an unpinned
+	// system library in place of the one the cache was meant to supply.
+	switch lib, err := cachedORTLibrary(); {
+	case err == nil:
+		return lib, nil
+	case !errors.Is(err, ortlib.ErrNotCached) && !errors.Is(err, ortlib.ErrUnsupportedPlatform):
+		return "", fmt.Errorf("downloaded ONNX Runtime: %w", err)
+	}
+
 	for _, path := range ortLibraryCandidates {
 		if _, err := os.Stat(path); err == nil {
 			return path, nil
 		}
 	}
 
-	return "", fmt.Errorf("ONNX Runtime shared library: %w (set %s)", errNotFound, ortLibraryEnv[0])
+	return "", fmt.Errorf("ONNX Runtime shared library: %w (set %s, or download the pinned %s with `go run github.com/MeKo-Christian/go-laya/cmd/laya-ort`)",
+		errNotFound, ortLibraryEnv[0], ortlib.Version)
 }
 
 // findModel resolves the .onnx file named by the fixture.

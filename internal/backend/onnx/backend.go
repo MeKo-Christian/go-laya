@@ -51,6 +51,10 @@ var _ backend.Backend = (*Backend)(nil)
 // writes, in any order, and a static act_logits width must be opts.ActWidth.
 // Each failure is an error wrapping backend.ErrIncompatibleCheckpoint.
 //
+// The library's own version string must be 1.23 or a later 1.x, read before
+// the binding initialises it; anything else, or a version that cannot be read,
+// is ErrRuntimeVersion.
+//
 // opts.Device picks the execution provider; see Options.Device for when that
 // falls back to the CPU and warns.
 func Open(modelPath string, opts Options) (*Backend, error) {
@@ -86,6 +90,15 @@ func Open(modelPath string, opts Options) (*Backend, error) {
 			return nil, fmt.Errorf("onnx backend: %w", err)
 		}
 	}
+
+	version, err := runtimeVersion(lib)
+	if err != nil {
+		return nil, fmt.Errorf("onnx backend: %w: %w", ErrRuntimeVersion, err)
+	}
+	if err := checkRuntimeVersion(version); err != nil {
+		return nil, fmt.Errorf("%w: %s", err, lib)
+	}
+	log.Debug("onnx backend: runtime", "library", lib, "version", version)
 
 	rt, err := ort.NewRuntime(lib, APIVersion)
 	if err != nil {
