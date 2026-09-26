@@ -33,7 +33,7 @@ func TestDeviceResolve(t *testing.T) {
 		{"auto spelled out", "auto", cpuBuild, deviceCPU, nil, false},
 		{"auto prefers coreml", "auto", coremlBuild, deviceCoreML, []string{"CoreML"}, false},
 		// CUDA is available in the GPU build but the binding cannot enable it
-		// (Task 6.3.6); auto skips it without a warning, since nobody asked.
+		// (Task B.3); auto skips it without a warning, since nobody asked.
 		{"auto skips unusable cuda", "auto", gpuBuild, deviceCPU, nil, false},
 		{"cpu", "cpu", gpuBuild, deviceCPU, nil, false},
 		{"coreml", "coreml", coremlBuild, deviceCoreML, []string{"CoreML"}, false},
@@ -59,7 +59,7 @@ func TestDeviceResolve(t *testing.T) {
 
 // TestDeviceRejectsUnknown: a typo must not silently run on the CPU, and names
 // are case-sensitive as torch.device's are. "mps" is
-// upstream's Apple device and a documented deviation (PLAN.md 7.5.3); CoreML
+// upstream's Apple device and a documented deviation (PLAN.md 7.6.3); CoreML
 // is the ONNX Runtime equivalent.
 func TestDeviceRejectsUnknown(t *testing.T) {
 	for _, req := range []string{"mps", "gpu", "cuda:", "cuda:-1", "cuda:x", "cpu:0", " cpu", "CPU", "CUDA"} {

@@ -55,7 +55,7 @@ func ECE(conf []float64, correct []bool, bins int) float64 {
 
 // Brier is the multi-class Brier score, the mean over answers of
 // Σ_j (p_j − [j = label])². Upstream has none: this is PLAN.md's definition
-// for Task 6.9.3, which compares int8 against fp32 calibration. Rows may
+// for Task B.5.3, which compares int8 against fp32 calibration. Rows may
 // differ in length, as a choice question's k does; a float32 softmax output
 // is widened by the caller. Both sums are numpy's pairwise order, matching
 // the generator's reference. An empty input is NaN, like ECE. A label outside

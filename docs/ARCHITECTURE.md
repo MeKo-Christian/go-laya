@@ -158,10 +158,10 @@ all in NFC on English/typed-decisions. `tokenizers` 0.23.2's Rust tables lack th
 combining class of 108 codepoints assigned in Unicode 11–15. Go and CPython agree with each other,
 so the oracle is the outlier. No natural text, vocabulary entry or UI string in the corpus reaches
 it, and multilingual (no NFC) cannot. `scripts/probe_ccc.py` enumerates the set. Whether to
-reproduce the Rust tables is PLAN Task 4.5.5.
+reproduce the Rust tables is PLAN Task B.2.
 
 **Cost.** `Open`: english 68 ms / 19.6 MB, multilingual 0.6–1.2 s / 207 MB (the 34 MB JSON
-decode, PLAN Task 4.3.9). `Encode`: 191–456 µs.
+decode, PLAN Task B.1). `Encode`: 191–456 µs.
 
 ## 4. Prompt assembly
 
@@ -272,7 +272,7 @@ Each of these gives a plausible wrong answer rather than an error if done the ob
   verified on all 2^32 inputs. The fixtures record `"simd": "X86_V3"`, and the generator refuses
   other targets, because a host without FMA gives different reference numbers.
 - **The act head is torch, not numpy.** `act_probability` comes from torch's float32 softmax
-  (ATen's exp), so `exp32` does not make it bit-exact (PLAN Task 7.2.10).
+  (ATen's exp), so `exp32` does not make it bit-exact (PLAN Task 7.3.10).
 - **`p.argmax()` is the first max.**
 
 ## 8. Golden corpus

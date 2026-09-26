@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Probe the pinned tokenizer's canonical combining classes (PLAN.md task 4.5.5).
+"""Probe the pinned tokenizer's canonical combining classes (PLAN.md task B.2).
 
 Task 4.5.3's differential found 85 corpus lines where this package's NFC and the
 Python oracle's disagree. This script isolates the cause so the disagreement is a
