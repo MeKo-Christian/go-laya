@@ -2,8 +2,7 @@
 
 > Referenced from `PLAN.md` §7. The type definitions the port targets, and the decisions that resolve
 > Python's dynamic typing into explicit Go types. **This file is the type appendix; `PLAN.md` wins on
-> any conflict** — in particular §2 of the plan owns the package layout, which used to be duplicated
-> here and drifted within a day (review of 2026-09-20).
+> any conflict.** The package layout is owned by `docs/ARCHITECTURE.md` §2, not duplicated here.
 
 ## Return-value shapes to reproduce
 
@@ -58,7 +57,7 @@
 
 ### 3.3 Package layout
 
-See `PLAN.md` §2 — the single owner of the layout. In short: module `github.com/MeKo-Christian/go-laya`;
+See `docs/ARCHITECTURE.md` §2 — the single owner of the layout. In short: module `github.com/MeKo-Christian/go-laya`;
 public `lang/`, `mailtext/`, `presets/`, `jsonx/`, `question/`, `tokenizer/` and `backend/` (D9: the
 `Backend` interface and `Batch` struct, zero dependencies); `internal/prompt`, `internal/calib`,
 `internal/hub`, `internal/backend/onnx`, `internal/golden`. The `Obj` type below lives in `jsonx/`,

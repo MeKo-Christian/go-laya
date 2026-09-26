@@ -137,7 +137,7 @@ func keptLines(text string) []string {
 // For n < 9 the n-8 term is negative, the min picks it and the max clamps the
 // start to 1 -- so a *short* body is scanned almost in full while a long one is
 // only scanned from 60% on. That is upstream's behaviour and reproducing it is
-// the point (invariant #70, PLAN.md:777-783).
+// the point (invariant #70, PLAN.md Task 1.3.8).
 func signatureCut(lines []string) int {
 	n := len(lines)
 	start := max(1, min(int(float64(n)*0.6), n-8))
