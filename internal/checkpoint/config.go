@@ -32,6 +32,13 @@ type Config struct {
 	fields map[string]json.RawMessage
 }
 
+// Field returns the raw JSON of the top-level key, and whether it is present.
+// The result is a copy; writing to it does not change the Config.
+func (c *Config) Field(key string) (json.RawMessage, bool) {
+	v, ok := c.fields[key]
+	return bytes.Clone(v), ok
+}
+
 // LoadConfig reads dir's rl_agent_config.json and requires the keys
 // "encoder" and "head_layers" to be present, whatever their value, as
 // `k not in cfg` does (agent.py:51-57). Every failure wraps

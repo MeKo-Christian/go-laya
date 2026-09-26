@@ -121,3 +121,32 @@ func TestLoadConfigShipped(t *testing.T) {
 		})
 	}
 }
+
+// Field hands a caller the raw JSON of one top-level key, so later checks
+// (act_costs for 6.4.5, the temperature tables for M7) need not re-read the
+// file, and it cannot be used to change what the Config holds.
+func TestConfigField(t *testing.T) {
+	cfg, err := LoadConfig(writeConfig(t, `{"encoder":null,"head_layers":2,"act_costs":{"escalate":0.5}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]string{
+		"head_layers": `2`,
+		"act_costs":   `{"escalate":0.5}`,
+		"encoder":     `null`,
+	} {
+		got, ok := cfg.Field(key)
+		if !ok || string(got) != want {
+			t.Errorf("Field(%q) = %s, %v; want %s, true", key, got, ok, want)
+		}
+	}
+	if got, ok := cfg.Field("training"); ok {
+		t.Errorf("Field(%q) = %s, true; want absent", "training", got)
+	}
+
+	got, _ := cfg.Field("head_layers")
+	got[0] = '9'
+	if again, _ := cfg.Field("head_layers"); string(again) != `2` {
+		t.Errorf("writing to Field's result changed the Config: now %s", again)
+	}
+}
