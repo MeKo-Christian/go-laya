@@ -286,11 +286,11 @@ func TestRouterMaxLoadedClampsToOne(t *testing.T) {
 	}
 }
 
-// Task 3.2.7. Until M6 supplies a default loader there is nothing to build an
-// agent from, and caching a nil agent that panics at first use would be the
-// worst of the available answers.
+// Task 3.2.7. A Router explicitly left without a loader has nothing to build
+// an agent from, and caching a nil agent that panics at first use would be
+// the worst of the available answers.
 func TestRouterLoadWithoutALoader(t *testing.T) {
-	r, err := NewRouter()
+	r, err := NewRouter(WithLoader(nil))
 	if err != nil {
 		t.Fatalf("NewRouter: %v", err)
 	}

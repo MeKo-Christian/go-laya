@@ -16,6 +16,8 @@ type routerConfig struct {
 	standaloneRepos   bool
 	maxLoaded         int
 	loader            func(context.Context, string, ModelSpec) (Agent, error)
+	loaderSet         bool
+	onnxDir           string
 	overrides         map[string]ModelSpec
 	defaultModel      string
 	autoTaskDetection bool
@@ -127,16 +129,31 @@ func WithMaxLoaded(n int) RouterOption {
 	}
 }
 
-// WithLoader supplies the function that builds an agent for a checkpoint.
+// WithLoader replaces the function that builds an agent for a checkpoint.
 //
-// It is required until M6 lands the ONNX-backed default; without it Load
-// returns ErrNoLoader. It is also the seam the upstream LRU tests need:
-// they monkeypatch Router.load to avoid building a real checkpoint
+// Without it NewRouter installs the default loader, which downloads the
+// checkpoint's config and tokenizer and runs a local ONNX export (D24).
+// WithLoader(nil) leaves the Router with no loader at all, and Load then
+// returns ErrNoLoader. It is also the seam the upstream LRU tests need: they
+// monkeypatch Router.load to avoid building a real checkpoint
 // (test_router.py:177), and an injected loader is how that ports without
 // reflection.
 func WithLoader(fn func(context.Context, string, ModelSpec) (Agent, error)) RouterOption {
 	return func(c *routerConfig) error {
 		c.loader = fn
+		c.loaderSet = true
+		return nil
+	}
+}
+
+// WithONNXDir is where the default loader looks for ONNX exports: the file
+// laya-<name>.onnx for the checkpoint the Router calls name, which is what
+// `scripts/export_onnx.py --out dir` writes. Without it the loader uses
+// $LAYA_ONNX_DIR, else onnx/ under the laya cache ($LAYA_CACHE, else the
+// user cache directory). A custom WithLoader ignores it.
+func WithONNXDir(dir string) RouterOption {
+	return func(c *routerConfig) error {
+		c.onnxDir = dir
 		return nil
 	}
 }

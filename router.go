@@ -323,11 +323,16 @@ func NewRouter(opts ...RouterOption) (*Router, error) {
 	}
 	maps.Copy(models, cfg.overrides)
 
+	loader := cfg.loader
+	if !cfg.loaderSet {
+		loader = newDefaultLoader(cfg).load
+	}
+
 	return &Router{
 		models:            models,
 		defaultModel:      cfg.defaultModel,
 		autoTaskDetection: cfg.autoTaskDetection,
-		loader:            cfg.loader,
+		loader:            loader,
 		maxLoaded:         max(1, cfg.maxLoaded),
 		agents:            map[string]residentAgent{},
 	}, nil
