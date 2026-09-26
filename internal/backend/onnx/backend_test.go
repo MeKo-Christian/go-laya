@@ -21,6 +21,12 @@ import (
 // gets roughly 5x headroom. multilingual measures no looser than the others
 // here, although S1 recorded it an order of magnitude looser at its own shapes.
 // It keeps its own entry so Task 6.8.2 can move it without touching the rest.
+//
+// These numbers already include the eager-vs-sdpa gap (Task 6.5): the exports use
+// eager attention while logits.jsonl was recorded under upstream's sdpa. An sdpa
+// export measured english 1.2e-05, multilingual 7.4e-06, typed-decisions 7.3e-06
+// here -- no closer overall, because at opset 18 both lower attention to the same
+// MatMul/Softmax -- so the exports stay eager and the tolerance needs no extra room.
 var goldenTol = map[string]float64{
 	golden.English:        5e-5,
 	golden.Multilingual:   5e-5,
