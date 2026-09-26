@@ -25,13 +25,19 @@ just test-onnx-race 200    # the finalizer hunt, under the race detector
 just bench-onnx            # the S3 latency sweep -- about 20 minutes
 ```
 
-| Input              | Default                                                                  | Override                                |
-| ------------------ | ------------------------------------------------------------------------ | --------------------------------------- |
-| ORT shared library | `/usr/local/lib`, `/usr/lib`, Homebrew                                   | `LAYA_ORT_LIB`, then `ORT_LIBRARY_PATH` |
-| The `.onnx` export | none — `LAYA_ONNX_DIR` is required; the `just` recipes pass `build/onnx` | `LAYA_ONNX_DIR`                         |
+| Input              | Default                                                                            | Override                                |
+| ------------------ | ---------------------------------------------------------------------------------- | --------------------------------------- |
+| ORT shared library | the pinned 1.23.0 from `cmd/laya-ort`, else `/usr/local/lib`, `/usr/lib`, Homebrew | `LAYA_ORT_LIB`, then `ORT_LIBRARY_PATH` |
+| The `.onnx` export | none — `LAYA_ONNX_DIR` is required; the `just` recipes pass `build/onnx`           | `LAYA_ONNX_DIR`                         |
 
 A variable that is set but points nowhere is an error, not a fallback: quietly running
 against a different runtime than the caller named would defeat the purpose of pinning one.
+`go run ./cmd/laya-ort` downloads ONNX Runtime 1.23.0 from Microsoft's GitHub release into
+the laya cache (`$LAYA_CACHE`, else the user cache directory), checks the archive and the
+extracted library against the sha256 table in `internal/ortlib`, and prints the path. The
+cached copy is re-hashed on every `Open`; a changed one is an error, not a fallback. Whatever
+library is found, `Open` reads its version first and refuses anything before 1.23 or outside
+1.x (`ErrRuntimeVersion`). Newer 1.x releases load, but everything recorded here ran on 1.23.0.
 
 Regenerate `testdata/forward_pass.json` with the pinned reference environment
 (`scripts/README.md`), never by hand:

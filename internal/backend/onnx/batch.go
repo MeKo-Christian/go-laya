@@ -9,8 +9,9 @@ import (
 )
 
 // APIVersion is the only ONNX Runtime C API version the binding implements
-// (onnxruntime/runtime.go: `supportedAPIVersions = []uint32{23}`), i.e. ONNX
-// Runtime 1.23.x. Checking the loaded library's own version is Task 6.6.2.
+// (onnxruntime/runtime.go: `supportedAPIVersions = []uint32{23}`). ORT serves
+// it from 1.23 on; Open checks the loaded library's own version against that
+// (checkRuntimeVersion, Task 6.6.2).
 const APIVersion = 23
 
 var (
@@ -31,8 +32,9 @@ var (
 // Options configures Open.
 type Options struct {
 	// Library is the ONNX Runtime shared library to load. Empty resolves it
-	// through LAYA_ORT_LIB, ORT_LIBRARY_PATH and the platform's default
-	// install locations, in that order.
+	// through LAYA_ORT_LIB, ORT_LIBRARY_PATH, the verified download
+	// cmd/laya-ort puts in the laya cache, and the platform's default install
+	// locations, in that order.
 	Library string
 
 	// IntraOpThreads is ORT's intra-op thread count; 0 leaves it to ORT.
