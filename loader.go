@@ -46,7 +46,7 @@ func newDefaultLoader(cfg routerConfig) *defaultLoader {
 		token = os.Getenv("HF_TOKEN")
 	}
 	l := &defaultLoader{
-		hub:     &hub.Client{Token: token},
+		hub:     &hub.Client{Token: token, Offline: offlineFromEnv()},
 		onnxDir: cfg.onnxDir,
 		device:  cfg.device,
 	}
@@ -58,6 +58,28 @@ func newDefaultLoader(cfg routerConfig) *defaultLoader {
 		return onnx.Open(path, opts)
 	}
 	return l
+}
+
+// offlineFromEnv is huggingface_hub's HF_HUB_OFFLINE,
+// `_is_true(HF_HUB_OFFLINE or TRANSFORMERS_OFFLINE)` (constants.py:194), with
+// LAYA_OFFLINE as a third switch of this port's own. Offline, a snapshot is
+// answered from the cache alone and fails with hub.ErrNotCached otherwise.
+func offlineFromEnv() bool {
+	hf := os.Getenv("HF_HUB_OFFLINE")
+	if hf == "" {
+		hf = os.Getenv("TRANSFORMERS_OFFLINE")
+	}
+	return envTrue(hf) || envTrue(os.Getenv("LAYA_OFFLINE"))
+}
+
+// envTrue is huggingface_hub's _is_true: ENV_VARS_TRUE_VALUES, compared
+// upper-cased (constants.py:12-19).
+func envTrue(v string) bool {
+	switch strings.ToUpper(v) {
+	case "1", "ON", "YES", "TRUE":
+		return true
+	}
+	return false
 }
 
 // load builds the agent for the checkpoint the router calls name.

@@ -381,3 +381,37 @@ func TestRouterDevice(t *testing.T) {
 		t.Errorf("Device = %q, want %q", got, "cuda:1")
 	}
 }
+
+// Task 7.2.4: offline from the environment. HF_HUB_OFFLINE is read exactly as
+// huggingface_hub reads it -- `_is_true(HF_HUB_OFFLINE or TRANSFORMERS_OFFLINE)`
+// (constants.py:194), so an empty value falls through to the second variable
+// but a set, falsy one does not -- and LAYA_OFFLINE turns it on as well.
+func TestDefaultLoaderOffline(t *testing.T) {
+	for _, tc := range []struct {
+		hf, transformers, laya string
+		want                   bool
+	}{
+		{"", "", "", false},
+		{"1", "", "", true},
+		{"true", "", "", true},
+		{"Yes", "", "", true},
+		{"ON", "", "", true},
+		{"0", "", "", false},
+		{"false", "", "", false},
+		{"2", "", "", false},
+		{"", "1", "", true},
+		{"0", "1", "", false}, // `or` picks the first non-empty value
+		{"", "", "1", true},
+		{"", "", "no", false},
+		{"0", "", "TRUE", true},
+	} {
+		t.Setenv("HF_HUB_OFFLINE", tc.hf)
+		t.Setenv("TRANSFORMERS_OFFLINE", tc.transformers)
+		t.Setenv("LAYA_OFFLINE", tc.laya)
+		l, _, _ := stubbedLoader(t, t.TempDir())
+		if l.hub.Offline != tc.want {
+			t.Errorf("HF_HUB_OFFLINE=%q TRANSFORMERS_OFFLINE=%q LAYA_OFFLINE=%q: Offline = %v, want %v",
+				tc.hf, tc.transformers, tc.laya, l.hub.Offline, tc.want)
+		}
+	}
+}
