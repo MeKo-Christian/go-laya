@@ -31,7 +31,7 @@ not finished; keep it rare. A milestone is done when every task box under it is 
 | [M3 — Router](#m3--router-pure-no-weights-no-network)                  | `Route`, model registry, LRU                     | ✅ done                           |
 | [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | 🟢 4.1–4.5 done; 4.3.9/4.5.5 open |
 | [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ✅ done                           |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | 🟡 6.1 done; 6.2 open: 6.2.9 only |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | 🟡 6.1, 6.2, 6.10 done; 6.3.1/.5  |
 | [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started                    |
 | [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred                       |
 
@@ -1743,20 +1743,42 @@ internal/hub/*_test.go` prints nothing and no test names a real host.
       (2026-09-26) — **decided: pin** `1c5edc17a7acd8701df6fc341c0d179f1c62c982`; following `main`
       is an explicit opt-in. Carried into 6.11.1 and onto 7.5.3's deviation list; no code until the
       loader exists.
-- [ ] **6.2.9** _(new, 2026-09-26)_ The English checkpoint is the bundle repo's **root**, so upstream
+- [x] **6.2.9** _(new, 2026-09-26)_ The English checkpoint is the bundle repo's **root**, so upstream
       passes no `allow_patterns` for it and downloads all 2.4 GB (`agent.py:125-128`). Narrowing that
       to the root checkpoint's files is a deviation and needs a decision before 6.11.1 builds on it.
+      (2026-09-26) — **decided: narrow.** English downloads only the files at the repo root, never
+      the `multilingual/` or `typed-decisions/` subfolders. Carried into 6.11.1 and onto 7.5.3's
+      deviation list; no code until the loader exists. `Snapshot`'s `*` crosses `/` (`TestMatch`), so
+      no allow pattern can say "root only". 6.11.1 needs a root-only filter or an exclude list.
 
 **Task 6.3: ONNX backend.** Per Spike S2's binding decision.
 
-- [ ] **6.3.1** Implement `Backend` over the chosen binding; dynamic batch/seq/k.
+- [x] **6.3.1** Implement `Backend` over the chosen binding; dynamic batch/seq/k.
+      (2026-09-26) — `internal/backend/onnx`: `Open(modelPath, Options{Library, IntraOpThreads})`
+      builds the session from the path (external data), resolving the library through
+      `findORTLibrary` when none is given. It rejects a graph whose input/output names differ from the
+      export's (6.4.2's typed error is still open). `Forward` validates and flattens the batch
+      (`ErrBadBatch` on any ragged or inconsistent shape, `TestFlattenRejectsMalformed`), closes
+      every `*Value` explicitly (D5), and folds the outputs by their returned shape. Batch, seq and k
+      all come from the batch. `TestForwardGolden` replays all 30 `logits.jsonl` batches through the
+      three dynamo exports under ORT 1.23.0, via `just test-onnx`. The worst scaled diff against the
+      recorded PyTorch logits is english 9.4e-06, multilingual 9.8e-06, typed-decisions 5.8e-06,
+      each under a 5e-05 ceiling. Forcing `marker_mask` all-true fails it at scaled diff 1. It also
+      passes under `-race`. It skips in CI, which has no library and no exports.
 - [ ] **6.3.2** Device selection (`cpu`/`cuda`/`coreml`) with a logged fallback, replacing Python's
       three `print()` warnings with `slog` — and warn only when a fallback actually happened
       (upstream `e630a68`).
 - [ ] **6.3.3** `Close()` releases the session; assert no leak across a load/evict cycle (Task 3.2.4).
-- [ ] **6.3.5** _(new, 2026-09-26, read-only recon)_ The binding's `Session.Run` takes a `ctx` but
+      (2026-09-26) — partial: `Close` releases session, env and runtime in that order, waits for
+      `Forward` calls in flight, and is idempotent (`TestCloseIsIdempotent`). The leak assertion across a
+      load/evict cycle remains.
+- [x] **6.3.5** _(new, 2026-09-26, read-only recon)_ The binding's `Session.Run` takes a `ctx` but
       never uses it (it passes NULL `RunOptions`), so a started forward pass cannot be cancelled;
       `Forward` checks `ctx` before and after, and says so in its doc comment.
+      (2026-09-26) — done as specified. `TestForwardChecksContextFirst`: a cancelled ctx on an
+      unopened `Backend` returns `context.Canceled`, not `ErrClosed`, so the ctx check runs before
+      the session is touched. The check after `Run` has no discriminating test, because it would need
+      a ctx cancelled mid-pass.
 - [ ] **6.3.4** The ONNX backend lives in `internal/backend/onnx`; the §8 check is D9's
       `go list -deps` assertion over `lang`/`mailtext`/`presets`/`backend`. `Route` lives in the root
       package, which is allowed to depend on the binding — `dlopen` happens only in `Open`.
@@ -1808,12 +1830,19 @@ rather than testing it, so today the honest claim is "untested", not "unsupporte
 
 - [ ] **6.7.1** Establish whether `purego.Dlopen` actually works on Windows with ORT 1.23, or only
       that nobody has tried.
-- [ ] **6.7.2** Either support it or ship a stub that fails with a named error, and say which in the
+- [x] **6.7.2** Either support it or ship a stub that fails with a named error, and say which in the
       README. Task 6.3.4's build-tag split is where it belongs.
       _(2026-09-26, read-only recon)_ — **a prerequisite of 6.3.1, not a follow-up:** the binding calls
       `purego.Dlopen` untagged, and purego v0.9.0 defines it only on darwin/freebsd/linux/netbsd, so the
       first non-test import of the binding breaks `release.yml`'s `GOOS=windows go build ./...` unless
       a tagged stub lands with it.
+      (2026-09-26) — **stub** (user decision). `backend.go` is built for `!windows && !js && !wasm`;
+      `backend_other.go` gives the other platforms the same API, where `Open` and `Forward` return
+      `ErrUnsupportedPlatform`. `go build ./...` and `go test -c` pass for windows/amd64,
+      js/wasm, linux/arm64 and darwin/arm64. `GOOS=windows go list -deps` names no
+      purego. `TestUnsupportedPlatform` passes under `GOOS=js GOARCH=wasm` via `go_js_wasm_exec`; it
+      was not run on Windows. 6.7.1 stays open: nobody has tried Windows. The README half moves to
+      7.5.3.
 
 **Task 6.8: Go-vs-Python ONNX Runtime parity across the whole matrix.** _(new, 2026-09-20)_
 Spike S2 proved one forward pass, on one checkpoint, at one shape. M6 owes the rest.
@@ -1862,8 +1891,20 @@ two-tolerance split; the fixture schema and `TestForwardPass` (6.8.1's harness);
 name, the "throwaway" doc comment, `requireORTLibraryB`, the bare `ortAPIVersion` const (6.6.2 verifies
 it instead), and `findModel`'s `../../build/onnx` default.
 
-- [ ] **6.10.1** `just bench-onnx` and the finalizer reproduction run from the new package unchanged.
-- [ ] **6.10.2** `internal/onnxspike/` is gone; `internal/onnxspike/README.md`'s content moves with it.
+- [x] **6.10.1** `just bench-onnx` and the finalizer reproduction run from the new package unchanged.
+      (2026-09-26) — `just bench-onnx 1` exits 0 against `./internal/backend/onnx/`: 35
+      `BenchmarkForward` cells and all three `BenchmarkSessionLoad` processes. `LAYA_ORT_FINALIZER=1
+    go test -race -run TestValueCleanup/abandoned` still reports the `DATA RACE`, and
+      `TestForwardPass` passes via `just test-onnx` (3.8e-06 vs Python ORT). Renamed along the way:
+      `LAYA_ONNXSPIKE_FINALIZER` → `LAYA_ORT_FINALIZER`, and `just spike-onnx`/`spike-onnx-race` →
+      `test-onnx`/`test-onnx-race`.
+- [x] **6.10.2** `internal/onnxspike/` is gone; `internal/onnxspike/README.md`'s content moves with it.
+      (2026-09-26) — moved with `git mv` (history kept; `onnxspike.go` → `resolve.go`,
+      `spike_test.go` → `forward_pass_test.go`). The README is now `internal/backend/onnx/README.md`.
+      Outside PLAN.md, `rg onnxspike` names only the new package's own lines about where it came
+      from. The bare `ortAPIVersion` became the exported `APIVersion` the backend opens with, and
+      6.6.2 still verifies nothing. `requireORTLibraryB` and `findModel`'s `build/onnx` default were
+      already gone.
 
 **Task 6.11: The Router's default agent loader.** _(new, 2026-09-20, from M3)_
 M3 shipped `WithLoader` and `ErrNoLoader`: until a checkpoint can actually be built, a Router has no
@@ -1872,7 +1913,9 @@ way to make an agent and says so rather than caching a nil one.
 - [ ] **6.11.1** A default loader, so `NewRouter()` with no `WithLoader` can load. It is what
       `router.py:174-178` does inline: build an Agent from the spec's repo, subfolder, device and
       token. Its default revision is `1c5edc17a7acd8701df6fc341c0d179f1c62c982` (6.2.8), and a
-      subfolder maps to `hub.Client.Snapshot(…, []string{sub + "/*"})`.
+      subfolder maps to `hub.Client.Snapshot(…, []string{sub + "/*"})`. The root (English)
+      checkpoint downloads only root files (6.2.9), which `Snapshot`'s allow patterns cannot express
+      on their own.
 - [ ] **6.11.2** `WithRouterDevice` and `WithRouterToken` (`docs/API.md:347-348`), including
       upstream's `token or os.environ["HF_TOKEN"]` fallback (`router.py:159`). Deferred out of M3
       because they configure a builder that did not exist; adding them there would have stored two
@@ -1955,7 +1998,9 @@ way to make an agent and says so rather than caching a nil one.
       upstream's assets.
 - [ ] **7.5.3** Document the deliberate deviations _(list completed on the 2026-09-20 review)_: `repo`
       always a string (Task 3.1.4); `instructions` as `string` only; the default revision pinned
-      to `1c5edc17` instead of following `main` (6.2.8); no `mps` device; `$LAYA_CACHE`
+      to `1c5edc17` instead of following `main` (6.2.8); the English checkpoint downloading only the
+      repo's root files instead of all 2.4 GB (6.2.9); no ONNX backend on Windows or js/wasm
+      (`ErrUnsupportedPlatform`, 6.7.2); no `mps` device; `$LAYA_CACHE`
       instead of the huggingface_hub cache; and every dropped or renamed public export —
       `proper_reward`, `td_lambda_targets` (D3), `ece_score` (internal `calib.ECE`), `load` (→ `Open`),
       `RLAgent` (no alias), `QTYPES`/`QTYPE_NAMES` (→ `QType`), `detect_language` (→ `lang.Analyse`),
