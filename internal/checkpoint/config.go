@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/MeKo-Christian/go-laya/backend"
 )
@@ -29,6 +30,7 @@ var requiredKeys = []string{"encoder", "head_layers"}
 // Config is a checkpoint's rl_agent_config.json, kept as its top-level
 // fields so later readers can decode the ones they need.
 type Config struct {
+	path   string
 	fields map[string]json.RawMessage
 }
 
@@ -82,5 +84,39 @@ func LoadConfig(dir string) (*Config, error) {
 		return nil, fmt.Errorf("config: %s: missing keys %s: %w",
 			path, strings.Join(missing, ", "), backend.ErrIncompatibleCheckpoint)
 	}
-	return &Config{fields: fields}, nil
+	return &Config{path: path, fields: fields}, nil
+}
+
+// ActWidth is the act head's output width, len(cfg.get("act_costs", {})) + 1
+// (common.py:137): 1 without the key, else one more than Python's len() of
+// the value, which counts an object's keys, an array's elements or a
+// string's code points. Any other value is where len() raises, and fails with
+// backend.ErrIncompatibleCheckpoint.
+func (c *Config) ActWidth() (int, error) {
+	raw, ok := c.fields["act_costs"]
+	if !ok {
+		return 1, nil
+	}
+	var n int
+	var err error
+	switch v := bytes.TrimSpace(raw); {
+	case bytes.HasPrefix(v, []byte("{")):
+		var m map[string]json.RawMessage
+		err = json.Unmarshal(v, &m)
+		n = len(m)
+	case bytes.HasPrefix(v, []byte("[")):
+		var a []json.RawMessage
+		err = json.Unmarshal(v, &a)
+		n = len(a)
+	case bytes.HasPrefix(v, []byte(`"`)):
+		var s string
+		err = json.Unmarshal(v, &s)
+		n = utf8.RuneCountInString(s)
+	default:
+		err = fmt.Errorf("%s has no len()", v)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("config: %s: act_costs: %w: %w", c.path, err, backend.ErrIncompatibleCheckpoint)
+	}
+	return n + 1, nil
 }
