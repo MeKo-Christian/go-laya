@@ -1897,8 +1897,9 @@ it instead), and `findModel`'s `../../build/onnx` default.
 
 - [x] **6.10.1** `just bench-onnx` and the finalizer reproduction run from the new package unchanged.
       (2026-09-26) — `just bench-onnx 1` exits 0 against `./internal/backend/onnx/`: 35
-      `BenchmarkForward` cells and all three `BenchmarkSessionLoad` processes. `LAYA_ORT_FINALIZER=1
-  go test -race -run TestValueCleanup/abandoned` still reports the `DATA RACE`, and
+      `BenchmarkForward` cells and all three `BenchmarkSessionLoad` processes.
+      `LAYA_ORT_FINALIZER=1 go test -race -run TestValueCleanup/abandoned` still reports the
+      `DATA RACE`, and
       `TestForwardPass` passes via `just test-onnx` (3.8e-06 vs Python ORT). Renamed along the way:
       `LAYA_ONNXSPIKE_FINALIZER` → `LAYA_ORT_FINALIZER`, and `just spike-onnx`/`spike-onnx-race` →
       `test-onnx`/`test-onnx-race`.
