@@ -2187,8 +2187,12 @@ way to make an agent and says so rather than caching a nil one.
       the floor fails it.
 - [x] **7.1.3** Max-subtracted softmax over **exactly the first _k_ logits**.
       (2026-09-26) — `calib.Softmax(logits []float32, k, t) []float32`, in float32 per #24a.
-      The sum follows numpy's `add.reduce` order: the first element plus the pairwise sum of the
-      rest. `TestAnswersNumerics` replays all 27 `answers.jsonl` cases: every rounded probability,
+      The sum follows numpy's `add.reduce` order: `pairwise_sum` over the whole array, which is
+      left to right below eight elements. _(PR #21 review)_ — it first seeded with `a[0]` and
+      added the pairwise sum of the rest, which gives `1 + 2^-23` for `[1, 2^-24, 2^-24]` where
+      numpy gives 1 (`TestNumpySumShortIsLeftToRight`). A throwaway cross-check against
+      numpy 2.5.3's `.sum()` on 20 000 random float32 arrays of length 1–299 then matched bit for
+      bit. exp is not bit-exact (7.1.8). `TestAnswersNumerics` replays all 27 `answers.jsonl` cases: every rounded probability,
       confidence, score and noul value is equal to Python's, not merely close. Softmaxing the whole
       row fails `TestSoftmaxFirstK` and 9 fixture cases. Dropping the max subtraction turns a
       200-logit into NaN and fails both. See 7.1.7 for what the corpus does not pin.
@@ -2217,12 +2221,23 @@ way to make an agent and says so rather than caching a nil one.
       including `conf == 0` falling in no bin and the empty input yielding NaN.
 - [ ] **7.1.7** _(new, 2026-09-26, from 7.1.3/7.1.4)_ Make `answers.jsonl` discriminate
       precision. All 27 cases still pass with the softmax and the entropy done in float64, and with a
-      left-to-right sum in place of numpy's reduction order. At four decimals the corpus cannot tell
+      different summation order (checked before the PR #21 fix, against the `a[0]`-seeded
+      order). At four decimals the corpus cannot tell
       #24a's float32 path from the obvious one. Add generator cases whose rounded output differs
       between float32 and float64 (a probability or confidence within ~1e-7 of a `.00005`
       boundary), selected by the generator itself in the pinned environment, not written by hand.
       This is a reviewed `testdata/` regeneration. 7.2.7's acceptance ("all 27 cases byte-equal")
       has the same blind spot.
+- [ ] **7.1.8** _(new, 2026-09-26, PR #21 review)_ Bit-exact float32 `exp` and `log`. `calib`
+      narrows Go's float64 `math.Exp`/`math.Log`, but numpy runs its own float32 kernel, chosen
+      per CPU: SIMD with FMA where the host has it (AVX2 or AVX512F), libm otherwise. Measured
+      in `.venv-ref` (numpy 2.5.3, X86_V3), on 2 M random inputs each: `exp` differs by 1 ULP on
+      38.5 % and by 2 ULP on 0.9 %; `log` by up to 4 ULP. Over 200 000 random softmaxes (k 2–13),
+      32 changed a `Round4` probability. Port numpy's `simd_exp_FLOAT`/`simd_log_FLOAT`. The
+      catch is that float32 FMA has no direct Go equivalent, and narrowing `math.FMA` can
+      double-round. Cross-check bit for bit against numpy in the pinned environment. Record which
+      CPU path the golden vectors came from, since a host without FMA gives different reference
+      numbers.
 
 **Task 7.2: `Agent.SystemOne`.** Invariants §5 items 19–34.
 
