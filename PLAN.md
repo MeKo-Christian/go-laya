@@ -32,7 +32,7 @@ not finished; keep it rare. A milestone is done when every task box under it is 
 | [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | 🟢 4.1–4.5 done; 4.3.9/4.5.5 open                            |
 | [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ✅ done                                                      |
 | [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | 🟡 6.1–6.4, 6.6, 6.8, 6.10 done bar 6.3.2 (CUDA); 6.5.1 done |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | ⬜ not started                                               |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | 🟡 7.1.1–7.1.5 done                                          |
 | [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred                                                  |
 
 **Critical path:** M1 ✅ → M2 (`jsonx` first) → M4 → M5 → M6 → M7, with M3 off the path. _(Reordered
@@ -2175,17 +2175,54 @@ way to make an agent and says so rather than caching a nil one.
 
 **Task 7.1: `internal/calib`.** Invariants §5 items 22–29.
 
-- [ ] **7.1.1** `temp_bucket` and the `temperature_by_options` → `temperature[qtype]` lookup.
-- [ ] **7.1.2** The `max(1e-3, t)` floor.
-- [ ] **7.1.3** Max-subtracted softmax over **exactly the first _k_ logits**.
-- [ ] **7.1.4** Entropy confidence.
-- [ ] **7.1.5** `Round4` from `jsonx` applied at the same points Python applies `round()`
+- [x] **7.1.1** `temp_bucket` and the `temperature_by_options` → `temperature[qtype]` lookup.
+      (2026-09-26) — `calib.TempBucket(qt, k)` and `Temperatures{ByQType, ByOptions}.Scale(qt, k)`,
+      with `DefaultTemperatures()` as `[1, 1, 1]` and no buckets (`agent.py:194-195`).
+      `TestTempBucket` covers every threshold for all three types. `TestScale` covers a bucket hit,
+      the per-type fallback, and an empty map (multilingual's shape). Looking up a key that never
+      matches fails `TestScale` and 7 `TestAnswersNumerics` cases.
+- [x] **7.1.2** The `max(1e-3, t)` floor.
+      (2026-09-26) — in `Softmax`, not in `Scale`, where `agent.py:305` has it.
+      `TestTemperatureFloor`: t = 0, −1 and 1e-9 each equal t = 1e-3, and 1e-2 does not. Dropping
+      the floor fails it.
+- [x] **7.1.3** Max-subtracted softmax over **exactly the first _k_ logits**.
+      (2026-09-26) — `calib.Softmax(logits []float32, k, t) []float32`, in float32 per #24a.
+      The sum follows numpy's `add.reduce` order: the first element plus the pairwise sum of the
+      rest. `TestAnswersNumerics` replays all 27 `answers.jsonl` cases: every rounded probability,
+      confidence, score and noul value is equal to Python's, not merely close. Softmaxing the whole
+      row fails `TestSoftmaxFirstK` and 9 fixture cases. Dropping the max subtraction turns a
+      200-logit into NaN and fails both. See 7.1.7 for what the corpus does not pin.
+- [x] **7.1.4** Entropy confidence.
+      (2026-09-26) — `calib.Confidence(p, k)` is `confidence_from_probs`: k < 2 gives 1, and
+      otherwise `clip(1 − H/ln k, 0, 1)` with p clipped to 1e-12 inside the log, all in float32.
+      `NoulConfidence` (`max(p1, 1−p1)`, #26) and `Expectation` (`Σ i·p[i]` in float64, #28) sit
+      beside it for 7.2. None of the 7.2 boxes is ticked by them. Mutations: `log2` for `ln` fails
+      the fixture. Dropping the log clip gives NaN. Routing noul through the entropy fails
+      `TestConfidence` (0 against 0.5) and all 5 noul fixture cases. The `[0, 1]` clip is
+      discriminated only by a unit test, because the corpus never hits it. In float32 a uniform
+      distribution at k = 6 gives −1.2e-07 unclipped, which `Round4` would emit as `-0.0`.
+      `TestConfidence` asserts ≥ +0 for uniform k = 2…16, and removing the clip fails it at 6 values
+      of k.
+- [x] **7.1.5** `Round4` from `jsonx` applied at the same points Python applies `round()`
       (invariant #29).
+      (2026-09-26) — nothing in `calib` rounds. As in `agent.py:309-335`, the caller rounds each
+      emitted float once, and `TestAnswersNumerics` does exactly that. Leaving the values unrounded
+      fails 24 of 27 cases. Rounding `p` before computing the confidence fails 11 of them. Swapping in
+      `math.Round(x*1e4)/1e4` fails nothing here, because no `answers.jsonl` value is a tie. The
+      half-to-even behaviour is `round4.jsonl`'s job and `jsonx`'s test already pins it.
 - [ ] **7.1.6** _(new, 2026-09-20, review)_ Port `ece_score` (`common.py:187-197`, a public upstream
       export the plan had neither ported nor dropped) as `internal/calib.ECE`, and define a multi-class
       Brier score (mean `Σ(p−y)²`) beside it — Task 6.9.3 is gated on both existing and no task
       created them. Fixture `testdata/ece.jsonl` from the generator. Acceptance: matches the fixture,
       including `conf == 0` falling in no bin and the empty input yielding NaN.
+- [ ] **7.1.7** _(new, 2026-09-26, from 7.1.3/7.1.4)_ Make `answers.jsonl` discriminate
+      precision. All 27 cases still pass with the softmax and the entropy done in float64, and with a
+      left-to-right sum in place of numpy's reduction order. At four decimals the corpus cannot tell
+      #24a's float32 path from the obvious one. Add generator cases whose rounded output differs
+      between float32 and float64 (a probability or confidence within ~1e-7 of a `.00005`
+      boundary), selected by the generator itself in the pinned environment, not written by hand.
+      This is a reviewed `testdata/` regeneration. 7.2.7's acceptance ("all 27 cases byte-equal")
+      has the same blind spot.
 
 **Task 7.2: `Agent.SystemOne`.** Invariants §5 items 19–34.
 
