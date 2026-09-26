@@ -285,6 +285,36 @@ def export(
         )
 
 
+# Key under which export() records the encoder's attention implementation in the graph's
+# metadata_props, so --reuse can tell which implementation an existing file was exported
+# under instead of trusting its filename.
+ATTN_METADATA_KEY = "laya.attn"
+
+
+def stamp_attn(onnx_path: Path, attn: str) -> None:
+    """Record ``attn`` in the graph file's metadata; the external data is not touched."""
+    import onnx
+
+    model = onnx.load(onnx_path.as_posix(), load_external_data=False)
+    onnx.helper.set_model_props(
+        model, {**{p.key: p.value for p in model.metadata_props}, ATTN_METADATA_KEY: attn}
+    )
+    onnx.save(model, onnx_path.as_posix())
+
+
+def exported_attn(onnx_path: Path) -> str:
+    """The attention implementation ``onnx_path`` was exported under.
+
+    Files without the stamp predate ``--attn``, and until then the script exported under
+    "eager" only, so that is what an unstamped file is.
+    """
+    import onnx
+
+    model = onnx.load(onnx_path.as_posix(), load_external_data=False)
+    props = {p.key: p.value for p in model.metadata_props}
+    return props.get(ATTN_METADATA_KEY, "eager")
+
+
 def head_activation(onnx_path: Path) -> dict[str, int]:
     """S1.4: the head FFN is ReLU while the encoder body is GeGLU.
 
@@ -436,6 +466,14 @@ def run_one(
     print(f"\n=== {ckpt.name} ({ckpt_dir}) ===", flush=True)
     report: dict[str, Any] = {"checkpoint": ckpt.name, "dir": ckpt_dir.as_posix()}
 
+    out_path = out_dir / f"laya-{ckpt.name}{suffix}.onnx"
+    reusing = reuse and out_path.exists()
+    # Checked before the model is built: the report and fixture pair this run's PyTorch
+    # outputs and its attn with the graph ORT loads, so a reused graph exported under the
+    # other implementation would attribute its numbers to the wrong one.
+    if reusing and (found := exported_attn(out_path)) != attn:
+        raise ValueError(f"--reuse: {out_path} was exported under attn={found}, not {attn}")
+
     model = build_decision_model(ckpt_dir, attn=attn)
     report["attn"] = attn
     report["hidden_size"] = model.encoder.config.hidden_size
@@ -452,13 +490,13 @@ def run_one(
             f"fused vs reference head max abs diff: {report['fused_vs_reference_head']}", flush=True
         )
 
-    out_path = out_dir / f"laya-{ckpt.name}{suffix}.onnx"
     report["exporter"] = "dynamo" if dynamo else "torchscript"
     report["opset"] = opset or (OPSET_DYNAMO if dynamo else OPSET_TORCHSCRIPT)
-    if reuse and out_path.exists():
-        print(f"reusing existing {out_path}", flush=True)
+    if reusing:
+        print(f"reusing existing {out_path} (attn={attn})", flush=True)
     else:
         export(model, inputs, out_path, dynamo=dynamo, opset=opset)
+        stamp_attn(out_path, attn)
     report["onnx"] = out_path.as_posix()
     report["bytes"] = sum(p.stat().st_size for p in out_dir.glob(f"{out_path.stem}.onnx*"))
     print(f"exported -> {out_path} ({report['bytes'] / 1e6:.0f} MB)", flush=True)
