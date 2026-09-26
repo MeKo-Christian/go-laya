@@ -175,3 +175,96 @@ func TestOpenChecksHeader(t *testing.T) {
 		t.Fatalf("Open = %v, want ErrIncompatibleCheckpoint from the header check", err)
 	}
 }
+
+// TestOpenHeadWidth: the real exports declare act_logits [batch, 2], so a
+// config asking for another width fails before the library is loaded, and the
+// matching width opens and runs.
+func TestOpenHeadWidth(t *testing.T) {
+	if testing.Short() {
+		t.Skip("-short: needs an ONNX Runtime library and the S1 exports")
+	}
+	model, err := findModel("laya-" + golden.TypedDecisions + "-dynamo.onnx")
+	if err != nil {
+		t.Skipf("no export: %v", err)
+	}
+
+	for _, w := range []int{1, 3} {
+		_, err := Open(model, Options{Library: "/nonexistent/libonnxruntime.so", ActWidth: w})
+		if !errors.Is(err, backend.ErrIncompatibleCheckpoint) || !strings.Contains(err.Error(), "[batch 2]") {
+			t.Errorf("Open(ActWidth %d) = %v, want ErrIncompatibleCheckpoint naming [batch 2]", w, err)
+		}
+	}
+
+	b, err := Open(model, Options{Library: requireORTLibrary(t), ActWidth: 2})
+	if err != nil {
+		t.Fatalf("Open(ActWidth 2): %v", err)
+	}
+	t.Cleanup(func() {
+		if err := b.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
+	in := backend.Batch{
+		InputIDs: [][]int64{{1, 2, 3, 4}}, AttentionMask: [][]int64{{1, 1, 1, 1}},
+		MarkerPos: [][]int64{{1, 2}}, MarkerMask: [][]bool{{true, true}}, QType: []int64{0},
+	}
+	_, act, err := b.Forward(context.Background(), in)
+	if err != nil || len(act) != 1 || len(act[0]) != 2 {
+		t.Fatalf("Forward = %v, %v; want one row of 2 act logits", act, err)
+	}
+
+	// A graph whose act_logits width is symbolic gets past Open; Forward
+	// still holds the output to the expected width.
+	b.actWidth = 3
+	if _, _, err := b.Forward(context.Background(), in); !errors.Is(err, backend.ErrIncompatibleCheckpoint) {
+		t.Fatalf("Forward expecting 3 act logits = %v, want ErrIncompatibleCheckpoint", err)
+	}
+}
+
+// TestHeads: Forward reads logits as wide as the batch's kmax and act_logits
+// as wide as the Backend expects, and anything else is the wrong checkpoint.
+// The real graphs always agree, so the outputs here are made by hand.
+func TestHeads(t *testing.T) {
+	if testing.Short() {
+		t.Skip("-short: needs an ONNX Runtime library")
+	}
+	rt, err := ort.NewRuntime(requireORTLibrary(t), APIVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rt.Close() })
+
+	value := func(w int64) *ort.Value {
+		v, err := ort.NewTensorValue(rt, make([]float32, w), []int64{1, w})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(v.Close)
+		return v
+	}
+	for _, tc := range []struct {
+		name          string
+		logits, act   int64
+		k, actWidth   int
+		wantErrNaming string // "" means no error
+	}{
+		{name: "match", logits: 2, act: 2, k: 2, actWidth: 2},
+		{name: "act unpinned", logits: 2, act: 5, k: 2, actWidth: anyWidth},
+		{name: "logits wider than kmax", logits: 3, act: 2, k: 2, actWidth: 2, wantErrNaming: "logits"},
+		{name: "act wider than expected", logits: 2, act: 3, k: 2, actWidth: 2, wantErrNaming: "act_logits"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			outputs := map[string]*ort.Value{"logits": value(tc.logits), "act_logits": value(tc.act)}
+			_, _, err := heads(outputs, 1, tc.k, tc.actWidth)
+			if tc.wantErrNaming == "" {
+				if err != nil {
+					t.Fatalf("heads: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, backend.ErrIncompatibleCheckpoint) || !strings.Contains(err.Error(), tc.wantErrNaming+" has shape") {
+				t.Fatalf("heads = %v, want ErrIncompatibleCheckpoint naming %s", err, tc.wantErrNaming)
+			}
+		})
+	}
+}

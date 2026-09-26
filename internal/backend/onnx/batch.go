@@ -53,6 +53,12 @@ type Options struct {
 
 	// Logger receives the fallback warnings. Nil means slog.Default().
 	Logger *slog.Logger
+
+	// ActWidth is the act_logits width the checkpoint config derives,
+	// len(act_costs)+1 (checkpoint.Config.ActWidth). Open rejects a graph
+	// that declares another, and Forward an output of another. 0 checks
+	// the output against the graph's declared width only.
+	ActWidth int
 }
 
 // The graph's declared inputs and outputs, as scripts/export_onnx.py names
@@ -125,10 +131,16 @@ func rowMajor[T any](name string, m [][]T, rows, cols int) ([]T, error) {
 
 // unflatten folds one of the graph's float outputs back into rows, checking
 // that it really is rows×w for some w and that data holds exactly that many
-// values. Each row gets its own backing array.
-func unflatten(name string, data []float32, shape []int64, rows int) ([][]float32, error) {
+// values. Each row gets its own backing array. A width other than anyWidth
+// pins w: the wrong width is the wrong checkpoint rather than a bad run, so
+// it wraps backend.ErrIncompatibleCheckpoint.
+func unflatten(name string, data []float32, shape []int64, rows, width int) ([][]float32, error) {
 	if len(shape) != 2 || shape[0] != int64(rows) || shape[1] < 0 {
 		return nil, fmt.Errorf("onnx backend: %s has shape %v, want [%d w]", name, shape, rows)
+	}
+	if width != anyWidth && shape[1] != int64(width) {
+		return nil, fmt.Errorf("onnx backend: %s has shape %v, want it %d wide: %w",
+			name, shape, width, backend.ErrIncompatibleCheckpoint)
 	}
 	w := int(shape[1])
 	if len(data) != rows*w {

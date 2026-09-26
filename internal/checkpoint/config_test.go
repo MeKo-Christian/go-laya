@@ -150,3 +150,66 @@ func TestConfigField(t *testing.T) {
 		t.Errorf("writing to Field's result changed the Config: now %s", again)
 	}
 }
+
+// TestConfigActWidth pins the act head's width as common.py:137 derives it:
+// len(cfg.get("act_costs", {})) + 1, with Python's len, so an absent key is
+// width 1 and a value len() rejects is ErrIncompatibleCheckpoint.
+func TestConfigActWidth(t *testing.T) {
+	tests := []struct {
+		name  string
+		costs string // the act_costs value; empty leaves the key out
+		want  int
+		err   bool
+	}{
+		{name: "shipped", costs: `{"escalate":0.5}`, want: 2},
+		{name: "empty object", costs: `{}`, want: 1},
+		{name: "absent", want: 1},
+		{name: "two keys", costs: `{"escalate":0.5,"defer":0.25}`, want: 3},
+		// json.loads keeps the last of a duplicated key.
+		{name: "duplicate key", costs: `{"escalate":0.5,"escalate":1}`, want: 2},
+		{name: "array", costs: `[0.5,1,2]`, want: 4},
+		// len() of a str counts code points.
+		{name: "string", costs: `"hé"`, want: 3},
+		{name: "null", costs: `null`, err: true},
+		{name: "number", costs: `0.5`, err: true},
+		{name: "bool", costs: `true`, err: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := `{"encoder":"x","head_layers":2}`
+			if tt.costs != "" {
+				body = `{"encoder":"x","head_layers":2,"act_costs":` + tt.costs + `}`
+			}
+			cfg, err := LoadConfig(writeConfig(t, body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := cfg.ActWidth()
+			if tt.err {
+				if !errors.Is(err, backend.ErrIncompatibleCheckpoint) || !strings.Contains(err.Error(), "act_costs") {
+					t.Fatalf("ActWidth = %d, %v; want ErrIncompatibleCheckpoint naming act_costs", got, err)
+				}
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Fatalf("ActWidth = %d, %v; want %d", got, err, tt.want)
+			}
+		})
+	}
+}
+
+// All three shipped checkpoints have the two-way act head.
+func TestConfigActWidthShipped(t *testing.T) {
+	root := golden.SkipWithoutModels(t)
+	for _, ck := range []string{golden.English, golden.Multilingual, golden.TypedDecisions} {
+		t.Run(ck, func(t *testing.T) {
+			cfg, err := LoadConfig(golden.CheckpointDir(root, ck))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if w, err := cfg.ActWidth(); err != nil || w != 2 {
+				t.Fatalf("ActWidth = %d, %v; want 2", w, err)
+			}
+		})
+	}
+}

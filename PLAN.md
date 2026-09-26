@@ -1847,11 +1847,14 @@ internal/hub/*_test.go` prints nothing and no test names a real host.
       seven tensors dropped, an extra input, an extra output, a duplicate, and inputs and outputs
       swapped. Returning nil, returning an unwrapped error and going back to dumping both lists
       each fail all 11 error cases. `just test-onnx` still opens and replays all three exports.
-- [ ] **6.4.3** Fail with a wrapped `ErrIncompatibleCheckpoint` naming what was wrong.
-      (2026-09-26) — partial: the sentinel is `backend.ErrIncompatibleCheckpoint` in the leaf, so a
+- [x] **6.4.3** Fail with a wrapped `ErrIncompatibleCheckpoint` naming what was wrong.
+      (2026-09-26) — the sentinel is `backend.ErrIncompatibleCheckpoint` in the leaf, so a
       `Backend` (which the root imports) can wrap it. `laya.ErrIncompatibleCheckpoint` is the same
-      value (`TestErrIncompatibleCheckpoint`). 6.4.1, 6.4.2 and 6.4.4 wrap it; 6.4.5 has to wrap it
-      too once it exists.
+      value (`TestErrIncompatibleCheckpoint`). Every failure of 6.4.1, 6.4.2, 6.4.4 and 6.4.5 wraps it
+      and names the key, tensor, field or shape, each asserted with `errors.Is` plus the message:
+      `TestLoadConfig`, `TestConfigActWidth`, `TestCheckGraphIO`, `TestRead`, `TestReadHeader`,
+      `TestOpenChecksHeader`, `TestCheckHeadWidth`, `TestUnflattenWidth`, `TestHeads` and
+      `TestOpenHeadWidth`, all passing together.
 - [x] **6.4.4** Validate the ONNX/safetensors header **before** handing the bytes to the runtime, and
       never `os/exec` or `encoding/gob` a downloaded artifact (R7, Task 0.4's deferred item).
       (2026-09-26) — two new pure packages, neither behind a build tag, so both run in CI.
@@ -1878,7 +1881,7 @@ internal/hub/*_test.go` prints nothing and no test names a real host.
       the unknown-key check, the symlink check, the safetensors tiling, coverage, size, cap,
       negative-dim or overflow check, or the error wrap. `just test-onnx` still replays all three
       exports. No `os/exec` or `encoding/gob` outside tests (CI's grep).
-- [ ] **6.4.5** _(new, 2026-09-20, review)_ Validate the graph's `act_logits` width against
+- [x] **6.4.5** _(new, 2026-09-20, review)_ Validate the graph's `act_logits` width against
       `len(cfg["act_costs"]) + 1` (§1.3) and `logits` width against `kmax`; a mismatch fails with
       `ErrIncompatibleCheckpoint` naming the shape. All three shipped checkpoints have width 2, which is
       exactly why a hardcoded 2 would pass every test and break on the first fine-tune.
@@ -1889,6 +1892,24 @@ internal/hub/*_test.go` prints nothing and no test names a real host.
       so it can only be checked per `Forward` against the batch's `kmax`.
       _(2026-09-26, from 6.4.4)_ — `onnxheader.Header.Outputs` now carries the declared dims:
       `act_logits` is `[batch, 2]` in all three exports.
+      (2026-09-26) — `checkpoint.Config.ActWidth` is `len(cfg.get("act_costs", {})) + 1` with Python's
+      `len`: 1 without the key, an object's keys, an array's elements or a string's code points plus
+      one, and `ErrIncompatibleCheckpoint` for null, a number or a bool (`TestConfigActWidth`, 10
+      cases; `TestConfigActWidthShipped`: 2 for all three). The config reaches the graph through the
+      new `onnx.Options.ActWidth`, since `Open` sees a graph path and no config. `Open` checks the
+      declared `act_logits` against it before the library loads: rank 2, and a static width equal to
+      `ActWidth` (`checkHeadWidth`, untagged, `TestCheckHeadWidth`, 9 cases; a declared scalar
+      fails, an undeclared shape is left to `Forward`, PR #16 review), so the real exports
+      fail with `ActWidth` 1 or 3 naming `[batch 2]` and open with 2 (`TestOpenHeadWidth`). `kmax`
+      is per batch (`common.py:223`), so `logits`' width is checked per `Forward`, against the
+      batch's marker width, and `act_logits`' against `ActWidth` or else the declared width, which
+      also covers a graph whose width is symbolic. Both wrap the sentinel and name the shape
+      (`TestUnflattenWidth`, `TestHeads`). Mutations caught: a hardcoded 2, the absent-key default,
+      dropping the static, rank or output-width check, dropping either wrap, and `Forward` passing
+      no act width. One survives: `Forward` passing no `kmax`, because the exported `logits` is a
+      gather over `marker_pos` and is always `kmax` wide, so no real graph can fail it; `heads`' own
+      check is covered. `just test-onnx` still replays all three exports. Nothing sets `ActWidth`
+      yet; 6.11.1's loader must pass `cfg.ActWidth()`.
 
 **Task 6.5: Decide which attention implementation the shipped export uses.** _(new, 2026-09-20)_
 Spike S1 exports with `attn_implementation="eager"` because S1.1 says to. Upstream runs `sdpa`
@@ -2015,7 +2036,7 @@ way to make an agent and says so rather than caching a nil one.
       token. Its default revision is `1c5edc17a7acd8701df6fc341c0d179f1c62c982` (6.2.8), and a
       subfolder maps to `hub.Client.Snapshot(…, []string{sub + "/*"})`. The root (English)
       checkpoint downloads only root files (6.2.9), which `Snapshot`'s allow patterns cannot express
-      on their own.
+      on their own. It must pass `checkpoint.Config.ActWidth()` as `onnx.Options.ActWidth` (6.4.5).
 - [ ] **6.11.2** `WithRouterDevice` and `WithRouterToken` (`docs/API.md:347-348`), including
       upstream's `token or os.environ["HF_TOKEN"]` fallback (`router.py:159`). Deferred out of M3
       because they configure a builder that did not exist; adding them there would have stored two
