@@ -172,8 +172,8 @@ type answerCase struct {
 // calibration produces are asserted here.
 func TestAnswersNumerics(t *testing.T) {
 	cases := golden.Load(t, "answers")
-	if len(cases) != 27 {
-		t.Fatalf("answers.jsonl has %d cases, want 27", len(cases))
+	if len(cases) != 31 {
+		t.Fatalf("answers.jsonl has %d cases, want 31", len(cases))
 	}
 	for _, c := range cases {
 		t.Run(c.Name, func(t *testing.T) {
@@ -223,6 +223,87 @@ func TestAnswersNumerics(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestAnswersDiscriminatePrecision proves the precision/* cases can tell the
+// float32 path from the obvious float64 one (Task 7.1.7): each field they mark
+// must round differently when the softmax and the entropy run in float64.
+// TestAnswersNumerics already requires the float32 path to match, so together
+// they pin the precision, which at four decimals no random sample does.
+func TestAnswersDiscriminatePrecision(t *testing.T) {
+	found := 0
+	for _, c := range golden.Load(t, "answers") {
+		var rec struct {
+			answerCase
+
+			Discriminates string `json:"discriminates"`
+		}
+		c.Unmarshal(t, &rec)
+		if rec.Discriminates == "" {
+			continue
+		}
+		found++
+		t.Run(c.Name, func(t *testing.T) {
+			qt := qtypes[rec.QType]
+			temps := Temperatures{ByQType: rec.Temperature, ByOptions: rec.TemperatureByOptions}
+			p := softmax64(rec.Logits, rec.K, temps.Scale(qt, rec.K))
+
+			var differs bool
+			switch rec.Discriminates {
+			case "probabilities":
+				for i, w := range orderedFloats(t, rec.Answer.Probabilities) {
+					differs = differs || jsonx.Round4(p[i]) != w
+				}
+			case "confidence":
+				differs = jsonx.Round4(confidence64(p)) != rec.Answer.Confidence
+			case "score":
+				var s float64
+				for i, v := range p {
+					s += float64(i) * v
+				}
+				differs = jsonx.Round4(s) != *rec.Answer.Score
+			case "noul":
+				differs = jsonx.Round4(p[1]) != *rec.Answer.Noul
+			default:
+				t.Fatalf("unknown discriminates %q", rec.Discriminates)
+			}
+			if !differs {
+				t.Errorf("a float64 softmax reproduces %s, so the case does not discriminate", rec.Discriminates)
+			}
+		})
+	}
+	if found == 0 {
+		t.Fatal("answers.jsonl has no precision cases")
+	}
+}
+
+// softmax64 is Softmax in float64 throughout: the port 7.1.7 must reject.
+func softmax64(logits []float32, k int, temp float64) []float64 {
+	div := max(minTemperature, temp)
+	z := make([]float64, k)
+	top := math.Inf(-1)
+	for i := range z {
+		z[i] = float64(logits[i]) / div
+		top = max(top, z[i])
+	}
+	var sum float64
+	for i, v := range z {
+		z[i] = math.Exp(v - top)
+		sum += z[i]
+	}
+	for i := range z {
+		z[i] /= sum
+	}
+	return z
+}
+
+// confidence64 is Confidence in float64 throughout.
+func confidence64(p []float64) float64 {
+	var ent float64
+	for _, v := range p {
+		ent -= v * math.Log(min(max(v, logClip), 1))
+	}
+	return min(max(1-ent/math.Log(float64(len(p))), 0), 1)
 }
 
 var qtypes = map[string]question.QType{

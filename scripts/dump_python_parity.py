@@ -924,6 +924,7 @@ def answer_block(
     k: int,
     qtype: str,
     crit: Any,
+    dtype: type = np.float32,
 ) -> dict[str, Any]:
     """Replicate ``agent.py:294-343`` for one question.
 
@@ -933,12 +934,17 @@ def answer_block(
 
     ``act_row`` is **pre**-softmax, matching what the model emits; ``agent.py:295``
     softmaxes the whole tensor and then takes column 0.
+
+    ``dtype`` is float32, as upstream computes. ``np.float64`` gives the obvious
+    wrong port -- the float32 logits widened, then everything in float64 -- which
+    the precision cases (Task 7.1.7) must round differently.
     """
     from laya.common import QTYPES, confidence_from_probs, temp_bucket
 
     qt = QTYPES[qtype]
     t_scale = temperature_by_options.get(temp_bucket(qt, k), temperature[qt])
-    z = np.array(logit_row, dtype=np.float32)[:k] / max(1e-3, float(t_scale))
+    # The head emits float32 logits, so a float64 port still starts from them.
+    z = np.array(logit_row, dtype=np.float32).astype(dtype)[:k] / max(1e-3, float(t_scale))
     p = np.exp(z - z.max())
     p = p / p.sum()
 
@@ -1078,6 +1084,72 @@ def answers_cases(models_root: Path) -> list[dict[str, Any]]:
     inject("noul/k02-uniform", "noul", {"true": "y", "false": "n"}, 2, [0.0, 0.0], [0.0, 0.0])
     # A near-certain outcome: confidence saturates at 1.0 and the clip matters.
     inject("choice/saturated", "choice", {"a": None, "b": None}, 2, [50.0, -50.0], [9.0, -9.0])
+    cases.extend(precision_cases(temp, tbo_full))
+    return cases
+
+
+# Task 7.1.7: one target per rounded field the float32 path feeds. At four
+# decimals a random sample almost never tells float32 from float64 apart, so
+# every case above still passes with the softmax and entropy in float64.
+PRECISION_TARGETS: tuple[tuple[str, str, Any, int, str], ...] = (
+    (
+        "precision/choice-prob",
+        "choice",
+        {f"key{i}": f"desc {i}" for i in range(5)},
+        5,
+        "probabilities",
+    ),
+    (
+        "precision/choice-confidence",
+        "choice",
+        {f"key{i}": f"desc {i}" for i in range(5)},
+        5,
+        "confidence",
+    ),
+    ("precision/score-value", "score", [f"level {i}" for i in range(6)], 6, "score"),
+    ("precision/noul-value", "noul", {"true": "yes", "false": "no"}, 2, "noul"),
+)
+PRECISION_MAX_DRAWS = 200_000
+
+
+def precision_cases(temp: list[float], tbo: dict[str, float]) -> list[dict[str, Any]]:
+    """Cases whose rounded answer differs between float32 and float64 arithmetic.
+
+    Each target draws seeded random logits until its field rounds differently under
+    ``answer_block(dtype=np.float64)``, so the selection is the generator's, not a
+    hand-picked value. ``discriminates`` names the field, and the Go side checks that
+    a float64 port really does get it wrong.
+    """
+    cases: list[dict[str, Any]] = []
+    for name, qtype, crit, k, field in PRECISION_TARGETS:
+        rng = np.random.default_rng(SEED + stable_seed(name))
+        for _ in range(PRECISION_MAX_DRAWS):
+            logits = (rng.standard_normal(max(k, 4)) * 3.0).round(6).tolist()
+            act = [
+                round(float(rng.standard_normal() * 2.0 + 1.5), 6),
+                round(float(rng.standard_normal() * 2.0 - 1.5), 6),
+            ]
+            ans = answer_block(logits, act, temp, tbo, k, qtype, crit)
+            wide = answer_block(logits, act, temp, tbo, k, qtype, crit, dtype=np.float64)
+            if ans[field] != wide[field]:
+                break
+        else:
+            raise RuntimeError(f"{name}: no discriminating draw in {PRECISION_MAX_DRAWS}")
+        cases.append(
+            {
+                "name": name,
+                "qtype": qtype,
+                "k": k,
+                "criteria": crit,
+                "logits": logits,
+                "act_logits": act,
+                "temperature": temp,
+                "temperature_by_options": tbo,
+                "answer": ans,
+                "answer_json": json.dumps(ans, ensure_ascii=False, separators=(", ", ": ")),
+                "discriminates": field,
+            }
+        )
     return cases
 
 
