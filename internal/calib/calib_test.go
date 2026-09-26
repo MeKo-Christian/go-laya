@@ -172,8 +172,8 @@ type answerCase struct {
 // calibration produces are asserted here.
 func TestAnswersNumerics(t *testing.T) {
 	cases := golden.Load(t, "answers")
-	if len(cases) != 31 {
-		t.Fatalf("answers.jsonl has %d cases, want 31", len(cases))
+	if len(cases) != 33 {
+		t.Fatalf("answers.jsonl has %d cases, want 33", len(cases))
 	}
 	for _, c := range cases {
 		t.Run(c.Name, func(t *testing.T) {
@@ -226,27 +226,45 @@ func TestAnswersNumerics(t *testing.T) {
 }
 
 // TestAnswersDiscriminatePrecision proves the precision/* cases can tell the
-// float32 path from the obvious float64 one (Task 7.1.7): each field they mark
-// must round differently when the softmax and the entropy run in float64.
-// TestAnswersNumerics already requires the float32 path to match, so together
-// they pin the precision, which at four decimals no random sample does.
+// real arithmetic from a plausible wrong port (Task 7.1.7): each field they
+// mark must round differently under the port they name, either float64
+// throughout or numpy's pairwise sums replaced by a left-to-right loop.
+// TestAnswersNumerics already requires the real path to match, so together
+// they pin both, which at four decimals no random sample does.
 func TestAnswersDiscriminatePrecision(t *testing.T) {
-	found := 0
+	found := map[string]int{}
 	for _, c := range golden.Load(t, "answers") {
 		var rec struct {
 			answerCase
 
 			Discriminates string `json:"discriminates"`
+			Against       string `json:"against"`
 		}
 		c.Unmarshal(t, &rec)
 		if rec.Discriminates == "" {
 			continue
 		}
-		found++
+		found[rec.Against]++
 		t.Run(c.Name, func(t *testing.T) {
 			qt := qtypes[rec.QType]
 			temps := Temperatures{ByQType: rec.Temperature, ByOptions: rec.TemperatureByOptions}
-			p := softmax64(rec.Logits, rec.K, temps.Scale(qt, rec.K))
+			scale := temps.Scale(qt, rec.K)
+
+			var p []float64
+			var conf float64
+			switch rec.Against {
+			case "float64":
+				p = softmax64(rec.Logits, rec.K, scale)
+				conf = confidence64(p)
+			case "sequential":
+				p32 := softmaxSeq(rec.Logits, rec.K, scale)
+				for _, v := range p32 {
+					p = append(p, float64(v))
+				}
+				conf = confidenceSeq(p32)
+			default:
+				t.Fatalf("unknown against %q", rec.Against)
+			}
 
 			var differs bool
 			switch rec.Discriminates {
@@ -255,7 +273,7 @@ func TestAnswersDiscriminatePrecision(t *testing.T) {
 					differs = differs || jsonx.Round4(p[i]) != w
 				}
 			case "confidence":
-				differs = jsonx.Round4(confidence64(p)) != rec.Answer.Confidence
+				differs = jsonx.Round4(conf) != rec.Answer.Confidence
 			case "score":
 				var s float64
 				for i, v := range p {
@@ -268,13 +286,58 @@ func TestAnswersDiscriminatePrecision(t *testing.T) {
 				t.Fatalf("unknown discriminates %q", rec.Discriminates)
 			}
 			if !differs {
-				t.Errorf("a float64 softmax reproduces %s, so the case does not discriminate", rec.Discriminates)
+				t.Errorf("the %s port reproduces %s, so the case does not discriminate",
+					rec.Against, rec.Discriminates)
 			}
 		})
 	}
-	if found == 0 {
-		t.Fatal("answers.jsonl has no precision cases")
+	for _, port := range []string{"float64", "sequential"} {
+		if found[port] == 0 {
+			t.Errorf("answers.jsonl has no precision case against %s", port)
+		}
 	}
+}
+
+// seqSum adds left to right, where numpy's add.reduce is pairwise; the two
+// agree below eight elements.
+func seqSum(a []float32) float32 {
+	var s float32
+	for _, v := range a {
+		s += v
+	}
+	return s
+}
+
+// softmaxSeq is Softmax with a left-to-right sum: the other port 7.1.7 must
+// reject.
+func softmaxSeq(logits []float32, k int, temp float64) []float32 {
+	div := float32(max(minTemperature, temp))
+	z := make([]float32, k)
+	for i := range z {
+		z[i] = logits[i] / div
+	}
+	top := z[0]
+	for _, v := range z[1:] {
+		top = max(top, v)
+	}
+	for i, v := range z {
+		z[i] = exp32(v - top)
+	}
+	sum := seqSum(z)
+	for i := range z {
+		z[i] /= sum
+	}
+	return z
+}
+
+// confidenceSeq is Confidence with a left-to-right entropy sum.
+func confidenceSeq(p []float32) float64 {
+	terms := make([]float32, len(p))
+	for i, v := range p {
+		terms[i] = v * log32(min(max(v, float32(logClip)), 1))
+	}
+	conf := 1 + seqSum(terms)/float32(math.Log(float64(len(p))))
+	return float64(min(max(conf, 0), 1))
 }
 
 // softmax64 is Softmax in float64 throughout: the port 7.1.7 must reject.

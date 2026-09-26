@@ -925,6 +925,7 @@ def answer_block(
     qtype: str,
     crit: Any,
     dtype: type = np.float32,
+    sequential: bool = False,
 ) -> dict[str, Any]:
     """Replicate ``agent.py:294-343`` for one question.
 
@@ -937,7 +938,9 @@ def answer_block(
 
     ``dtype`` is float32, as upstream computes. ``np.float64`` gives the obvious
     wrong port -- the float32 logits widened, then everything in float64 -- which
-    the precision cases (Task 7.1.7) must round differently.
+    the precision cases (Task 7.1.7) must round differently. ``sequential=True``
+    replaces numpy's pairwise sums in the softmax and the entropy with a plain
+    left-to-right loop, the other wrong port; the two differ only from k >= 8.
     """
     from laya.common import QTYPES, confidence_from_probs, temp_bucket
 
@@ -946,13 +949,13 @@ def answer_block(
     # The head emits float32 logits, so a float64 port still starts from them.
     z = np.array(logit_row, dtype=np.float32).astype(dtype)[:k] / max(1e-3, float(t_scale))
     p = np.exp(z - z.max())
-    p = p / p.sum()
+    p = p / (_seq_sum(p) if sequential else p.sum())
 
     a = np.array(act_row, dtype=np.float32)
     a = np.exp(a - a.max())
     a = a / a.sum()
 
-    conf_score = round(confidence_from_probs(p, k), 4)
+    conf_score = round(_seq_confidence(p, k) if sequential else confidence_from_probs(p, k), 4)
     ext = {"act_probability": round(float(a[0]), 4)}
 
     if qtype == "choice":
@@ -986,6 +989,23 @@ def answer_block(
         "confidence": round(max(float(p[1]), 1.0 - float(p[1])), 4),
         "action": ext,
     }
+
+
+def _seq_sum(a: np.ndarray) -> np.floating:
+    """Left-to-right sum in the array's dtype, unlike numpy's pairwise add.reduce."""
+    s = a.dtype.type(0)
+    for v in a:
+        s = s + v
+    return s
+
+
+def _seq_confidence(p: np.ndarray, k: int) -> float:
+    """``confidence_from_probs`` (common.py:200-206) with a left-to-right entropy sum."""
+    if k < 2:
+        return 1.0
+    p = p[:k]
+    ent = -_seq_sum(p * np.log(np.clip(p, 1e-12, 1.0)))
+    return float(np.clip(1.0 - ent / math.log(k), 0.0, 1.0))
 
 
 def answers_cases(models_root: Path) -> list[dict[str, Any]]:
@@ -1088,16 +1108,18 @@ def answers_cases(models_root: Path) -> list[dict[str, Any]]:
     return cases
 
 
-# Task 7.1.7: one target per rounded field the float32 path feeds. At four
-# decimals a random sample almost never tells float32 from float64 apart, so
-# every case above still passes with the softmax and entropy in float64.
-PRECISION_TARGETS: tuple[tuple[str, str, Any, int, str], ...] = (
+# Task 7.1.7: one target per rounded field the float32 path feeds, against each
+# wrong port. At four decimals a random sample almost never tells numpy's float32
+# arithmetic from float64, or its pairwise sum from a sequential one, so every
+# case above still passes under either port.
+PRECISION_TARGETS: tuple[tuple[str, str, Any, int, str, str], ...] = (
     (
         "precision/choice-prob",
         "choice",
         {f"key{i}": f"desc {i}" for i in range(5)},
         5,
         "probabilities",
+        "float64",
     ),
     (
         "precision/choice-confidence",
@@ -1105,23 +1127,45 @@ PRECISION_TARGETS: tuple[tuple[str, str, Any, int, str], ...] = (
         {f"key{i}": f"desc {i}" for i in range(5)},
         5,
         "confidence",
+        "float64",
     ),
-    ("precision/score-value", "score", [f"level {i}" for i in range(6)], 6, "score"),
-    ("precision/noul-value", "noul", {"true": "yes", "false": "no"}, 2, "noul"),
+    ("precision/score-value", "score", [f"level {i}" for i in range(6)], 6, "score", "float64"),
+    ("precision/noul-value", "noul", {"true": "yes", "false": "no"}, 2, "noul", "float64"),
+    # Pairwise and sequential sums first diverge at eight elements.
+    (
+        "precision/sum-order-prob",
+        "choice",
+        {f"key{i}": f"desc {i}" for i in range(10)},
+        10,
+        "probabilities",
+        "sequential",
+    ),
+    (
+        "precision/sum-order-confidence",
+        "choice",
+        {f"key{i}": f"desc {i}" for i in range(10)},
+        10,
+        "confidence",
+        "sequential",
+    ),
 )
 PRECISION_MAX_DRAWS = 200_000
+PRECISION_PORTS: dict[str, dict[str, Any]] = {
+    "float64": {"dtype": np.float64},
+    "sequential": {"sequential": True},
+}
 
 
 def precision_cases(temp: list[float], tbo: dict[str, float]) -> list[dict[str, Any]]:
-    """Cases whose rounded answer differs between float32 and float64 arithmetic.
+    """Cases whose rounded answer differs under a plausible wrong port.
 
     Each target draws seeded random logits until its field rounds differently under
-    ``answer_block(dtype=np.float64)``, so the selection is the generator's, not a
-    hand-picked value. ``discriminates`` names the field, and the Go side checks that
-    a float64 port really does get it wrong.
+    the port it names (``PRECISION_PORTS``), so the selection is the generator's, not
+    a hand-picked value. ``discriminates`` names the field and ``against`` the port,
+    and the Go side checks that the port really does get it wrong.
     """
     cases: list[dict[str, Any]] = []
-    for name, qtype, crit, k, field in PRECISION_TARGETS:
+    for name, qtype, crit, k, field, against in PRECISION_TARGETS:
         rng = np.random.default_rng(SEED + stable_seed(name))
         for _ in range(PRECISION_MAX_DRAWS):
             logits = (rng.standard_normal(max(k, 4)) * 3.0).round(6).tolist()
@@ -1130,8 +1174,8 @@ def precision_cases(temp: list[float], tbo: dict[str, float]) -> list[dict[str, 
                 round(float(rng.standard_normal() * 2.0 - 1.5), 6),
             ]
             ans = answer_block(logits, act, temp, tbo, k, qtype, crit)
-            wide = answer_block(logits, act, temp, tbo, k, qtype, crit, dtype=np.float64)
-            if ans[field] != wide[field]:
+            wrong = answer_block(logits, act, temp, tbo, k, qtype, crit, **PRECISION_PORTS[against])
+            if ans[field] != wrong[field]:
                 break
         else:
             raise RuntimeError(f"{name}: no discriminating draw in {PRECISION_MAX_DRAWS}")
@@ -1148,6 +1192,7 @@ def precision_cases(temp: list[float], tbo: dict[str, float]) -> list[dict[str, 
                 "answer": ans,
                 "answer_json": json.dumps(ans, ensure_ascii=False, separators=(", ", ": ")),
                 "discriminates": field,
+                "against": against,
             }
         )
     return cases
