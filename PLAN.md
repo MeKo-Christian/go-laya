@@ -1813,7 +1813,7 @@ internal/hub/*_test.go` prints nothing and no test names a real host.
       `internal/backend/onnx` fails the first, and a root file importing the binding fails the
       second. This is the CI-level check 6.1.1 left open. §8's box stays for the 1.0 sweep.
       (2026-09-26) — ticked late: `go test -run 'TestNoMLDependency|TestRuntimeImportedOnlyByBackend'
-    -v .` passes both, re-run after the 6.4 sentinel added an `errors` import to `backend/`.
+  -v .` passes both, re-run after the 6.4 sentinel added an `errors` import to `backend/`.
 - [ ] **6.3.6** _(new, 2026-09-26, from 6.3.2)_ Enable CUDA. ORT's generic
       `SessionOptionsAppendExecutionProvider` rejects `CUDA` (probed against ORT 1.23.0's GPU
       build), and the binding at D5's pin neither registers `SessionOptionsAppendExecutionProvider_CUDA_V2`
@@ -1824,7 +1824,17 @@ internal/hub/*_test.go` prints nothing and no test names a real host.
 
 **Task 6.4: Checkpoint validation.** Port `_verify_compatibility`'s intent.
 
-- [ ] **6.4.1** Require cfg keys `encoder` and `head_layers`.
+- [x] **6.4.1** Require cfg keys `encoder` and `head_layers`.
+      (2026-09-26) — the new `internal/checkpoint` package's `LoadConfig(dir)` reads
+      `rl_agent_config.json` (capped at 1 MiB, since it is a downloaded artifact) and requires both
+      keys to be present, whatever their value, as `k not in cfg` does. A config without them fails
+      with `config: <path>: missing keys encoder, head_layers: laya: incompatible checkpoint`, naming
+      only the missing ones in upstream's order. A missing file, invalid JSON, a non-object and an
+      oversized file wrap the same sentinel, and a missing file also wraps `fs.ErrNotExist`.
+      `TestLoadConfig` covers 12 cases, `TestLoadConfigMissingFile` the absent file, and
+      `TestLoadConfigShipped` (gated on the checkpoints) passes all three shipped configs. Dropping
+      `head_layers`, an unwrapped error, no size cap, a null-is-missing check and no object check
+      each fail it. Nothing calls `LoadConfig` yet; 6.11.1/M7's loader will.
 - [x] **6.4.2** Require the graph's declared inputs/outputs (`input_ids`, `attention_mask`,
       `marker_pos`, `marker_mask`, `qtype` → `logits`, `act_logits`).
       (2026-09-26) — `Open`'s inline set comparison became the pure `checkGraphIO` in the untagged
@@ -1837,7 +1847,7 @@ internal/hub/*_test.go` prints nothing and no test names a real host.
 - [ ] **6.4.3** Fail with a wrapped `ErrIncompatibleCheckpoint` naming what was wrong.
       (2026-09-26) — partial: the sentinel is `backend.ErrIncompatibleCheckpoint` in the leaf, so a
       `Backend` (which the root imports) can wrap it. `laya.ErrIncompatibleCheckpoint` is the same
-      value (`TestErrIncompatibleCheckpoint`). 6.4.2 wraps it; 6.4.1, 6.4.4 and 6.4.5 have to wrap
+      value (`TestErrIncompatibleCheckpoint`). 6.4.1 and 6.4.2 wrap it; 6.4.4 and 6.4.5 have to wrap
       it too once they exist.
 - [ ] **6.4.4** Validate the ONNX/safetensors header **before** handing the bytes to the runtime, and
       never `os/exec` or `encoding/gob` a downloaded artifact (R7, Task 0.4's deferred item).
