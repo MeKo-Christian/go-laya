@@ -1757,8 +1757,8 @@ internal/hub/*_test.go` prints nothing and no test names a real host.
       (2026-09-26) — `internal/backend/onnx`: `Open(modelPath, Options{Library, IntraOpThreads})`
       builds the session from the path (external data), resolving the library through
       `findORTLibrary` when none is given. It rejects a graph whose input/output names differ from the
-      export's (6.4.2's typed error is still open). `Forward` validates and flattens the batch
-      (`ErrBadBatch` on any ragged or inconsistent shape, `TestFlattenRejectsMalformed`), closes
+      export's (wrapped in `ErrIncompatibleCheckpoint` since 6.4.2). `Forward` validates and flattens
+      the batch (`ErrBadBatch` on any ragged or inconsistent shape, `TestFlattenRejectsMalformed`), closes
       every `*Value` explicitly (D5), and folds the outputs by their returned shape. Batch, seq and k
       all come from the batch. `TestForwardGolden` replays all 30 `logits.jsonl` batches through the
       three dynamo exports under ORT 1.23.0, via `just test-onnx`. The worst scaled diff against the
@@ -1812,8 +1812,9 @@ internal/hub/*_test.go` prints nothing and no test names a real host.
       `internal/backend/onnx` to be the binding's only direct importer. A `presets` file importing
       `internal/backend/onnx` fails the first, and a root file importing the binding fails the
       second. This is the CI-level check 6.1.1 left open. §8's box stays for the 1.0 sweep.
-      (2026-09-26) — ticked late: `go test -run 'TestNoMLDependency|TestRuntimeImportedOnlyByBackend'
-  -v .` passes both, re-run after the 6.4 sentinel added an `errors` import to `backend/`.
+      (2026-09-26) — ticked late: re-run after the 6.4 sentinel added an `errors` import to
+      `backend/`, `go test -run 'TestNoMLDependency|TestRuntimeImportedOnlyByBackend' -v .` passes
+      both.
 - [ ] **6.3.6** _(new, 2026-09-26, from 6.3.2)_ Enable CUDA. ORT's generic
       `SessionOptionsAppendExecutionProvider` rejects `CUDA` (probed against ORT 1.23.0's GPU
       build), and the binding at D5's pin neither registers `SessionOptionsAppendExecutionProvider_CUDA_V2`
@@ -1834,7 +1835,9 @@ internal/hub/*_test.go` prints nothing and no test names a real host.
       `TestLoadConfig` covers 12 cases, `TestLoadConfigMissingFile` the absent file, and
       `TestLoadConfigShipped` (gated on the checkpoints) passes all three shipped configs. Dropping
       `head_layers`, an unwrapped error, no size cap, a null-is-missing check and no object check
-      each fail it. Nothing calls `LoadConfig` yet; 6.11.1/M7's loader will.
+      each fail it. `Config.Field` returns a key's raw JSON as a copy (`TestConfigField`, PR #13
+      review), so 6.4.5 and M7 need not re-read the file. Nothing calls `LoadConfig` yet;
+      6.11.1/M7's loader will.
 - [x] **6.4.2** Require the graph's declared inputs/outputs (`input_ids`, `attention_mask`,
       `marker_pos`, `marker_mask`, `qtype` → `logits`, `act_logits`).
       (2026-09-26) — `Open`'s inline set comparison became the pure `checkGraphIO` in the untagged
