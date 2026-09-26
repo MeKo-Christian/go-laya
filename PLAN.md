@@ -552,11 +552,12 @@ is the runtime version, since the binding speaks C API 23 only while the referen
 1.30.0. It favours our path, so it threatens no claim here, but a 2.7× gap on ModernBERT-large and
 1.1× on mmBERT-base is a shape worth understanding. **Task 6.8** is where it gets chased.
 
-> **(2026-09-26) — the 2.7× did not reproduce (Task 6.8.3).** Interleaved over three rounds, Go and
-> Python on both ORT 1.23.0 and 1.30.0 land within about 10% of each other: `english` 1684–1856 ms,
-> `multilingual` 627–657 ms. The `5064 ms` above has no surviving script and equals, to the
+> **(2026-09-26) — the 2.7× did not reproduce (Task 6.8.3).** A counterbalanced rerun (Latin-square
+> order, cooled and logged per cell) puts Go and Python on both ORT 1.23.0 and 1.30.0 within 1.14× of
+> each other. Median p50: `english` 1727–1975 ms, `multilingual` 620–679 ms. Run order alone moves
+> `english` by about 15%. The `5064 ms` above has no surviving script. It equals, to the
 > millisecond, the `multilingual` batch-8 p50 in `docs/benchmarks/raw/bench-onnx-sweep-a.txt:61`,
-> so it may be a transcription slip. It may also be one throttled run: the rerun's first round
+> so it may be a transcription slip. It may also be one throttled run: a first, fixed-order rerun
 > produced a 1.75× gap of its own (see `BENCHMARKS.md`). The conclusion drawn from it still
 > stands: the binding costs nothing.
 
@@ -2081,20 +2082,26 @@ Spike S2 proved one forward pass, on one checkpoint, at one shape. M6 owes the r
       Python on `english`, but only 1.1× faster on `multilingual`. Numerics agreed to 3.8e-06, so
       this is a kernel-selection or version difference, not a correctness one — but it is the kind of
       difference that turns into a tolerance surprise when the pinned runtime moves (Task 6.6).
-      (2026-09-26) — **not reproducible, so there is no version or binding gap to explain.** The
-      controlled rerun is a 2×2 of {Go, Python} × {ORT 1.23.0, ORT 1.30.0} at batch 1, 512 tokens,
-      8 threads. It ran three interleaved rounds of 10 timed runs per cell. Go loaded the official
-      1.30.0 library, which 6.6.2 accepts, after checking its sha256 against GitHub's digest.
-      Python used a scratch venv with `onnxruntime==1.23.0` beside `.venv-ref`. The Python side is
-      the new `scripts/bench_ort.py`, which builds `BenchmarkForward`'s exact inputs and quantile.
-      Minimum p50 in ms, Go/Python: `english` 1712/1856 on 1.23.0 and 1684/1687 on 1.30.0;
-      `multilingual` 636/627 on 1.23.0 and 657/628 on 1.30.0. That is within about 10%, inside
-      the machine's noise. Round 1 alone showed a 1.75× gap (Python 3800 against Go 2174 on
-      `english`, both on 1.30.0), which is how a single back-to-back pair produced the recorded
-      2.7×. The optimised-graph diff the plan kept in reserve was not needed. Transcript:
-      `docs/benchmarks/raw/ort-version-gap.txt`; write-up in `BENCHMARKS.md` and under S3's
-      table. One consequence for 6.6: moving the pin from 1.23.0 to 1.30.0 costs no speed on
-      this machine.
+      (2026-09-26) — **the 2.7× does not reproduce. No configuration differs from another by more
+      than the machine's own noise, so there is no version or binding gap to explain.** The
+      rerun is a 2×2 of {Go, Python} × {ORT 1.23.0, ORT 1.30.0} at batch 1, 512 tokens and
+      8 threads. - Go loaded the official 1.30.0 library, which 6.6.2 accepts, after checking its sha256
+      against GitHub's digest. - Python ran from a scratch venv with `onnxruntime==1.23.0` alongside `.venv-ref`, through
+      the new `scripts/bench_ort.py`, which builds `BenchmarkForward`'s exact inputs and quantile. - A first run used a fixed order within each round and recorded no thermal state. _(PR #20
+      review)_ — so order and heat were confounded with the configuration. The evidence is now
+      a counterbalanced rerun: four rounds per checkpoint in a balanced 4×4 Latin square, so
+      every configuration runs once in every position and every ordered pair of neighbours
+      occurs once. Each cell cooled to ≤ 70 °C (capped at 120 s; cells started at 62–77 °C),
+      and the package temperature, mean clock and load were logged before and after. - Median p50 over the four rounds, in ms: `english` Go 1975 / 1879 and Python 1828 / 1727
+      (ORT 1.23.0 / 1.30.0); `multilingual` Go 679 / 620 and Python 649 / 626. - The widest spread is 1.14× and 1.09×, while run position alone moves `english` by 15%
+      (median 1706 ms first against 1960 ms third). The design cancels that effect rather than
+      removing it, so the remaining gaps cannot be told apart from noise, and the four
+      configurations cannot be ranked. - The first run's round 1 showed a 1.75× gap on its own (Python 3800 against Go 2174 on
+      `english`, both on 1.30.0). That is how a single back-to-back pair could have produced
+      2.7×. - The optimised-graph diff the plan kept in reserve was not needed. - Transcripts: `docs/benchmarks/raw/ort-version-gap-balanced.txt` (the evidence) and
+      `ort-version-gap.txt` (the first run). The write-up is in `BENCHMARKS.md` and under S3's
+      table. - For 6.6: moving the pin from 1.23.0 to 1.30.0 shows no speed cost here larger than the
+      noise.
 
 **Task 6.9: int8 dynamic quantization — latency and calibration in one task.** _(new, 2026-09-20)_
 Carries Spike S3.4 and S3.5 forward. S3 measured 0.6–1.9 s per question on CPU and the condition for
