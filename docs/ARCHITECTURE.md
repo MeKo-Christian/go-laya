@@ -10,8 +10,8 @@
 ### 1.1 The three checkpoints
 
 `convaiinnovations/laya` bundles all three. It is Apache-2.0, **not gated, and needs no token**.
-Golden vectors describe revision `1c5edc17a7acd8701df6fc341c0d179f1c62c982`, which is also the
-loader's default (D17).
+Golden vectors describe revision `1c5edc17a7acd8701df6fc341c0d179f1c62c982`. The planned default loader (PLAN Task 7.2)
+will use it as its default revision (D17).
 
 | Name            | Subfolder          | Encoder                        | Params      | `max_len` / `head_max_len` | Weights                                 |
 | --------------- | ------------------ | ------------------------------ | ----------- | -------------------------- | --------------------------------------- |
@@ -79,7 +79,7 @@ is always looser than `logits` in every parity measurement.
 
 ```
 go-laya/
-  laya.go        Agent, Open, SystemOne, Result/Answer, Version
+  laya.go        Agent interface (D13), Version; planned: Open, SystemOne, Result/Answer (PLAN 7.3)
   question.go    type aliases re-exporting question/ (D11)
   router.go      Router, RouteDecision, model registry; lru.go the agent cache
   options.go  errors.go
@@ -110,7 +110,7 @@ go-laya/
 depend on the ONNX binding. `TestNoMLDependency` (`deps_test.go`) runs `go list -deps` over them
 with `GOOS=linux` pinned. `TestRuntimeImportedOnlyByBackend` requires `internal/backend/onnx` to
 be the binding's only direct importer. The root package, and so the Router, may depend on the
-binding. Under purego nothing is `dlopen`ed until `Open`, so a routing-only caller gains a
+binding. Under purego nothing is `dlopen`ed until `onnx.Open`, so a routing-only caller gains a
 build-graph edge but never loads ONNX Runtime.
 
 ## 3. Tokenizer
@@ -221,8 +221,8 @@ version `1.M.P` with M ≥ 23 (D20).
 
 ## 6. Downloads and trust
 
-`laya.Open("someone/their-model")` parses a remote artefact, so everything downloaded is
-verified before use (R7):
+The planned `laya.Open("someone/their-model")` (PLAN Task 7.2) will parse a remote artefact, so
+the download layer, which exists today, verifies everything before use (R7):
 
 - **`internal/hub`**: HEAD then GET on `/{repo}/resolve/{rev}/{path}`. Redirects are followed by
   hand, so the token goes only to the Hub's host. The first hop's `X-Linked-Etag` is the git blob
