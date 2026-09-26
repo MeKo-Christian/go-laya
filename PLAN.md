@@ -1972,6 +1972,14 @@ nothing pins the `.so` itself. No in-house repo solves this; `go-pocket-tts` is 
       downloaded and verified all four real archives. End to end, `laya-ort` into an empty
       `LAYA_CACHE` and then `just test-onnx` with no ORT variable set passed. It loaded the
       downloaded library (`TestOpenRuntimeVersion` logs its path).
+      _(PR #18 review)_ — hardened as `internal/hub` is. `Cached` now `Lstat`s every directory
+      below the cache root, not only the file, and `Download` creates them one at a time, so a
+      symlinked `onnxruntime/` or archive directory is rejected rather than followed
+      (`TestSymlinkedCacheDir`). Extraction honours `ctx` through the copy and again before the
+      rename (`TestExtractHonoursContext`), and the library is `Sync`ed before it is renamed.
+      Dropping the directory walk or the `ctx` checks fails those tests. Two parts have no
+      discriminating test: the per-directory check in `Download`, since `Cached` rejects the
+      symlink first, and the `Sync`.
 - [x] **6.6.2** Verify the resolved library's version at startup rather than inferring it from the
       filename, and fail with a named error when the C API version does not match.
       (2026-09-26) — the premise above was half wrong: the binding asks for C API 23, so a pre-1.23
