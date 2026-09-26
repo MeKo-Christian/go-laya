@@ -2,8 +2,7 @@
 
 > Referenced from `PLAN.md` §7. The type definitions the port targets, and the decisions that resolve
 > Python's dynamic typing into explicit Go types. **This file is the type appendix; `PLAN.md` wins on
-> any conflict** — in particular §2 of the plan owns the package layout, which used to be duplicated
-> here and drifted within a day (review of 2026-09-20).
+> any conflict.** The package layout is owned by `docs/ARCHITECTURE.md` §2, not duplicated here.
 
 ## Return-value shapes to reproduce
 
@@ -58,7 +57,7 @@
 
 ### 3.3 Package layout
 
-See `PLAN.md` §2 — the single owner of the layout. In short: module `github.com/MeKo-Christian/go-laya`;
+See `docs/ARCHITECTURE.md` §2 — the single owner of the layout. In short: module `github.com/MeKo-Christian/go-laya`;
 public `lang/`, `mailtext/`, `presets/`, `jsonx/`, `question/`, `tokenizer/` and `backend/` (D9: the
 `Backend` interface and `Batch` struct, zero dependencies); `internal/prompt`, `internal/calib`,
 `internal/hub`, `internal/backend/onnx`, `internal/golden`. The `Obj` type below lives in `jsonx/`,
@@ -361,7 +360,7 @@ func (r *Router) Loaded() []string // LRU order, least-recent first
 func (r *Router) Unload(names ...string) error
 func (r *Router) Close() error
 
-// Deferred to M7 (PLAN Task 7.6): they call agent.system_one, so they need the
+// Deferred to M7 (PLAN Task 7.7): they call agent.system_one, so they need the
 // widened Agent and the Result type.
 func (r *Router) Predict(ctx context.Context, state State, qs Questions, ro ...RouteOption) (*Result, error)
 func (r *Router) SystemOne(ctx context.Context, state State, qs Questions, ro ...RouteOption) (*Result, error) // alias, router.py:311
@@ -379,7 +378,7 @@ func WithStandaloneRepos(on bool) RouterOption
 // monkeypatch Router.load (test_router.py:177).
 func WithLoader(fn func(context.Context, string, ModelSpec) (Agent, error)) RouterOption
 
-// Deferred to M6 (PLAN Task 6.11): they configure the agent builder, and until
+// Deferred to M7 (PLAN Task 7.2): they configure the agent builder, and until
 // there is one they would store values nothing reads.
 func WithRouterDevice(d string) RouterOption
 func WithRouterToken(tok string) RouterOption // falls back to $HF_TOKEN

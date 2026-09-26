@@ -13,7 +13,7 @@ import (
 // testable on every target.
 
 // The devices Options.Device accepts, besides "" and "auto". Upstream's "mps"
-// is not one of them: CoreML is ONNX Runtime's Apple backend (PLAN.md 7.5.3).
+// is not one of them: CoreML is ONNX Runtime's Apple backend (PLAN.md 7.6.3).
 const (
 	deviceCPU    = "cpu"
 	deviceCUDA   = "cuda"
@@ -47,7 +47,7 @@ var autoOrder = []deviceSpec{
 		provider: "CUDAExecutionProvider",
 		// ORT's generic append rejects CUDA ("Unknown provider name"); it
 		// needs the dedicated _CUDA_V2 entry point, which the binding does not
-		// register (PLAN.md Task 6.3.6).
+		// register (PLAN.md Task B.3).
 		unusable: "the ONNX Runtime binding cannot enable CUDA",
 	},
 	{name: deviceCoreML, provider: "CoreMLExecutionProvider", appendName: "CoreML"},

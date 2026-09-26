@@ -498,7 +498,7 @@ def render_cases() -> list[dict[str, Any]]:
     ``docs/INVARIANTS.md`` #17 names. ``test_criteria.py:103-116`` is deliberately
     left out: it asserts five string literals are present in ``Agent.__init__`` via
     ``inspect.getsource``, which is not a behaviour a port can or should reproduce
-    (PLAN.md task 2.5.4).
+    (PLAN.md task 7.3.11).
 
     Output is always a **string** (or a list of strings). Never a nested object: #17's
     ``{"d": "münchen"}`` -> literal-``ü`` case is only verifiable if the rendered text
@@ -1044,7 +1044,7 @@ def answers_cases(models_root: Path) -> list[dict[str, Any]]:
                 "temperature": temp,
                 "temperature_by_options": tbo,
                 "answer": ans,
-                # 7.3.2 compares the serialized bytes, not the parsed struct.
+                # 7.4.2 compares the serialized bytes, not the parsed struct.
                 "answer_json": json.dumps(ans, ensure_ascii=False, separators=(", ", ": ")),
             }
         )
@@ -1273,7 +1273,7 @@ def ece_cases() -> list[dict[str, Any]]:
     """`ece_score` (common.py:187-197) and the plan's multi-class Brier score.
 
     Task 7.1.6. ECE is upstream's own function, called as is. Brier has no upstream
-    counterpart; it is PLAN.md's definition for Task 6.9.3 -- the mean over rows of
+    counterpart; it is PLAN.md's definition for Task B.5.3 -- the mean over rows of
     sum_j (p_j - [j == y])^2, each row a float64 numpy array so that both sums are
     numpy's pairwise order -- computed here so the Go port has one reference.
     """

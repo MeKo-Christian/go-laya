@@ -12,7 +12,9 @@ text.
 - **Upstream:** [`NandhaKishorM/laya`](https://github.com/NandhaKishorM/laya) 0.3.4, Apache-2.0. See `NOTICE`.
 - **The plan is the spec.** `PLAN.md` drives the work; `docs/INVARIANTS.md` lists the 74
   behaviours a test must assert, each citing the Python line that defines it; `docs/API.md`
-  gives the target Go types and the exact JSON shapes Python emits.
+  gives the target Go types and the exact JSON shapes Python emits; `docs/ARCHITECTURE.md` holds
+  the verified facts and technical constraints, `docs/DECISIONS.md` the decisions (D1…) with
+  their evidence.
 
 This is a **parity port**. The measure of correctness is not "is this good Go" but "does
 this agree with `original/`". Where upstream is inconsistent, reproducing the inconsistency

@@ -19,7 +19,7 @@ var _ backend.Backend = (*Backend)(nil)
 // Open fails with ErrUnsupportedPlatform. The binding does not compile here:
 // purego v0.9.0 has no Dlopen on Windows, js/wasm or the other BSDs, and its
 // fakecgo fails CGO-free builds on freebsd and several linux architectures.
-// Nobody has run the binding on Windows either (PLAN.md Task 6.7.1).
+// Nobody has run the binding on Windows either (PLAN.md Task B.4).
 //
 // An unknown Options.Device is ErrUnknownDevice here too, as on supported
 // platforms, so a typo is reported the same way everywhere.

@@ -7,7 +7,7 @@
 // come through the binding go-laya ships, not through Python, because that is the thing
 // whose latency a caller will experience -- hence a Go benchmark next to the S2 spike
 // rather than a script. It moved here unchanged from internal/onnxspike (PLAN.md Task
-// 6.10): Task 6.9.2 re-runs it against quantized graphs and needs the same harness.
+// 6.10): Task B.5.2 re-runs it against quantized graphs and needs the same harness.
 
 package onnx
 

@@ -168,7 +168,7 @@ type answerCase struct {
 // jsonx.Round4 exactly where agent.py:309-335 calls round(), and requires the
 // emitted floats to be equal -- not close -- to Python's (invariants #22-#29).
 //
-// The act head and the answer shapes are Task 7.2's; only the numbers the
+// The act head and the answer shapes are Task 7.3's; only the numbers the
 // calibration produces are asserted here.
 func TestAnswersNumerics(t *testing.T) {
 	cases := golden.Load(t, "answers")

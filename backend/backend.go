@@ -1,8 +1,8 @@
 // Package backend is the seam between laya and whatever runs the model: the
 // Backend interface and the Batch it consumes.
 //
-// It is a public leaf with no dependency beyond the standard library (PLAN.md
-// D9), so a caller can supply their own runtime through it without importing
+// It is a public leaf with no dependency beyond the standard library (D9 in
+// docs/DECISIONS.md), so a caller can supply their own runtime through it without importing
 // the ONNX binding the default implementation uses.
 package backend
 

@@ -132,7 +132,7 @@ func TestSerializeStateGolden(t *testing.T) {
 // The upstream block at test_criteria.py:103-116 is deliberately NOT ported.
 // It uses inspect.getsource to assert five string literals appear in
 // Agent.__init__ -- a test of the source text rather than of behaviour, with no
-// Go counterpart. PLAN.md task 2.5.4 replaces it with a behavioural test on the
+// Go counterpart. PLAN.md task 7.3.11 replaces it with a behavioural test on the
 // device-fallback policy, which cannot exist before the Agent does (M7).
 func TestCriteriaPort(t *testing.T) {
 	criteria := []struct {

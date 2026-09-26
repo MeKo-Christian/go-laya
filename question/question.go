@@ -3,7 +3,7 @@
 //
 // It is a leaf. It depends on jsonx and on internal/prompt and on nothing
 // heavier, so a caller that only builds questions -- presets, for instance --
-// never pulls in the ONNX Runtime binding (PLAN.md D9). The root package
+// never pulls in the ONNX Runtime binding (docs/DECISIONS.md D9). The root package
 // re-exports every type here under its documented name, so the public API is
 // the one docs/API.md describes either way.
 //
