@@ -1860,16 +1860,17 @@ internal/hub/*_test.go` prints nothing and no test names a real host.
       of at most 64 MiB, well-formed wire bytes, a graph, IR version 3–11 and an `ai.onnx` opset of at
       most 23. Those are the bounds ORT 1.23.0 loads, found by handing it models at each bound: IR 12
       and opset 24 fail. Every tensor it can reach (initializers, sparse initializers, node
-      attributes, subgraphs to depth 32, functions, training graphs) that keeps its data externally
-      must name a `filepath.IsLocal` location that is a regular file, not a symlink, beside the graph,
+      attributes, subgraphs to depth 32, functions and their default attributes, training graphs)
+      that keeps its data externally must name a `filepath.IsLocal` location that is a regular file
+      reached through real directories, no symlink anywhere on the path, beside the graph,
       with its byte range inside that file. An unknown `external_data` key is an error. It returns
       the main graph's declared IO with element types and dims, which 6.4.5 needs. `onnx.Open` calls
       it before the library is even loaded (`TestOpenChecksHeader`). `internal/safetensors.ReadHeader`
       applies the safetensors library's own rules: a header of at most 100 MB inside the file, a JSON
       object, known dtypes, non-negative dims, each span exactly dtype width × element count
       (overflow-checked), and tensors tiling the data buffer to EOF with no gap or overlap. Nothing
-      calls it yet; M8 and the hub loader will. Coverage: `TestRead` has 33 cases, `TestReadFile`
-      covers the symlink, the directory and the oversized cases, `TestReadHeader` has 26 cases, and
+      calls it yet; M8 and the hub loader will. Coverage: `TestRead` has 34 cases, `TestReadFile`
+      covers the symlinked file and parent, the directory and the oversized cases, `TestReadHeader` has 26 cases, and
       both packages have fuzz targets (30 s each, no failures). The gated tests read all three
       dynamo exports (IO as `export_onnx.py` writes it, `act_logits` `[batch, 2]`) and all three
       shipped `model.safetensors`. Each of these mutations fails a test:
