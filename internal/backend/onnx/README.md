@@ -4,16 +4,18 @@ This package started life as `internal/onnxspike` and was absorbed here by `PLAN
 The library-resolution chain, the external-data rule, the fixture schema, the finalizer regression
 and both benchmarks moved as they were; only the name went.
 
-Its tests still answer the two spike questions. **S2:** can the S1 ONNX export be executed from Go **without CGO**, and
+It holds the ONNX Runtime `backend.Backend` (`Open`, `Forward`, `Close`; Task 6.3.1, where Windows and js/wasm get a stub that fails with `ErrUnsupportedPlatform`), and its tests still answer the two spike questions. **S2:** can the S1 ONNX export be executed from Go **without CGO**, and
 is `github.com/shota3506/onnxruntime-purego` stable enough to build on (risk R5)? **S3:** how long
 does one forward pass actually take on a CPU (risk R3)? See §0 D5 and D6 for the answers, and §3 S2
 and S3 for the evidence.
 
 ## Running it
 
-Both tests skip unless an ONNX Runtime shared library is present, and `TestForwardPass`
-additionally needs the S1 export. CI has neither, so CI skips them — `AGENTS.md`'s rule that
-the pipeline never needs model weights. `TestForwardPass` and the benchmarks also skip under
+The ORT-backed tests skip unless an ONNX Runtime shared library is present, and `TestForwardPass`
+and `TestForwardGolden` additionally need the S1 exports. `TestForwardGolden` runs every batch in
+`testdata/logits.jsonl` through `Forward` for each checkpoint whose export exists. CI has neither
+the library nor the exports, so CI skips these tests, per `AGENTS.md`'s rule that the pipeline never
+needs model weights. Both forward-pass tests and the benchmarks also skip under
 `go test -short`, which is what `just test` and `just check` run, so an export on disk never turns
 the developer loop into a 1.7 GB load.
 

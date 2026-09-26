@@ -23,10 +23,6 @@ import (
 	ort "github.com/shota3506/onnxruntime-purego/onnxruntime"
 )
 
-// ortAPIVersion is the only C API version the binding implements
-// (onnxruntime/runtime.go: `supportedAPIVersions = []uint32{23}`), i.e. ONNX Runtime 1.23.x.
-const ortAPIVersion = 23
-
 // Tolerances for the fixture comparison, scaled -- see maxScaledDiff.
 //
 // A plain absolute tolerance does not work across both outputs: logits carry a -1e4
@@ -94,9 +90,9 @@ func requireORTLibrary(t testing.TB) string {
 func newRuntime(t testing.TB, lib string) *ort.Runtime {
 	t.Helper()
 
-	rt, err := ort.NewRuntime(lib, ortAPIVersion)
+	rt, err := ort.NewRuntime(lib, APIVersion)
 	if err != nil {
-		t.Fatalf("NewRuntime(%q, %d): %v", lib, ortAPIVersion, err)
+		t.Fatalf("NewRuntime(%q, %d): %v", lib, APIVersion, err)
 	}
 
 	t.Cleanup(func() {

@@ -109,9 +109,9 @@ func newBenchEnv(tb testing.TB) (*ort.Runtime, *ort.Env) {
 
 	lib := requireORTLibrary(tb)
 
-	rt, err := ort.NewRuntime(lib, ortAPIVersion)
+	rt, err := ort.NewRuntime(lib, APIVersion)
 	if err != nil {
-		tb.Fatalf("NewRuntime(%q, %d): %v", lib, ortAPIVersion, err)
+		tb.Fatalf("NewRuntime(%q, %d): %v", lib, APIVersion, err)
 	}
 
 	tb.Cleanup(func() {
