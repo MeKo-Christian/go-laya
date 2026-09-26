@@ -32,7 +32,7 @@ not finished; keep it rare. A milestone is done when every task box under it is 
 | [M4 — Tokenizer](#m4--pure-go-tokenizer-highest-risk)                  | pure-Go `tokenizer.json` loader ⚠️               | 🟢 4.1–4.5 done; 4.3.9/4.5.5 open                            |
 | [M5 — `build_sequence`](#m5--build_sequence)                           | prompt assembly + marker positions               | ✅ done                                                      |
 | [M6 — Backend](#m6--backend--checkpoint-loading)                       | `Backend` iface, hub cache, ONNX impl            | 🟡 6.1–6.4, 6.6, 6.8, 6.10 done bar 6.3.2 (CUDA); 6.5.1 done |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | 🟡 7.1.1–7.1.5 done                                          |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity)        | `SystemOne`, calibration, e2e parity, README     | 🟡 7.1.1–7.1.6 done                                          |
 | [M8 — Native backend](#m8--pure-go-native-backend-after-10)            | safetensors ModernBERT/mmBERT (post-1.0)         | ⬜ deferred                                                  |
 
 **Critical path:** M1 ✅ → M2 (`jsonx` first) → M4 → M5 → M6 → M7, with M3 off the path. _(Reordered
@@ -2214,11 +2214,23 @@ way to make an agent and says so rather than caching a nil one.
       fails 24 of 27 cases. Rounding `p` before computing the confidence fails 11 of them. Swapping in
       `math.Round(x*1e4)/1e4` fails nothing here, because no `answers.jsonl` value is a tie. The
       half-to-even behaviour is `round4.jsonl`'s job and `jsonx`'s test already pins it.
-- [ ] **7.1.6** _(new, 2026-09-20, review)_ Port `ece_score` (`common.py:187-197`, a public upstream
+- [x] **7.1.6** _(new, 2026-09-20, review)_ Port `ece_score` (`common.py:187-197`, a public upstream
       export the plan had neither ported nor dropped) as `internal/calib.ECE`, and define a multi-class
       Brier score (mean `Σ(p−y)²`) beside it — Task 6.9.3 is gated on both existing and no task
       created them. Fixture `testdata/ece.jsonl` from the generator. Acceptance: matches the fixture,
       including `conf == 0` falling in no bin and the empty input yielding NaN.
+      (2026-09-26) — `calib.ECE(conf, correct, bins)` with `DefaultECEBins = 15`, and
+      `calib.Brier(probs, labels)` over ragged rows. Brier is our definition, not upstream's.
+      `testdata/ece.jsonl` has 22 cases: 16 call upstream's own `ece_score` and 6 compute Brier
+      with numpy. `TestECEFixture` and `TestBrierFixture` require exact equality, and NaN for
+      `ece/empty` and `brier/empty`. `ece/all-zero` and `ece/zero-and-half` pin that
+      `conf == 0` falls in no bin, and `TestECEZeroInNoBin` pins it again without the fixture.
+      Mutations, each caught: `>=` for `>` fails 7 cases; edges as `i/bins` instead of
+      linspace's `i·(1/bins)` fail `on-every-edge-bins10`; dropping the forced last edge fails
+      `on-every-edge-bins49`; a sequential mean instead of numpy's pairwise sum fails 4 ECE cases
+      (n ≥ 50) and `brier/random-n300`; dropping the NaN guard fails `ece/empty`; dropping the bin
+      weight fails 11 cases. The two edge cases carry alternating labels, because with every
+      answer correct ECE is linear in the confidences and cannot see which bin a value landed in.
 - [ ] **7.1.7** _(new, 2026-09-26, from 7.1.3/7.1.4)_ Make `answers.jsonl` discriminate
       precision. All 27 cases still pass with the softmax and the entropy done in float64, and with a
       different summation order (checked before the PR #21 fix, against the `a[0]`-seeded
