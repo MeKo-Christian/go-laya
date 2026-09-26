@@ -51,6 +51,23 @@ func TestECEZeroInNoBin(t *testing.T) {
 	}
 }
 
+// TestBrierRejectsLabelOutOfRange pins that a label outside the row's k is an
+// error, not an all-zero target: silently scoring Σp² would make a malformed
+// evaluation look valid (PR #22 review). -1 included, which numpy's
+// np.eye(k)[y] would quietly read as the last class.
+func TestBrierRejectsLabelOutOfRange(t *testing.T) {
+	for _, y := range []int{-1, 2, 3} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("Brier with label %d on k=2 did not panic", y)
+				}
+			}()
+			Brier([][]float64{{0.5, 0.5}}, []int{y})
+		}()
+	}
+}
+
 // brierCase is one "brier" record of testdata/ece.jsonl.
 type brierCase struct {
 	Probs      [][]float64 `json:"probs"`

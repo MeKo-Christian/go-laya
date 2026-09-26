@@ -1,6 +1,9 @@
 package calib
 
-import "math"
+import (
+	"fmt"
+	"math"
+)
 
 // DefaultECEBins is ece_score's default bin count (common.py:187).
 const DefaultECEBins = 15
@@ -55,7 +58,9 @@ func ECE(conf []float64, correct []bool, bins int) float64 {
 // for Task 6.9.3, which compares int8 against fp32 calibration. Rows may
 // differ in length, as a choice question's k does; a float32 softmax output
 // is widened by the caller. Both sums are numpy's pairwise order, matching
-// the generator's reference. An empty input is NaN, like ECE.
+// the generator's reference. An empty input is NaN, like ECE. A label outside
+// [0, len(row)) panics: scoring it as an all-zero target would make a
+// malformed evaluation look valid.
 func Brier(probs [][]float64, labels []int) float64 {
 	if len(labels) != len(probs) {
 		panic("calib: Brier needs one label per row")
@@ -65,9 +70,13 @@ func Brier(probs [][]float64, labels []int) float64 {
 	}
 	rows := make([]float64, len(probs))
 	for r, p := range probs {
+		y := labels[r]
+		if y < 0 || y >= len(p) {
+			panic(fmt.Sprintf("calib: Brier label %d outside the row's %d classes", y, len(p)))
+		}
 		sq := make([]float64, len(p))
 		for j, v := range p {
-			if j == labels[r] {
+			if j == y {
 				v--
 			}
 			sq[j] = v * v
