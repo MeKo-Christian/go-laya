@@ -74,14 +74,15 @@ func findORTLibrary() (string, error) {
 		return path, nil
 	}
 
-	// A downloaded library that no longer matches its pinned hash is an error:
-	// only ortlib writes it, so a change there is worth a look before loading
-	// anything. Not downloaded, or no download for this platform, falls through.
+	// Only "not downloaded" and "no download for this platform" fall through.
+	// Anything else -- a copy that fails its pinned hash, a cache that cannot
+	// be read -- is an error: falling through would quietly load an unpinned
+	// system library in place of the one the cache was meant to supply.
 	switch lib, err := cachedORTLibrary(); {
 	case err == nil:
 		return lib, nil
-	case errors.Is(err, ortlib.ErrHashMismatch):
-		return "", err
+	case !errors.Is(err, ortlib.ErrNotCached) && !errors.Is(err, ortlib.ErrUnsupportedPlatform):
+		return "", fmt.Errorf("downloaded ONNX Runtime: %w", err)
 	}
 
 	for _, path := range ortLibraryCandidates {

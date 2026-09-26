@@ -124,11 +124,14 @@ type Client struct {
 
 // Cached returns the cached library for rel, after checking it is a regular
 // file with the pinned size and sha256. A library that was never downloaded
-// is ErrNotCached; one that is there but differs is ErrHashMismatch.
+// is ErrNotCached, and so is one with no cache directory to be in (no
+// $LAYA_CACHE and no user cache directory); one that is there but differs is
+// ErrHashMismatch. Any other error, such as an unreadable cache, is returned
+// as it is.
 func (c *Client) Cached(rel Release) (string, error) {
 	lib, err := c.path(rel)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %w", ErrNotCached, err)
 	}
 	fi, err := os.Lstat(lib)
 	if errors.Is(err, fs.ErrNotExist) {

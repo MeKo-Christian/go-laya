@@ -69,6 +69,10 @@ func TestFindORTLibrary(t *testing.T) {
 			candidates: []string{candidate}, wantIs: ortlib.ErrHashMismatch,
 		},
 		{
+			name: "unreadable download is an error", cachedErr: fmt.Errorf("open x: %w", fs.ErrPermission),
+			candidates: []string{candidate}, wantIs: fs.ErrPermission,
+		},
+		{
 			name: "LAYA_ORT_LIB set but missing", layaEnv: missing, ort: generic, candidates: []string{candidate},
 			wantErr: "LAYA_ORT_LIB=",
 		},

@@ -288,6 +288,29 @@ func TestCached(t *testing.T) {
 			t.Fatalf("Download over a tampered cache = %v, want ErrHashMismatch, not a silent re-download", err)
 		}
 	})
+	t.Run("no cache directory", func(t *testing.T) {
+		// Nothing to look in is nothing downloaded: resolution moves on to the
+		// system's libraries rather than failing on a machine with no $HOME.
+		t.Setenv("LAYA_CACHE", "")
+		t.Setenv("XDG_CACHE_HOME", "")
+		t.Setenv("HOME", "")
+		if _, err := (&Client{}).Cached(rel); !errors.Is(err, ErrNotCached) {
+			t.Fatalf("Cached = %v, want ErrNotCached", err)
+		}
+	})
+	t.Run("unreadable", func(t *testing.T) {
+		if os.Getuid() == 0 {
+			t.Skip("root reads a mode-000 file anyway")
+		}
+		c, lib := newCache(t)
+		if err := os.Chmod(lib, 0); err != nil {
+			t.Fatal(err)
+		}
+		_, err := c.Cached(rel)
+		if err == nil || errors.Is(err, ErrNotCached) || errors.Is(err, ErrHashMismatch) {
+			t.Fatalf("Cached = %v, want the read error itself, not ErrNotCached or ErrHashMismatch", err)
+		}
+	})
 	t.Run("symlink", func(t *testing.T) {
 		c, lib := newCache(t)
 		elsewhere := filepath.Join(t.TempDir(), "lib.so")
