@@ -1836,13 +1836,17 @@ rather than testing it, so today the honest claim is "untested", not "unsupporte
       `purego.Dlopen` untagged, and purego v0.9.0 defines it only on darwin/freebsd/linux/netbsd, so the
       first non-test import of the binding breaks `release.yml`'s `GOOS=windows go build ./...` unless
       a tagged stub lands with it.
-      (2026-09-26) — **stub** (user decision). `backend.go` is built for `!windows && !js && !wasm`;
-      `backend_other.go` gives the other platforms the same API, where `Open` and `Forward` return
-      `ErrUnsupportedPlatform`. `go build ./...` and `go test -c` pass for windows/amd64,
-      js/wasm, linux/arm64 and darwin/arm64. `GOOS=windows go list -deps` names no
-      purego. `TestUnsupportedPlatform` passes under `GOOS=js GOARCH=wasm` via `go_js_wasm_exec`; it
-      was not run on Windows. 6.7.1 stays open: nobody has tried Windows. The README half moves to
-      7.5.3.
+      (2026-09-26) — **stub** (user decision). `backend.go` carries a **positive** constraint:
+      darwin, linux and netbsd on amd64/arm64, plus linux/loong64, excluding android and ios. Those are
+      exactly the targets where the package builds with `CGO_ENABLED=0`, found by building it for every
+      linux/darwin/freebsd/netbsd target in `go tool dist list`. purego's fakecgo breaks freebsd,
+      linux/386 and linux/riscv64, and android implies `linux` but has no cgo-free Dlopen, so a
+      `!windows && !js && !wasm` constraint was wrong (PR #10 review). `backend_other.go` is the
+      complement: `Open` and `Forward` return `ErrUnsupportedPlatform`. Built with `go vet` over every
+      `go tool dist list` target, the package fails only where the toolchain itself requires cgo
+      (android/386, amd64, arm; ios). `GOOS=windows go list -deps` names no purego.
+      `TestUnsupportedPlatform` passes under `GOOS=js GOARCH=wasm` via `go_js_wasm_exec`, but was not
+      run on Windows. 6.7.1 stays open: nobody has tried Windows. The README half moves to 7.5.3.
 
 **Task 6.8: Go-vs-Python ONNX Runtime parity across the whole matrix.** _(new, 2026-09-20)_
 Spike S2 proved one forward pass, on one checkpoint, at one shape. M6 owes the rest.
@@ -1894,15 +1898,16 @@ it instead), and `findModel`'s `../../build/onnx` default.
 - [x] **6.10.1** `just bench-onnx` and the finalizer reproduction run from the new package unchanged.
       (2026-09-26) — `just bench-onnx 1` exits 0 against `./internal/backend/onnx/`: 35
       `BenchmarkForward` cells and all three `BenchmarkSessionLoad` processes. `LAYA_ORT_FINALIZER=1
-    go test -race -run TestValueCleanup/abandoned` still reports the `DATA RACE`, and
+  go test -race -run TestValueCleanup/abandoned` still reports the `DATA RACE`, and
       `TestForwardPass` passes via `just test-onnx` (3.8e-06 vs Python ORT). Renamed along the way:
       `LAYA_ONNXSPIKE_FINALIZER` → `LAYA_ORT_FINALIZER`, and `just spike-onnx`/`spike-onnx-race` →
       `test-onnx`/`test-onnx-race`.
 - [x] **6.10.2** `internal/onnxspike/` is gone; `internal/onnxspike/README.md`'s content moves with it.
       (2026-09-26) — moved with `git mv` (history kept; `onnxspike.go` → `resolve.go`,
       `spike_test.go` → `forward_pass_test.go`). The README is now `internal/backend/onnx/README.md`.
-      Outside PLAN.md, `rg onnxspike` names only the new package's own lines about where it came
-      from. The bare `ortAPIVersion` became the exported `APIVersion` the backend opens with, and
+      Outside PLAN.md and the checked-in benchmark logs under `docs/benchmarks/raw/`, `rg onnxspike`
+      names only the new package's own lines about where it came from. Those logs are recorded
+      output of runs made before the move, so they keep the old path. The bare `ortAPIVersion` became the exported `APIVersion` the backend opens with, and
       6.6.2 still verifies nothing. `requireORTLibraryB` and `findModel`'s `build/onnx` default were
       already gone.
 
@@ -2000,7 +2005,7 @@ way to make an agent and says so rather than caching a nil one.
       always a string (Task 3.1.4); `instructions` as `string` only; the default revision pinned
       to `1c5edc17` instead of following `main` (6.2.8); the English checkpoint downloading only the
       repo's root files instead of all 2.4 GB (6.2.9); no ONNX backend on Windows or js/wasm
-      (`ErrUnsupportedPlatform`, 6.7.2); no `mps` device; `$LAYA_CACHE`
+      (`ErrUnsupportedPlatform`, 6.7.2, as on every target outside darwin/linux/netbsd on amd64/arm64 and linux/loong64); no `mps` device; `$LAYA_CACHE`
       instead of the huggingface_hub cache; and every dropped or renamed public export —
       `proper_reward`, `td_lambda_targets` (D3), `ece_score` (internal `calib.ECE`), `load` (→ `Open`),
       `RLAgent` (no alias), `QTYPES`/`QTYPE_NAMES` (→ `QType`), `detect_language` (→ `lang.Analyse`),
