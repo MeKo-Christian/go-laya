@@ -20,6 +20,7 @@ import (
 	ort "github.com/shota3506/onnxruntime-purego/onnxruntime"
 
 	"github.com/MeKo-Christian/go-laya/backend"
+	"github.com/MeKo-Christian/go-laya/internal/onnxheader"
 )
 
 // Backend runs one exported DecisionModel graph through ONNX Runtime. It is
@@ -39,9 +40,12 @@ var _ backend.Backend = (*Backend)(nil)
 // the exports exceed protobuf's 2 GB limit and keep their weights in an
 // .onnx.data sibling, which ORT resolves relative to the model path.
 //
-// The graph must declare exactly the five inputs and two outputs
-// scripts/export_onnx.py writes, in any order; anything else is an error
-// wrapping backend.ErrIncompatibleCheckpoint.
+// Before the library is loaded, the graph file must pass internal/onnxheader:
+// well-formed, an IR version and opset the pinned runtime supports, and all
+// external data in regular files beside it. The session's graph must then
+// declare exactly the five inputs and two outputs scripts/export_onnx.py
+// writes, in any order. Either failure is an error wrapping
+// backend.ErrIncompatibleCheckpoint.
 //
 // opts.Device picks the execution provider; see Options.Device for when that
 // falls back to the CPU and warns.
@@ -59,6 +63,9 @@ func Open(modelPath string, opts Options) (*Backend, error) {
 	// its trust. ORT reads the file below either way.
 	if _, err := os.Stat(modelPath); err != nil {
 		return nil, fmt.Errorf("onnx backend: model: %w", err)
+	}
+	if _, err := onnxheader.Read(modelPath); err != nil {
+		return nil, fmt.Errorf("onnx backend: %w", err)
 	}
 
 	lib := opts.Library

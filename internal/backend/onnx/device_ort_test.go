@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -158,5 +160,18 @@ func TestOpenRejectsUnknownDevice(t *testing.T) {
 	_, err := Open("testdata/forward_pass.json", Options{Library: "/nonexistent/libonnxruntime.so", Device: "mps"})
 	if !errors.Is(err, ErrUnknownDevice) {
 		t.Fatalf("Open(device mps) = %v, want ErrUnknownDevice", err)
+	}
+}
+
+// TestOpenChecksHeader: a graph file that fails internal/onnxheader never
+// reaches ONNX Runtime; the library is not even loaded.
+func TestOpenChecksHeader(t *testing.T) {
+	model := filepath.Join(t.TempDir(), "model.onnx")
+	if err := os.WriteFile(model, []byte{0x3a, 0x10, 0x00}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Open(model, Options{Library: "/nonexistent/libonnxruntime.so"})
+	if !errors.Is(err, backend.ErrIncompatibleCheckpoint) || !strings.Contains(err.Error(), "malformed") {
+		t.Fatalf("Open = %v, want ErrIncompatibleCheckpoint from the header check", err)
 	}
 }
