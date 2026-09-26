@@ -28,7 +28,12 @@ Two notes on how this differs from ``laya.common.build_model``:
 * ``build_model`` hardcodes ``attn_implementation="sdpa"``. Exporting wants "eager",
   so the encoder is constructed here rather than through ``build_model``. ``--check-attn``
   then proves eager and sdpa agree, otherwise we would be exporting a different model
-  than the one parity is later measured against.
+  than the one parity is later measured against. ``--attn sdpa`` exports under sdpa
+  instead; PLAN.md Task 6.5 measured it and kept eager. At opset 18 the dynamo exporter
+  lowers both to the same MatMul/Softmax attention, so sdpa only rearranges the mask
+  arithmetic, and it landed no closer to the sdpa-recorded ``testdata/logits.jsonl``
+  (worse on english and typed-decisions, better on multilingual, all within ~1e-05
+  scaled through Go ORT 1.23.0).
 * ``reference_compile`` was ModernBERT's ``torch.compile`` switch and is what
   huggingface/transformers#35545 (PLAN.md R2) tripped over. transformers 5.x dropped it:
   there is no ``torch.compile`` left in ``modeling_modernbert.py`` and the config key is
@@ -54,6 +59,8 @@ Usage::
 
     .venv-ref/bin/python scripts/export_onnx.py --all
     .venv-ref/bin/python scripts/export_onnx.py --checkpoint english --out build/onnx
+    .venv-ref/bin/python scripts/export_onnx.py --all --dynamo --attn sdpa \
+        --out build/onnx-sdpa --suffix=-dynamo    # "=": argparse reads -dynamo as a flag
 """
 
 from __future__ import annotations
@@ -207,21 +214,26 @@ def check_fastpath_equivalence(model: nn.Module, inputs: tuple) -> dict[str, flo
 
 
 def check_attention_equivalence(model: nn.Module, inputs: tuple) -> dict[str, float]:
-    """Prove that exporting under "eager" does not change the model's numbers.
+    """Measure how far the two attention implementations are apart on this checkpoint.
 
+    Whichever one the model was built with, the other is run against it: the gap is what
+    exporting under "eager" costs against upstream's "sdpa" (PLAN.md Task 6.5).
     transformers dispatches on ``config._attn_implementation`` at forward time
     (``modeling_modernbert.py:282``), so this flips the attribute rather than rebuilding
     the model -- a second 421M-parameter fp32 copy does not fit comfortably in RAM.
     """
     cfg = model.encoder.config
     original = cfg._attn_implementation
+    runs = {}
     with torch.no_grad():
-        eager = model(*inputs, False)
+        runs[original] = model(*inputs, False)
+        other = "sdpa" if original == "eager" else "eager"
         try:
-            cfg._attn_implementation = "sdpa"
-            sdpa = model(*inputs, False)
+            cfg._attn_implementation = other
+            runs[other] = model(*inputs, False)
         finally:
             cfg._attn_implementation = original
+    eager, sdpa = runs["eager"], runs["sdpa"]
     return {
         "logits": float((eager[0] - sdpa[0]).abs().max()),
         "act_logits": float((eager[1] - sdpa[1]).abs().max()),
@@ -271,6 +283,36 @@ def export(
             do_constant_folding=True,
             dynamo=dynamo,
         )
+
+
+# Key under which export() records the encoder's attention implementation in the graph's
+# metadata_props, so --reuse can tell which implementation an existing file was exported
+# under instead of trusting its filename.
+ATTN_METADATA_KEY = "laya.attn"
+
+
+def stamp_attn(onnx_path: Path, attn: str) -> None:
+    """Record ``attn`` in the graph file's metadata; the external data is not touched."""
+    import onnx
+
+    model = onnx.load(onnx_path.as_posix(), load_external_data=False)
+    onnx.helper.set_model_props(
+        model, {**{p.key: p.value for p in model.metadata_props}, ATTN_METADATA_KEY: attn}
+    )
+    onnx.save(model, onnx_path.as_posix())
+
+
+def exported_attn(onnx_path: Path) -> str:
+    """The attention implementation ``onnx_path`` was exported under.
+
+    Files without the stamp predate ``--attn``, and until then the script exported under
+    "eager" only, so that is what an unstamped file is.
+    """
+    import onnx
+
+    model = onnx.load(onnx_path.as_posix(), load_external_data=False)
+    props = {p.key: p.value for p in model.metadata_props}
+    return props.get(ATTN_METADATA_KEY, "eager")
 
 
 def head_activation(onnx_path: Path) -> dict[str, int]:
@@ -329,7 +371,7 @@ def compare_with_ort(onnx_path: Path, model: nn.Module, inputs: tuple) -> dict[s
 
 
 def dump_fixture(
-    onnx_path: Path, model: nn.Module, ckpt: Checkpoint, out_path: Path
+    onnx_path: Path, model: nn.Module, ckpt: Checkpoint, out_path: Path, attn: str
 ) -> dict[str, Any]:
     """Freeze one forward pass so the Go spike can assert against it (PLAN.md S2.1).
 
@@ -364,6 +406,7 @@ def dump_fixture(
         ),
         "checkpoint": ckpt.name,
         "onnx": onnx_path.name,
+        "attn": attn,
         "versions": versions(),
         "input_names": INPUT_NAMES,
         "output_names": OUTPUT_NAMES,
@@ -417,12 +460,22 @@ def run_one(
     suffix: str = "",
     opset: int | None = None,
     fixture: Path | None = None,
+    attn: str = "eager",
 ) -> dict[str, Any]:
     ckpt_dir = ckpt.dir(models_root)
     print(f"\n=== {ckpt.name} ({ckpt_dir}) ===", flush=True)
     report: dict[str, Any] = {"checkpoint": ckpt.name, "dir": ckpt_dir.as_posix()}
 
-    model = build_decision_model(ckpt_dir, attn="eager")
+    out_path = out_dir / f"laya-{ckpt.name}{suffix}.onnx"
+    reusing = reuse and out_path.exists()
+    # Checked before the model is built: the report and fixture pair this run's PyTorch
+    # outputs and its attn with the graph ORT loads, so a reused graph exported under the
+    # other implementation would attribute its numbers to the wrong one.
+    if reusing and (found := exported_attn(out_path)) != attn:
+        raise ValueError(f"--reuse: {out_path} was exported under attn={found}, not {attn}")
+
+    model = build_decision_model(ckpt_dir, attn=attn)
+    report["attn"] = attn
     report["hidden_size"] = model.encoder.config.hidden_size
     report["params"] = sum(p.numel() for p in model.parameters())
     print(f"loaded strict=True: {report['params']:,} params, d={report['hidden_size']}", flush=True)
@@ -437,13 +490,13 @@ def run_one(
             f"fused vs reference head max abs diff: {report['fused_vs_reference_head']}", flush=True
         )
 
-    out_path = out_dir / f"laya-{ckpt.name}{suffix}.onnx"
     report["exporter"] = "dynamo" if dynamo else "torchscript"
     report["opset"] = opset or (OPSET_DYNAMO if dynamo else OPSET_TORCHSCRIPT)
-    if reuse and out_path.exists():
-        print(f"reusing existing {out_path}", flush=True)
+    if reusing:
+        print(f"reusing existing {out_path} (attn={attn})", flush=True)
     else:
         export(model, inputs, out_path, dynamo=dynamo, opset=opset)
+        stamp_attn(out_path, attn)
     report["onnx"] = out_path.as_posix()
     report["bytes"] = sum(p.stat().st_size for p in out_dir.glob(f"{out_path.stem}.onnx*"))
     print(f"exported -> {out_path} ({report['bytes'] / 1e6:.0f} MB)", flush=True)
@@ -455,7 +508,7 @@ def run_one(
     print(f"ORT vs PyTorch: {report['ort']}", flush=True)
 
     if fixture is not None:
-        report["fixture"] = dump_fixture(out_path, model, ckpt, fixture)
+        report["fixture"] = dump_fixture(out_path, model, ckpt, fixture, attn)
         print(f"fixture -> {report['fixture']}", flush=True)
 
     del model
@@ -486,6 +539,12 @@ def main() -> int:
         "--dynamo",
         action="store_true",
         help="use the torch.export-based exporter instead of TorchScript (PLAN.md S1.3)",
+    )
+    ap.add_argument(
+        "--attn",
+        choices=("eager", "sdpa"),
+        default="eager",
+        help="encoder attention implementation to export (PLAN.md Task 6.5)",
     )
     ap.add_argument("--suffix", default="", help="appended to the output filename")
     ap.add_argument("--opset", type=int, default=None, help="override the default opset")
@@ -524,6 +583,7 @@ def main() -> int:
                     args.suffix,
                     args.opset,
                     args.fixture,
+                    args.attn,
                 )
             )
         except Exception as exc:  # a spike records how it failed; it does not hide it
