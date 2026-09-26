@@ -20,7 +20,13 @@ var _ backend.Backend = (*Backend)(nil)
 // purego v0.9.0 has no Dlopen on Windows, js/wasm or the other BSDs, and its
 // fakecgo fails CGO-free builds on freebsd and several linux architectures.
 // Nobody has run the binding on Windows either (PLAN.md Task 6.7.1).
-func Open(string, Options) (*Backend, error) {
+//
+// An unknown Options.Device is ErrUnknownDevice here too, as on supported
+// platforms, so a typo is reported the same way everywhere.
+func Open(_ string, opts Options) (*Backend, error) {
+	if _, err := parseDevice(opts.Device); err != nil {
+		return nil, err
+	}
 	return nil, ErrUnsupportedPlatform
 }
 
