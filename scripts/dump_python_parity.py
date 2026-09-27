@@ -933,6 +933,7 @@ def answer_block(
     crit: Any,
     dtype: type = np.float32,
     sequential: bool = False,
+    act_softmax: str = "numpy",
 ) -> dict[str, Any]:
     """Replicate ``agent.py:294-343`` for one question.
 
@@ -948,6 +949,10 @@ def answer_block(
     the precision cases (Task 7.1.7) must round differently. ``sequential=True``
     replaces numpy's pairwise sums in the softmax and the entropy with a plain
     left-to-right loop, the other wrong port; the two differ only from k >= 8.
+
+    ``act_softmax="torch"`` softmaxes the act row with torch's float32 CPU kernel,
+    which is what agent.py:295 runs (D26). The default stays numpy so answers.jsonl
+    is unchanged; the logits fixture's ``result_json`` uses torch.
     """
     from laya.common import QTYPES, confidence_from_probs, temp_bucket
 
@@ -959,8 +964,16 @@ def answer_block(
     p = p / (_seq_sum(p) if sequential else p.sum())
 
     a = np.array(act_row, dtype=np.float32)
-    a = np.exp(a - a.max())
-    a = a / a.sum()
+    if act_softmax == "torch":
+        import torch
+
+        with torch.no_grad():
+            a = torch.softmax(torch.from_numpy(a).float(), -1).numpy()
+    elif act_softmax == "numpy":
+        a = np.exp(a - a.max())
+        a = a / a.sum()
+    else:
+        raise ValueError(f"act_softmax={act_softmax!r}")
 
     conf_score = round(_seq_confidence(p, k) if sequential else confidence_from_probs(p, k), 4)
     ext = {"act_probability": round(float(a[0]), 4)}
@@ -1561,11 +1574,11 @@ def act_softmax_cases() -> list[dict[str, Any]]:
 TORCH_CPU_CAPABILITY = "AVX2"
 
 
-def require_torch_cpu_capability() -> None:
+def require_torch_cpu_capability(fixture: str = "act_softmax.jsonl") -> None:
     got = torch_cpu_capability()
     if got != TORCH_CPU_CAPABILITY:
         raise SystemExit(
-            f"torch runs its CPU kernels as {got}, act_softmax.jsonl needs "
+            f"torch runs its CPU kernels as {got}, {fixture} needs "
             f"{TORCH_CPU_CAPABILITY}; regenerate on an AVX2 host without AVX-512 "
             f"(or with ATEN_CPU_CAPABILITY=avx2)"
         )
@@ -1724,9 +1737,16 @@ def dump_logits(models_root: Path, out_dir: Path, checkpoints: list[str]) -> Non
     ``-1e4`` masking, the four act features) need intermediates, but they are only
     asserted if the head is reimplemented, which is M8 -- deferred post-1.0. Task 8.8
     regenerates with intermediates when it starts.
+
+    ``result_json`` (Task 7.4.3) is the whole ``system_one`` envelope, built from
+    this same forward pass through ``answer_block`` and serialized as
+    ``answer_json`` is, so the fake-backend replay can compare it byte for byte.
+    Each checkpoint's envelopes are cross-checked against a real ``laya.Agent``.
     """
     import torch
     from transformers import AutoTokenizer
+
+    import laya
 
     sys.path.insert(0, str(REPO_ROOT / "scripts"))
     from export_onnx import build_decision_model
@@ -1743,6 +1763,7 @@ def dump_logits(models_root: Path, out_dir: Path, checkpoints: list[str]) -> Non
         print(f"  building {ckpt} ...", flush=True)
         model = build_decision_model(ckpt_dir, attn="sdpa")
         max_len, head_max_len = cfg.get("max_len", 512), cfg.get("head_max_len", 192)
+        envelopes: list[tuple[str, Any, dict[str, Any]]] = []
 
         for state_name, state in LOGITS_STATES:
             items, qids = [], []
@@ -1768,6 +1789,25 @@ def dump_logits(models_root: Path, out_dir: Path, checkpoints: list[str]) -> Non
                     b["qtype"],
                     False,
                 )
+            lg, act = logits.float().numpy(), act_logits.float().numpy()
+            envelope = {
+                "model": "laya-rl-agent",
+                "answers": {
+                    qid: answer_block(
+                        lg[r].tolist(),
+                        act[r].tolist(),
+                        cfg["temperature"],
+                        cfg["temperature_by_options"],
+                        len(items[r]["markers"]),
+                        to_internal(LOGITS_QUESTIONS[qid])["t"],
+                        to_internal(LOGITS_QUESTIONS[qid])["crit"],
+                        act_softmax="torch",
+                    )
+                    for r, qid in enumerate(qids)
+                },
+                "usage": {"input_tokens": int(b["attention_mask"].sum()), "output_tokens": 0},
+            }
+            envelopes.append((f"{ckpt}/{state_name}", state, envelope))
             cases.append(
                 {
                     "name": f"{ckpt}/{state_name}",
@@ -1799,9 +1839,24 @@ def dump_logits(models_root: Path, out_dir: Path, checkpoints: list[str]) -> Non
                     },
                     "logits": tensor_rec(logits.float().numpy()),
                     "act_logits": tensor_rec(act_logits.float().numpy()),
+                    "result_json": _result_json(envelope),
                 }
             )
         del model
+
+        # The envelope is a hand-built copy of agent.py:240-343; check it against the
+        # real thing before it becomes a golden vector.
+        agent = laya.load(str(ckpt_dir), device="cpu")
+        bad = []
+        for name, state, envelope in envelopes:
+            want = agent.system_one(state, LOGITS_QUESTIONS)
+            # Serialized, not ==: dict equality would miss a key-order drift.
+            if _result_json(envelope) != _result_json(want):
+                bad.append(f"{name}:\n      copy {envelope}\n      real {want}")
+        del agent
+        if bad:
+            raise SystemExit("result_json verification FAILED:\n    " + "\n    ".join(bad))
+        print(f"  result_json matches laya.Agent.system_one on all {len(envelopes)} states")
 
     head = header(
         "logits",
@@ -1814,6 +1869,11 @@ def dump_logits(models_root: Path, out_dir: Path, checkpoints: list[str]) -> Non
         ),
     )
     write_jsonl(out_dir / "logits.jsonl", head, cases)
+
+
+def _result_json(envelope: dict[str, Any]) -> str:
+    """Task 7.4.3's serialization: the separators and ensure_ascii answer_json uses."""
+    return json.dumps(envelope, ensure_ascii=False, separators=(", ", ": "))
 
 
 def tensor_rec(a: np.ndarray) -> dict[str, Any]:
@@ -1988,6 +2048,7 @@ def main() -> int:
     if args.verify_agent:
         verify_answer_block(args.models_root)
     if "logits" in wanted:
+        require_torch_cpu_capability("logits.jsonl")
         cks = args.checkpoint or sorted(CHECKPOINT_DIRS)
         dump_logits(args.models_root, args.out, cks)
     return 0
