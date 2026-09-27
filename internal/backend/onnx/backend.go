@@ -243,41 +243,26 @@ func (b *Backend) Close() error {
 	return nil
 }
 
-// openSession creates the session on the device opts asks for. It warns, once,
-// only when an explicitly requested device is not what the session ends up on:
-// either the library cannot provide it, or building the session with it
+// openSession creates the session on the device opts asks for, with
+// placeSession's fallback policy: it warns, once, only when a fallback to the
+// CPU happened, either because the library cannot provide an explicitly
+// requested device or because building the session on the chosen device
 // failed and the CPU was tried instead (agent.py:156-165, 203-227).
 func (b *Backend) openSession(modelPath string, opts Options, log *slog.Logger) error {
 	available, err := availableProviders(b.rt)
 	if err != nil {
 		return fmt.Errorf("onnx backend: execution providers: %w", err)
 	}
-	choice, err := resolveDevice(opts.Device, available)
+	sess, device, err := placeSession(opts.Device, available, modelPath,
+		func(providers []string) (*ort.Session, error) {
+			return b.rt.NewSession(b.env, modelPath, &ort.SessionOptions{
+				IntraOpNumThreads:  opts.IntraOpThreads,
+				ExecutionProviders: providers,
+			})
+		}, log)
 	if err != nil {
 		return err
 	}
-
-	newSession := func(providers []string) (*ort.Session, error) {
-		return b.rt.NewSession(b.env, modelPath, &ort.SessionOptions{
-			IntraOpNumThreads:  opts.IntraOpThreads,
-			ExecutionProviders: providers,
-		})
-	}
-
-	sess, err := newSession(choice.providers)
-	if err != nil && len(choice.providers) > 0 {
-		choice.fallback = fmt.Sprintf("session on %s failed: %v", choice.device, err)
-		choice.device = deviceCPU
-		sess, err = newSession(nil)
-	}
-	if err != nil {
-		return fmt.Errorf("onnx backend: session %s: %w", modelPath, err)
-	}
-
-	if choice.fallback != "" {
-		log.Warn("onnx backend: requested device unavailable, running on CPU",
-			"requested", choice.requested, "reason", choice.fallback)
-	}
-	b.sess, b.device = sess, choice.device
+	b.sess, b.device = sess, device
 	return nil
 }
