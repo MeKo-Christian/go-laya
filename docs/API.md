@@ -396,7 +396,9 @@ func ForLang(code string) RouteOption
 
 var (
 	ErrUnknownModel            = errors.New("laya: unknown model")
-	ErrCheckpointNotFound      = errors.New("laya: checkpoint not found")
+	ErrCheckpointNotFound      = errors.New("laya: checkpoint not found")       // a local path, a subfolder, or a Hub repo/subfolder with no files
+	ErrNoGraph                 = errors.New("laya: no ONNX export for the checkpoint") // D24; the message names the export command
+	ErrNoLoader                = errors.New("laya: no agent loader configured")    // only after WithLoader(nil)
 	ErrIncompatibleCheckpoint  = backend.ErrIncompatibleCheckpoint // defined in the leaf so a Backend can wrap it
 	ErrOptionsExceedHeadBudget = errors.New("laya: question options exceed head_max_len")
 	ErrEmptyQuestions          = errors.New("laya: no questions")          // Python: TypeError from collate_items returning None

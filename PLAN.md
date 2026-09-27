@@ -247,7 +247,7 @@ Done:
 - [x] **7.2.1** A default loader that builds an Agent from a spec's repo, subfolder, device and
       token, as `router.py:174-178` does. Default revision `1c5edc17…` (D17). It passes
       `checkpoint.Config.ActWidth()` as `onnx.Options.ActWidth`. (2026-09-27) `loader.go`: a
-      local directory is used as it is, a missing path-shaped id is `ErrModelNotFound`, anything
+      local directory is used as it is, a missing path-shaped id is `ErrCheckpointNotFound`, anything
       else is a Hub snapshot (the bundle repo at D17's pin, other repos at `main`), then the
       subfolder. Per D24 (user decision), the graph is the local export
       `laya-<name>.onnx` (`WithONNXDir`, `$LAYA_ONNX_DIR`, `<cache>/onnx`; `ErrNoGraph` names the

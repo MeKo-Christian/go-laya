@@ -22,10 +22,12 @@ var (
 	// agent that panics at the first use.
 	ErrNoLoader = errors.New("laya: no agent loader configured")
 
-	// ErrModelNotFound reports a checkpoint location that does not exist: a
-	// local path, or a subfolder missing from a checkpoint directory. Python
-	// raises FileNotFoundError (agent.py:117-121, 131-135).
-	ErrModelNotFound = errors.New("laya: checkpoint not found")
+	// ErrCheckpointNotFound reports a checkpoint location that does not exist:
+	// a local path, a subfolder missing from a checkpoint directory or outside
+	// it, or a Hub repo or subfolder with no files (wrapping hub's own
+	// not-found error). Python raises FileNotFoundError (agent.py:117-121,
+	// 131-135).
+	ErrCheckpointNotFound = errors.New("laya: checkpoint not found")
 
 	// ErrNoGraph reports a checkpoint with no ONNX export where the default
 	// loader looks for one. The Hub checkpoints carry safetensors, which only
