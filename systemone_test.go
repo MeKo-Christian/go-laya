@@ -260,8 +260,9 @@ func TestPredictIsSystemOne(t *testing.T) {
 // TestSystemOneReplay runs every logits.jsonl case through SystemOne with the
 // real tokenizers and budgets, against the fake backend. The fake answers only
 // a batch equal to the recorded one cell for cell, so a pass means the whole
-// front half -- conversion, sequence, collate -- agrees with Python, and the
-// usage count is the recorded one.
+// front half -- conversion, sequence, collate -- agrees with Python; the
+// result, formatted from the recorded logits, must then be byte-equal to what
+// Python's system_one returned for them.
 func TestSystemOneReplay(t *testing.T) {
 	root := golden.SkipWithoutModels(t)
 
@@ -271,6 +272,7 @@ func TestSystemOneReplay(t *testing.T) {
 		Questions   json.RawMessage `json:"questions"`
 		QIDs        []string        `json:"qids"`
 		InputTokens int             `json:"input_tokens"`
+		ResultJSON  string          `json:"result_json"`
 	}
 	agents := map[string]*onnxAgent{}
 	for _, rec := range golden.Load(t, "logits") {
@@ -313,6 +315,14 @@ func TestSystemOneReplay(t *testing.T) {
 				if na.ID != c.QIDs[i] {
 					t.Errorf("answer %d is %q, want %q", i, na.ID, c.QIDs[i])
 				}
+			}
+			// Task 7.4.3: the whole result, as Python's json.dumps writes it.
+			got, err := jsonx.Marshal(res.Map())
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if string(got) != c.ResultJSON {
+				t.Errorf("result bytes\n got %s\nwant %s", got, c.ResultJSON)
 			}
 		})
 	}

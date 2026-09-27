@@ -11,11 +11,16 @@ import (
 )
 
 // stubAgent stands in for a loaded checkpoint, as _Stub does upstream
-// (test_router.py:167-172). The whole of what the Router asks of an agent is
-// Close, so the whole of what a stub needs is to record it.
+// (test_router.py:167-172): SystemOne answers with its own name, and Close is
+// recorded, since eviction is what most of these tests are asking about.
 type stubAgent struct {
 	name   string
 	closed atomic.Int32
+}
+
+// SystemOne is _Stub.system_one (test_router.py:171-172).
+func (s *stubAgent) SystemOne(context.Context, any, Questions) (*Result, error) {
+	return &Result{Model: s.name, Answers: AnswerSet{}}, nil
 }
 
 func (s *stubAgent) Close() error {
@@ -378,5 +383,54 @@ func TestRouterAttachRaisesTheCapEnoughToHoldEverything(t *testing.T) {
 	mustLoad(t, r, "typed-decisions")
 	if got := r.Loaded(); !slices.Equal(got, []string{"multilingual", "typed-decisions"}) {
 		t.Errorf("Loaded() = %v, want [multilingual typed-decisions]", got)
+	}
+}
+
+// A loader is caller code and may panic. The panic is the caller's to
+// handle, but it must not leave the Router's lock held, or every later call
+// on the Router blocks forever (Copilot review on PR #30).
+func TestRouterSurvivesAPanickingLoader(t *testing.T) {
+	entries := map[string]func(*Router) error{
+		"Load": func(r *Router) error {
+			_, err := r.Load(context.Background(), "english")
+			return err
+		},
+		"Predict": func(r *Router) error {
+			_, err := r.Predict(context.Background(), english, predictQs)
+			return err
+		},
+		"Preload": func(r *Router) error { return r.Preload(context.Background(), "english") },
+	}
+	for name, call := range entries {
+		t.Run(name, func(t *testing.T) {
+			var panicked atomic.Bool
+			r, err := NewRouter(WithLoader(func(context.Context, string, ModelSpec) (Agent, error) {
+				if panicked.CompareAndSwap(false, true) {
+					panic("loader failed")
+				}
+				return &stubAgent{name: "english"}, nil
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			func() {
+				defer func() {
+					if recover() == nil {
+						t.Error("the loader's panic did not reach the caller")
+					}
+				}()
+				_ = call(r)
+			}()
+
+			done := make(chan error, 1)
+			go func() { done <- call(r) }()
+			if err := receive(t, "a call after the panic", done); err != nil {
+				t.Errorf("%s after the panic: %v", name, err)
+			}
+			if got := r.Loaded(); !slices.Equal(got, []string{"english"}) {
+				t.Errorf("Loaded() = %v, want [english]", got)
+			}
+		})
 	}
 }

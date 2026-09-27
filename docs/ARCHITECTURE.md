@@ -79,11 +79,12 @@ is always looser than `logits` in every parity measurement.
 
 ```
 go-laya/
-  laya.go        Agent interface (D13), Version; planned: a public Open (PLAN 7.7.5)
+  laya.go        Agent interface (SystemOne, Close; D13), Version; planned: a public Open (7.7.5)
   answer.go      Result, Answer, Probs, AnswerSet and their Python-byte JSON; formatAnswer
   systemone.go   SystemOne: validate, BuildSequence, Collate, one Forward, formatAnswer
   question.go    type aliases re-exporting question/ (D11)
-  router.go      Router, RouteDecision, model registry; lru.go the agent cache
+  router.go      Router, RouteDecision, model registry; lru.go the agent cache (leases: D27)
+  predict.go     Router.Predict / SystemOne: route, lease, run, add the routing block
   loader.go      the default agent loader: snapshot, config, tokenizer, local ONNX export (D24)
   options.go  errors.go
   lang/          script + language detection            (public, zero deps)
@@ -199,6 +200,11 @@ carries the −1e4 mask sentinel.
 against PyTorch. PyTorch's own eager-vs-sdpa gap (absolute, logits / act) is english
 1.0e-06 / 4.9e-04, multilingual 5.1e-05 / 1.2e-02, typed-decisions 1.5e-06 / 7.3e-04.
 
+**End to end** (Task 7.5, `TestE2EParity`): `SystemOne` over ORT against the probabilities
+Python's recorded logits give, over every `logits.jsonl` case. The worst per-option probability
+diff is english 4.3e-06, multilingual 2.8e-06, typed-decisions 1.4e-06, with no argmax flipping.
+`e2eTol` is 2× each.
+
 **Backend constraints** (`internal/backend/onnx`):
 
 - Every `*Value` is closed explicitly (D5). `LAYA_ORT_FINALIZER=1` keeps the race reproduction.
@@ -293,19 +299,19 @@ torch_threads: 1}`. `TestGoldenProvenance` globs every file and checks the heade
 Regeneration is deterministic (per-case sha256 seeds, sorted cases, one thread) and is a reviewed
 diff (R6).
 
-| File                      | Holds                                                                                                                                                                                                                                       |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tokenizer_{en,ml}.jsonl` | 103 cases each, ids **and** token strings, bare and with a leading space. Needs `LAYA_MODELS`, so this is a local gate.                                                                                                                     |
-| `pretok_{en,ml}.jsonl`    | Normalizer output and pre-tokenizer pieces, so CI tests those stages without checkpoints.                                                                                                                                                   |
-| `render.jsonl`            | `render_options`, `render_criterion`, `serialize_state`, byte for byte; inputs are key-ordered objects.                                                                                                                                     |
-| `sequence.jsonl`          | 45 `build_sequence` cases over all three checkpoints.                                                                                                                                                                                       |
-| `logits.jsonl`            | 10 states × 3 questions × 3 checkpoints, batch-level: the collated tensors and the PyTorch outputs.                                                                                                                                         |
-| `answers.jsonl`           | 33 `system_one` results, including `temperature_by_options` buckets, six `precision/*` cases that a float64 port or a sequential sum rounds differently, and exact `answer_json` bytes. Checked against a real `Agent` by `--verify-agent`. |
-| `mailtext.jsonl`          | 26 `email.py` cases (upstream has no tests for it).                                                                                                                                                                                         |
-| `round4.jsonl`            | 26 `round()` ties, including `-2.5e-05 → -0.0`.                                                                                                                                                                                             |
-| `ece.jsonl`               | 16 upstream `ece_score` cases, plus 6 Brier cases (our definition).                                                                                                                                                                         |
-| `f32math.jsonl`           | numpy float32 exp/log on 15 423 inputs, plus 64 softmax rows, all as bit patterns.                                                                                                                                                          |
-| `act_softmax.jsonl`       | torch 2.14.0+cpu `softmax(-1)` on 8757 float32 rows of widths 1–20, 32 and 33 (AVX2), as bit patterns; 2800 two-wide rows sit within 3 ulp of a `Round4` tie. The generator refuses a torch not on AVX2.                                    |
+| File                      | Holds                                                                                                                                                                                                                                                          |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tokenizer_{en,ml}.jsonl` | 103 cases each, ids **and** token strings, bare and with a leading space. Needs `LAYA_MODELS`, so this is a local gate.                                                                                                                                        |
+| `pretok_{en,ml}.jsonl`    | Normalizer output and pre-tokenizer pieces, so CI tests those stages without checkpoints.                                                                                                                                                                      |
+| `render.jsonl`            | `render_options`, `render_criterion`, `serialize_state`, byte for byte; inputs are key-ordered objects.                                                                                                                                                        |
+| `sequence.jsonl`          | 45 `build_sequence` cases over all three checkpoints.                                                                                                                                                                                                          |
+| `logits.jsonl`            | 10 states × 3 questions × 3 checkpoints, batch-level: the collated tensors, the PyTorch outputs, and `result_json`, the whole `system_one` result as Python's `json.dumps` writes it (checked against a real `Agent` at generation; torch's AVX2 act softmax). |
+| `answers.jsonl`           | 33 `system_one` results, including `temperature_by_options` buckets, six `precision/*` cases that a float64 port or a sequential sum rounds differently, and exact `answer_json` bytes. Checked against a real `Agent` by `--verify-agent`.                    |
+| `mailtext.jsonl`          | 26 `email.py` cases (upstream has no tests for it).                                                                                                                                                                                                            |
+| `round4.jsonl`            | 26 `round()` ties, including `-2.5e-05 → -0.0`.                                                                                                                                                                                                                |
+| `ece.jsonl`               | 16 upstream `ece_score` cases, plus 6 Brier cases (our definition).                                                                                                                                                                                            |
+| `f32math.jsonl`           | numpy float32 exp/log on 15 423 inputs, plus 64 softmax rows, all as bit patterns.                                                                                                                                                                             |
+| `act_softmax.jsonl`       | torch 2.14.0+cpu `softmax(-1)` on 8757 float32 rows of widths 1–20, 32 and 33 (AVX2), as bit patterns; 2800 two-wide rows sit within 3 ulp of a `Round4` tie. The generator refuses a torch not on AVX2.                                                       |
 
 The ONNX fixtures live beside the backend: `internal/backend/onnx/testdata/forward_pass.json` and
 `matrix/forward-<checkpoint>.json` (S1's four shapes, from `export_onnx.py --fixture-matrix`).

@@ -9,6 +9,8 @@
 package laya
 
 import (
+	"context"
+
 	"github.com/MeKo-Christian/go-laya/jsonx"
 	"github.com/MeKo-Christian/go-laya/lang"
 )
@@ -33,18 +35,24 @@ type Obj = jsonx.Obj
 // that produces it.
 type Detection = lang.Detection
 
-// Agent is a loaded checkpoint, as far as the Router is concerned.
+// Agent is a loaded checkpoint: what the Router caches, runs and releases.
 //
-// It is an interface, and today it carries only Close, because that is the
-// whole of what the Router needs: it caches agents, evicts the least recently
-// used, and must release the one it drops. The concrete agent -- the encoder,
-// the head, the tokenizer -- arrives in M6/M7 and will widen this interface
-// with SystemOne (PLAN.md D13).
-//
-// Modelling it as an interface now is also what makes the upstream LRU tests
-// portable: they never build a real agent either, they pass a stub
-// (test_router.py:167-172), and WithLoader is where it goes in.
+// It is an interface rather than a struct because the Router needs two things
+// of an agent and nothing else: to answer questions (Router.Predict runs
+// SystemOne) and to release its backend when evicted. That keeps the upstream
+// LRU tests portable -- they never build a real agent either, they pass a
+// stub (test_router.py:167-172), and WithLoader is where it goes in. Widening
+// it breaks third-party implementations, which D13 accepts before 1.0.
 type Agent interface {
+	// SystemOne answers every question about state in one forward pass:
+	// agent.system_one (agent.py:240-343). The answers come back in question
+	// order; Routing is nil, since no router was involved.
+	//
+	// It must not unload, close or evict its own agent through the Router
+	// running it: Router.Predict holds a lease on the agent for the length
+	// of this call, and dropping it waits for that lease (D27).
+	SystemOne(ctx context.Context, state any, qs Questions) (*Result, error)
+
 	// Close releases the agent's backend. A leaked ONNX Runtime session is
 	// hundreds of megabytes, so eviction calls it.
 	Close() error

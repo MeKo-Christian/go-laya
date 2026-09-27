@@ -222,7 +222,6 @@ func (l *defaultLoader) graph(name string) (string, error) {
 
 // onnxAgent is a loaded checkpoint: its runtime session, its config and its
 // tokenizer, plus the budgets and temperatures SystemOne reads from the config.
-// The Router's Agent interface still sees only Close; Task 7.7.1 widens it.
 type onnxAgent struct {
 	backend backend.Backend
 	cfg     *checkpoint.Config

@@ -82,7 +82,7 @@ Numbered checklist. Each item cites the line that defines it.
 50. `attach` registers the agent, touches it, and raises `max_loaded` to `len(self._agents)` so the LRU cannot immediately evict it (L197-208, tests 259-270). It accepts aliases. _(2026-09-20, M3: **upstream's own test for the raise is vacuous** — `test_router.py:264` checks `max_loaded >= 1` on a cap-1 router holding one attached agent, true however attach behaves. The raise is only observable with a second agent; a port can drop it and leave the whole suite green.)_
 51. `preload` raises `max_loaded` to `max(max_loaded, len(names), len(_agents))` before building, and skips names that are already resident (L218-222).
 52. `unload()` with no argument clears everything; with a name it removes just that one (L225-234). _(2026-09-20, M3: `Unload` closes what it drops and returns an error, where Python returns nothing. Only agents the Router's loader built are closed; an attached one belongs to the caller.)_
-53. `Router.predict` returns the `system_one` payload with `result["routing"] = dict(decision)` added (L305-308); `system_one` is an alias of `predict` (L311).
+53. `Router.predict` returns the `system_one` payload with `result["routing"] = dict(decision)` added (L305-308); `system_one` is an alias of `predict` (L311). _Done (2026-09-27, Task 7.7): `Router.Predict` in `predict.go` sets `Result.Routing`, which `Result.Map` writes last through jsonx; `Router.SystemOne` is its alias. `TestRouterPredict*` pins it with stub agents, and `TestLocalE2E/router` with real weights._
 
 **`lang` (lang.py)**
 
