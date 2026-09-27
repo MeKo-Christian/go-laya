@@ -3,6 +3,7 @@ package laya
 
 import (
 	"context"
+	"encoding/json"
 	"slices"
 	"testing"
 
@@ -36,12 +37,9 @@ var localBilling = []struct{ lang, text string }{
 	{"russian", "С меня дважды списали деньги по счёту 4411, верните деньги."},
 }
 
-// TestLocalE2E is Task 7.5.4 for sections 2-4 of test_local_e2e.py: real
-// weights and real forward passes, held to upstream's loose directional
+// TestLocalE2E is Tasks 7.5.4 and 7.5.5, sections 2-5 of test_local_e2e.py:
+// real weights and real forward passes, held to upstream's loose directional
 // thresholds. The agents come from the default loader, as a caller's would.
-//
-// Section 5 goes through Router.Predict and its routing payload, which Task
-// 7.7 has yet to add.
 func TestLocalE2E(t *testing.T) {
 	models := golden.SkipWithoutModels(t)
 	graphs := linkExports(t, ModelEnglish, ModelMultilingual)
@@ -217,26 +215,93 @@ func TestLocalE2E(t *testing.T) {
 			t.Errorf("triage intent = %q, want refund or billing_question", intent.Choice)
 		}
 	})
+
+	// Section 5 (test_local_e2e.py:193-211): Router.Predict end to end. The
+	// Router above goes first, so only one session is resident at a time.
+	t.Run("router", func(t *testing.T) {
+		if err := r.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+		localRouterE2E(t, models)
+	})
 }
 
-// localAgent loads name through the Router. Until Task 7.7.1 widens Agent,
-// SystemOne is only on the concrete type.
-func localAgent(t *testing.T, r *Router, name string) *onnxAgent {
+// localRouterE2E is test_local_e2e.py:193-211: a Router of its own at
+// max_loaded=1 over all three checkpoints, driven only through Predict.
+func localRouterE2E(t *testing.T, models string) {
+	r2, err := NewRouter(
+		WithMaxLoaded(1),
+		WithONNXDir(linkExports(t, ModelEnglish, ModelMultilingual, ModelTypedDecisions)),
+		WithRouterDevice("cpu"),
+		WithModels(map[string]ModelSpec{
+			ModelEnglish:        ModelSpecFromString(golden.CheckpointDir(models, golden.English)),
+			ModelMultilingual:   ModelSpecFromString(golden.CheckpointDir(models, golden.Multilingual)),
+			ModelTypedDecisions: ModelSpecFromString(golden.CheckpointDir(models, golden.TypedDecisions)),
+		}),
+	)
+	if err != nil {
+		t.Fatalf("NewRouter: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := r2.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
+	predict := func(state any, opts ...RouteOption) *Result {
+		t.Helper()
+		res, err := r2.Predict(context.Background(), state, localQD, opts...)
+		if err != nil {
+			t.Fatalf("Predict: %v", err)
+		}
+		if res.Routing == nil {
+			t.Fatal("no routing decision on the result")
+		}
+		t.Logf("%-15s | %s", res.Routing.Model, res.Routing.Reason)
+		return res
+	}
+
+	en := predict(jsonx.Obj{{Key: "message", Value: "I was charged twice, please refund."}})
+	if en.Routing.Model != ModelEnglish {
+		t.Errorf("router used %q, want english", en.Routing.Model)
+	}
+	if _, ok := en.Answers.Get("dept"); !ok {
+		t.Error("router answered without dept")
+	}
+
+	hi := predict(jsonx.Obj{{Key: "message", Value: "मुझसे दो बार शुल्क लिया गया, कृपया पैसे वापस करें।"}})
+	if hi.Routing.Model != ModelMultilingual {
+		t.Errorf("router used %q, want multilingual", hi.Routing.Model)
+	}
+	if got := r2.Loaded(); !slices.Equal(got, []string{ModelMultilingual}) {
+		t.Errorf("Loaded() = %v, want [multilingual] at max_loaded=1", got)
+	}
+	if dept := localAnswer(t, hi, "dept"); dept.Choice != "billing" {
+		t.Errorf("hindi dept = %q, want billing", dept.Choice)
+	}
+
+	td := predict(jsonx.Obj{{Key: "message", Value: "anything"}}, ForModel("typed-decisions"))
+	if td.Routing.Model != ModelTypedDecisions {
+		t.Errorf("router used %q, want typed-decisions", td.Routing.Model)
+	}
+	b, err := jsonx.Marshal(td.Routing.Map())
+	if err != nil || !json.Valid(b) {
+		t.Errorf("routing payload does not serialize: %s, %v", b, err)
+	}
+}
+
+// localAgent loads name through the Router, as laya.load does upstream.
+func localAgent(t *testing.T, r *Router, name string) Agent {
 	t.Helper()
 	a, err := r.Load(context.Background(), name)
 	if err != nil {
 		t.Fatalf("Load(%s): %v", name, err)
 	}
-	oa, ok := a.(*onnxAgent)
-	if !ok {
-		t.Fatalf("Load(%s) returned %T, want *onnxAgent", name, a)
-	}
-	return oa
+	return a
 }
 
-func localPredict(t *testing.T, a *onnxAgent, state any, qs Questions) *Result {
+func localPredict(t *testing.T, a Agent, state any, qs Questions) *Result {
 	t.Helper()
-	res, err := a.Predict(context.Background(), state, qs)
+	res, err := a.SystemOne(context.Background(), state, qs)
 	if err != nil {
 		t.Fatalf("Predict: %v", err)
 	}
