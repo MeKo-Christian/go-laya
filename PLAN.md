@@ -30,19 +30,19 @@ finished tasks cited in code comments refer to that history.
 Tick a box only when the work is committed and `just ci` is green. A milestone is done when every
 box under it is ticked.
 
-| Milestone                                                       | Delivers                                                | Status                                     |
-| --------------------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------ |
-| [M0 — Scaffolding](#m0--scaffolding)                            | Go module, tooling, CI, frozen Python, `Version`        | ✅ done                                    |
-| [Spikes S1–S3](#3-spikes)                                       | ONNX export, binding choice, latency floor              | ✅ done                                    |
-| [M1 — Reference harness](#m1--the-python-reference-harness)     | `testdata/*.jsonl` golden vectors                       | ✅ done                                    |
-| [M2 — Tier-1 core](#m2--tier-1-core)                            | `jsonx`, `lang`, `mailtext`, `presets`, render          | ✅ done                                    |
-| [M3 — Router](#m3--router)                                      | `Route`, model registry, LRU                            | ✅ done                                    |
-| [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done                                    |
-| [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done                                    |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                                    |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | 🟡 7.1–7.5 done bar 7.2.5; 7.7 bar 7.7.5–6 |
-| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | ⬜ open                                    |
-| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred                                |
+| Milestone                                                       | Delivers                                                | Status                                   |
+| --------------------------------------------------------------- | ------------------------------------------------------- | ---------------------------------------- |
+| [M0 — Scaffolding](#m0--scaffolding)                            | Go module, tooling, CI, frozen Python, `Version`        | ✅ done                                  |
+| [Spikes S1–S3](#3-spikes)                                       | ONNX export, binding choice, latency floor              | ✅ done                                  |
+| [M1 — Reference harness](#m1--the-python-reference-harness)     | `testdata/*.jsonl` golden vectors                       | ✅ done                                  |
+| [M2 — Tier-1 core](#m2--tier-1-core)                            | `jsonx`, `lang`, `mailtext`, `presets`, render          | ✅ done                                  |
+| [M3 — Router](#m3--router)                                      | `Route`, model registry, LRU                            | ✅ done                                  |
+| [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done                                  |
+| [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done                                  |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                                  |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | 🟡 7.1–7.5 done bar 7.2.5; 7.7 bar 7.7.5 |
+| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | ⬜ open                                  |
+| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred                              |
 
 **Critical path to 1.0:** M7 (loader → `SystemOne` → answer parity → e2e parity → README). The
 Backlog and M8 do not gate 1.0.
@@ -493,12 +493,21 @@ Done:
       lives on the loader's unexported `onnxAgent`, reachable only through the Router, and no
       task owns the exported surface. `Agent` is already the Router's interface name, so the
       exported type needs another name or the interface does.
-- [ ] **7.7.6** Eviction during `Predict`. Two goroutines on one Router can evict each other's
+- [x] **7.7.6** Eviction during `Predict`. Two goroutines on one Router can evict each other's
       agent between `Load` and `SystemOne` (at `max_loaded=1`, requests in two languages). The
       backend's `Close` waits for a pass already running, so nothing is freed under it, but a pass
       that has not started fails with the ONNX backend's `ErrClosed`, which is internal and not
       reachable with `errors.Is`. Python has the same window and GC to hide it. Decide between
       reference counting resident agents, a retry, or documenting it (the GoDoc does today).
+      (2026-09-27) Decided: a lease (D27, user decision, after Codex's P1 on PR #30). Python has no
+      such window, since the local reference keeps an evicted agent alive. `Predict` leases its
+      agent under the lock that finds it. Eviction, `Unload` and `Close` drop the agent at once,
+      and the call that dropped it waits outside the lock for its passes, then closes it and
+      reports the error as before. `Load` stays unleased and says so.
+      `go test -race -count=1 -run 'TestRouter|TestUpstreamLRU|TestAgentInterface' -v .` passes:
+      `TestRouterPredictSurvives{Eviction,Unload,Close}` hold a pass open while its agent is
+      dropped, and `…ReportsDeferredCloseError` and `…Concurrent` (8×25 requests) also pass.
+      Each of these mutations fails them: dropping the lease, not waiting, never releasing.
 
 ### Backlog — open work that does not gate 1.0
 

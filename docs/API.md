@@ -358,8 +358,9 @@ func (r *Router) Unload(names ...string) error
 func (r *Router) Close() error
 
 // Task 7.7 (predict.go): Route, Load, agent.SystemOne, then Result.Routing =
-// the decision, as router.py:305-308 sets result["routing"]. An agent evicted
-// by another goroutine between the load and its pass fails that pass (7.7.6).
+// the decision, as router.py:305-308 sets result["routing"]. The agent is
+// leased for the pass (7.7.6, D27): eviction, Unload or Close drop it from the
+// cache at once and close it when the pass ends, waiting for that.
 func (r *Router) Predict(ctx context.Context, state any, qs Questions, ro ...RouteOption) (*Result, error)
 func (r *Router) SystemOne(ctx context.Context, state any, qs Questions, ro ...RouteOption) (*Result, error) // alias, router.py:311
 

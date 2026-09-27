@@ -83,8 +83,8 @@ go-laya/
   answer.go      Result, Answer, Probs, AnswerSet and their Python-byte JSON; formatAnswer
   systemone.go   SystemOne: validate, BuildSequence, Collate, one Forward, formatAnswer
   question.go    type aliases re-exporting question/ (D11)
-  router.go      Router, RouteDecision, model registry; lru.go the agent cache
-  predict.go     Router.Predict / SystemOne: route, load, run, add the routing block
+  router.go      Router, RouteDecision, model registry; lru.go the agent cache (leases: D27)
+  predict.go     Router.Predict / SystemOne: route, lease, run, add the routing block
   loader.go      the default agent loader: snapshot, config, tokenizer, local ONNX export (D24)
   options.go  errors.go
   lang/          script + language detection            (public, zero deps)
