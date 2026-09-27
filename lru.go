@@ -59,7 +59,7 @@ func (r *Router) loadLocked(ctx context.Context, key string) (Agent, error) {
 		return resident.agent, nil
 	}
 	if r.loader == nil {
-		return nil, fmt.Errorf("%w: cannot build %q; pass WithLoader", ErrNoLoader, key)
+		return nil, fmt.Errorf("%w: cannot build %q", ErrNoLoader, key)
 	}
 
 	agent, err := r.loader(ctx, key, r.models[key])

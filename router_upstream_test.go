@@ -3,7 +3,6 @@ package laya
 
 import (
 	"context"
-	"errors"
 	"slices"
 	"testing"
 
@@ -466,10 +465,10 @@ func TestUpstreamLocalE2ERouting(t *testing.T) {
 		})
 	}
 
-	// Routing never loads: the whole section runs with a router that has no
-	// loader at all, and would fail with ErrNoLoader the moment it tried.
-	if _, err := r.Load(context.Background(), "english"); !errors.Is(err, ErrNoLoader) {
-		t.Errorf("Load error = %v, want ErrNoLoader", err)
+	// Routing never loads: nothing became resident, and the paths above do
+	// not even exist.
+	if got := r.Loaded(); len(got) != 0 {
+		t.Errorf("Loaded() = %v after routing, want nothing", got)
 	}
 }
 

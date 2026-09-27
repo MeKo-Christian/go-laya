@@ -30,19 +30,19 @@ finished tasks cited in code comments refer to that history.
 Tick a box only when the work is committed and `just ci` is green. A milestone is done when every
 box under it is ticked.
 
-| Milestone                                                       | Delivers                                                | Status      |
-| --------------------------------------------------------------- | ------------------------------------------------------- | ----------- |
-| [M0 — Scaffolding](#m0--scaffolding)                            | Go module, tooling, CI, frozen Python, `Version`        | ✅ done     |
-| [Spikes S1–S3](#3-spikes)                                       | ONNX export, binding choice, latency floor              | ✅ done     |
-| [M1 — Reference harness](#m1--the-python-reference-harness)     | `testdata/*.jsonl` golden vectors                       | ✅ done     |
-| [M2 — Tier-1 core](#m2--tier-1-core)                            | `jsonx`, `lang`, `mailtext`, `presets`, render          | ✅ done     |
-| [M3 — Router](#m3--router)                                      | `Route`, model registry, LRU                            | ✅ done     |
-| [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done     |
-| [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done     |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done     |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | 🟡 7.1 done |
-| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | ⬜ open     |
-| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred |
+| Milestone                                                       | Delivers                                                | Status                            |
+| --------------------------------------------------------------- | ------------------------------------------------------- | --------------------------------- |
+| [M0 — Scaffolding](#m0--scaffolding)                            | Go module, tooling, CI, frozen Python, `Version`        | ✅ done                           |
+| [Spikes S1–S3](#3-spikes)                                       | ONNX export, binding choice, latency floor              | ✅ done                           |
+| [M1 — Reference harness](#m1--the-python-reference-harness)     | `testdata/*.jsonl` golden vectors                       | ✅ done                           |
+| [M2 — Tier-1 core](#m2--tier-1-core)                            | `jsonx`, `lang`, `mailtext`, `presets`, render          | ✅ done                           |
+| [M3 — Router](#m3--router)                                      | `Route`, model registry, LRU                            | ✅ done                           |
+| [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done                           |
+| [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done                           |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                           |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | 🟡 7.1, 7.2 done bar 7.2.3, 7.2.5 |
+| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | ⬜ open                           |
+| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred                       |
 
 **Critical path to 1.0:** M7 (loader → `SystemOne` → answer parity → e2e parity → README). The
 Backlog and M8 do not gate 1.0.
@@ -53,31 +53,32 @@ Backlog and M8 do not gate 1.0.
 
 Full rationale is in [`docs/DECISIONS.md`](docs/DECISIONS.md). Index:
 
-| #   | Decision                                                            |
-| --- | ------------------------------------------------------------------- |
-| D1  | ONNX first, pure-Go native backend later, behind one `Backend`      |
-| D2  | Pure-Go tokenizer, no CGO                                           |
-| D3  | Inference only (`collate_items` is ported)                          |
-| D4  | Upstream Python frozen under `original/`                            |
-| D5  | `onnxruntime-purego` at `8db8bd7`; every `*Value` closed explicitly |
-| D6  | CPU is a batch deployment; threads = physical cores; no int8        |
-| D7  | Reference env on transformers 5.17.0; 4.x mis-loads mmBERT          |
-| D8  | M8 is a zero-shared-library backend, not a speed play               |
-| D9  | `backend` is a public leaf package                                  |
-| D10 | Purpose-built tokenizer, no vendored fork                           |
-| D11 | Question types in leaf `question/`, aliased at the root             |
-| D12 | `jsonx.Marshal` is the outer encoder for every parity emitter       |
-| D13 | Router caches an `Agent` interface, widened in M7                   |
-| D14 | No cost-biased routing option                                       |
-| D15 | Invalid UTF-8 sanitised at the tokenizer's API edge                 |
-| D16 | Router closes only agents its own loader built                      |
-| D17 | Default revision pinned to `1c5edc17…`                              |
-| D18 | English checkpoint downloads only the repo root                     |
-| D19 | Shipped export stays `eager`                                        |
-| D20 | ORT is a verified download; any 1.x ≥ 1.23 accepted                 |
-| D21 | ONNX backend on a positive platform list; stub elsewhere            |
-| D22 | `cuda` falls back to CPU until the binding supports it              |
-| D23 | Parity emitters reject rather than guess on unordered input         |
+| #   | Decision                                                              |
+| --- | --------------------------------------------------------------------- |
+| D1  | ONNX first, pure-Go native backend later, behind one `Backend`        |
+| D2  | Pure-Go tokenizer, no CGO                                             |
+| D3  | Inference only (`collate_items` is ported)                            |
+| D4  | Upstream Python frozen under `original/`                              |
+| D5  | `onnxruntime-purego` at `8db8bd7`; every `*Value` closed explicitly   |
+| D6  | CPU is a batch deployment; threads = physical cores; no int8          |
+| D7  | Reference env on transformers 5.17.0; 4.x mis-loads mmBERT            |
+| D8  | M8 is a zero-shared-library backend, not a speed play                 |
+| D9  | `backend` is a public leaf package                                    |
+| D10 | Purpose-built tokenizer, no vendored fork                             |
+| D11 | Question types in leaf `question/`, aliased at the root               |
+| D12 | `jsonx.Marshal` is the outer encoder for every parity emitter         |
+| D13 | Router caches an `Agent` interface, widened in M7                     |
+| D14 | No cost-biased routing option                                         |
+| D15 | Invalid UTF-8 sanitised at the tokenizer's API edge                   |
+| D16 | Router closes only agents its own loader built                        |
+| D17 | Default revision pinned to `1c5edc17…`                                |
+| D18 | English checkpoint downloads only the repo root (superseded by D24)   |
+| D19 | Shipped export stays `eager`                                          |
+| D20 | ORT is a verified download; any 1.x ≥ 1.23 accepted                   |
+| D21 | ONNX backend on a positive platform list; stub elsewhere              |
+| D22 | `cuda` falls back to CPU until the binding supports it                |
+| D23 | Parity emitters reject rather than guess on unordered input           |
+| D24 | Forward pass is a local ONNX export; only config + tokenizer download |
 
 ## 1. What we are porting — verified facts
 
@@ -240,19 +241,37 @@ Done:
       `Softmax` fails `precision/choice-confidence`, and a sequential `numpySum` fails both
       `precision/sum-order-*` cases.
 
-**Task 7.2: The default agent loader.** Until it exists, `NewRouter()` without `WithLoader`
-returns `ErrNoLoader`.
+**Task 7.2: The default agent loader.** `NewRouter()` without `WithLoader` loads through it;
+`WithLoader(nil)` is the only way to get `ErrNoLoader`.
 
-- [ ] **7.2.1** A default loader that builds an Agent from a spec's repo, subfolder, device and
-      token, as `router.py:174-178` does. Default revision `1c5edc17…` (D17). A subfolder maps to
-      `hub.Client.Snapshot(…, []string{sub + "/*"})`. The root (English) checkpoint downloads
-      root files only (D18), which `Snapshot`'s allow patterns cannot express, so it needs a
-      root-only filter. It passes `checkpoint.Config.ActWidth()` as `onnx.Options.ActWidth`.
-- [ ] **7.2.2** `WithRouterDevice` and `WithRouterToken` (`docs/API.md:347-348`), including
-      upstream's `token or os.environ["HF_TOKEN"]` fallback (`router.py:159`).
-- [ ] **7.2.3** Widen `Agent` past `Close() error` only when M7 needs it (D13).
-- [ ] **7.2.4** Offline from the environment: map `HF_HUB_OFFLINE` and/or `LAYA_OFFLINE` onto
-      `hub.Client.Offline`.
+- [x] **7.2.1** A default loader that builds an Agent from a spec's repo, subfolder, device and
+      token, as `router.py:174-178` does. Default revision `1c5edc17…` (D17). It passes
+      `checkpoint.Config.ActWidth()` as `onnx.Options.ActWidth`. (2026-09-27) `loader.go`: a
+      local directory is used as it is, a missing path-shaped id is `ErrCheckpointNotFound`, anything
+      else is a Hub snapshot (the bundle repo at D17's pin, other repos at `main`), then the
+      subfolder. Per D24 (user decision), the graph is the local export
+      `laya-<name>.onnx` (`WithONNXDir`, `$LAYA_ONNX_DIR`, `<cache>/onnx`; `ErrNoGraph` names the
+      export command), so a snapshot fetches only `rl_agent_config.json` and `tokenizer/*`. That
+      replaces the item's original `sub + "/*"` and root-only filter, which assumed the weights
+      are downloaded; D18 is superseded.
+      `go test -count=1 -run 'TestDefaultLoader|TestNewRouterInstalls' -v .` passes 6 tests, with
+      the real-weights test skipped in CI. Locally,
+      `LAYA_ONNX_DIR=$PWD/build/onnx go test -count=1 -run TestDefaultLoaderReal -v .` loads the
+      english checkpoint through ONNX Runtime and passes.
+- [x] **7.2.2** `WithRouterDevice` and `WithRouterToken` (`docs/API.md:347-348`), including
+      upstream's `token or os.environ["HF_TOKEN"]` fallback (`router.py:159`). (2026-09-27) The
+      token fallback is read once by `NewRouter`. The device reaches `onnx.Options.Device` unchanged
+      and is validated at load time.
+      `go test -count=1 -run 'TestRouterDevice|TestRouterToken' -v .` passes both.
+- [ ] **7.2.3** Widen `Agent` past `Close() error` only when M7 needs it (D13). The loader's
+      `onnxAgent` carries only `Close` until Task 7.7.1 adds `SystemOne`.
+- [x] **7.2.4** Offline from the environment: map `HF_HUB_OFFLINE` and/or `LAYA_OFFLINE` onto
+      `hub.Client.Offline`. (2026-09-27) `HF_HUB_OFFLINE` is read as huggingface_hub reads it,
+      `_is_true(HF_HUB_OFFLINE or TRANSFORMERS_OFFLINE)` (`constants.py:194`), and `LAYA_OFFLINE`
+      also switches it on. `go test -count=1 -run 'TestDefaultLoaderOffline' -v .` passes 13 cases.
+- [ ] **7.2.5** An opt-in to follow `main` or another revision instead of D17's pin. D17 calls
+      following `main` an explicit opt-in, but no option expresses it yet, so the default loader
+      always loads the bundle repo at the pin.
 
 **Task 7.3: `Agent.SystemOne`.** Invariants §5 items 19–34.
 
@@ -326,8 +345,8 @@ returns `ErrNoLoader`.
       `raw.githubusercontent.com/NandhaKishorM/laya/main/...`, so a fork's README renders
       upstream's assets.
 - [ ] **7.6.3** Document the deliberate deviations: `repo` is always a string (3.1.4);
-      `instructions` is `string` only; the pinned default revision (D17); the English checkpoint
-      downloads the root only (D18); no ONNX backend off D21's platform list
+      `instructions` is `string` only; the pinned default revision (D17); the graph is a local
+      export and only the config and tokenizer are downloaded (D24); no ONNX backend off D21's platform list
       (`ErrUnsupportedPlatform`); `cuda` falls back to CPU (D22); no `mps` device; `$LAYA_CACHE`
       instead of the huggingface_hub cache; and every dropped or renamed export: `proper_reward`,
       `td_lambda_targets` (D3), `ece_score` (internal `calib.ECE`), `load` (→ `Open`), `RLAgent`
