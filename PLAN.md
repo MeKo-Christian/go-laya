@@ -338,7 +338,9 @@ Done:
       2800 of them within 3 ulp of a `Round4` tie. Against it, `exp32` with a divide misses 96
       rows after Round4, and narrowed `math.Exp` misses 42. The user chose the port (D26):
       `calib.ActSoftmax` is ATen's short-row `_vec_softmax_lastdim` with SLEEF's `xexpf` and a
-      multiply by `1/sum`, and it is bit-exact on all 4529 rows.
+      multiply by `1/sum`, and it is bit-exact on all 4529 rows. Review follow-up: the vectorized
+      reduction for rows of 8 or more is ported too, bit-exact on 8757 rows of widths 1–20, 32 and
+      33, and the generator refuses a torch not on AVX2.
       `go test -count=1 -run TestActSoftmax -v ./internal/calib/` passes. Mutations to a divide,
       or to `exp32`, fail with 975 and 1754 rows off. The 33 `answers.jsonl` values still match
       under `ActSoftmax`.
