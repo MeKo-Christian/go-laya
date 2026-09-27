@@ -5,10 +5,12 @@ package checkpoint
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -119,4 +121,112 @@ func (c *Config) ActWidth() (int, error) {
 		return 0, fmt.Errorf("config: %s: act_costs: %w: %w", c.path, err, backend.ErrIncompatibleCheckpoint)
 	}
 	return n + 1, nil
+}
+
+// Temperatures returns the two temperature tables agent.py:194-195 reads:
+// byQType is cfg.get("temperature", [1.0, 1.0, 1.0]), indexed by qtype id
+// (agent.py:304), and byOptions is cfg.get("temperature_by_options", {}),
+// keyed by temp_bucket. An absent key yields the upstream default; byOptions
+// is never nil. Numbers are decoded as JSON float64, unrounded, since they
+// divide the logits (agent.py:305).
+//
+// A present value that is not the expected shape fails with
+// backend.ErrIncompatibleCheckpoint: temperature must be a list of exactly
+// three numbers, temperature_by_options an object of numbers. A present null
+// fails too, since Python indexes or .get()s it and raises.
+func (c *Config) Temperatures() (byQType [3]float64, byOptions map[string]float64, err error) {
+	byQType = [3]float64{1, 1, 1}
+	if raw, ok := c.fields["temperature"]; ok {
+		var elems []json.RawMessage
+		if err := decodeContainer(raw, '[', &elems); err != nil {
+			return byQType, nil, c.fieldErr("temperature", err)
+		}
+		if len(elems) != len(byQType) {
+			return byQType, nil, c.fieldErr("temperature",
+				fmt.Errorf("has %d elements, want %d", len(elems), len(byQType)))
+		}
+		for i, e := range elems {
+			if byQType[i], err = decodeNumber(e); err != nil {
+				return byQType, nil, c.fieldErr("temperature", fmt.Errorf("element %d: %w", i, err))
+			}
+		}
+	}
+
+	byOptions = map[string]float64{}
+	if raw, ok := c.fields["temperature_by_options"]; ok {
+		var m map[string]json.RawMessage
+		if err := decodeContainer(raw, '{', &m); err != nil {
+			return byQType, nil, c.fieldErr("temperature_by_options", err)
+		}
+		for k, v := range m {
+			if byOptions[k], err = decodeNumber(v); err != nil {
+				return byQType, nil, c.fieldErr("temperature_by_options", fmt.Errorf("%q: %w", k, err))
+			}
+		}
+	}
+	return byQType, byOptions, nil
+}
+
+// MaxLen is the full sequence budget, cfg.get("max_len", 512)
+// (agent.py:256). See intField for what fails.
+func (c *Config) MaxLen() (int, error) { return c.intField("max_len", 512) }
+
+// HeadMaxLen is the options budget, cfg.get("head_max_len", 192)
+// (agent.py:257). See intField for what fails.
+func (c *Config) HeadMaxLen() (int, error) { return c.intField("head_max_len", 192) }
+
+// intField reads key as a positive JSON integer, or dflt when it is absent.
+// build_sequence slices with the value (common.py:82-86), so Python needs an
+// int: a float literal such as 512.0, a string, a bool (which Go cannot tell
+// apart from Python's int subclass anyway) or null fails with
+// backend.ErrIncompatibleCheckpoint. So does a non-positive integer, which
+// Python would accept and then silently truncate every sequence with; failing
+// loudly there is a deliberate deviation.
+func (c *Config) intField(key string, dflt int) (int, error) {
+	raw, ok := c.fields[key]
+	if !ok {
+		return dflt, nil
+	}
+	n, err := strconv.Atoi(string(bytes.TrimSpace(raw)))
+	if err != nil {
+		return 0, c.fieldErr(key, fmt.Errorf("%s is not an integer", raw))
+	}
+	if n <= 0 {
+		return 0, c.fieldErr(key, fmt.Errorf("%d is not positive", n))
+	}
+	return n, nil
+}
+
+// fieldErr wraps err as a failure of the config's key.
+func (c *Config) fieldErr(key string, err error) error {
+	return fmt.Errorf("config: %s: %s: %w: %w", c.path, key, err, backend.ErrIncompatibleCheckpoint)
+}
+
+// decodeContainer decodes raw into dst after checking it opens with open ('['
+// or '{'); json.Unmarshal would otherwise accept null as an empty value.
+func decodeContainer(raw json.RawMessage, open byte, dst any) error {
+	v := bytes.TrimSpace(raw)
+	if len(v) == 0 || v[0] != open {
+		kind := "array"
+		if open == '{' {
+			kind = "object"
+		}
+		return fmt.Errorf("%s is not a JSON %s", v, kind)
+	}
+	return json.Unmarshal(v, dst)
+}
+
+// decodeNumber decodes raw as a JSON number. Unmarshal into a float64 would
+// accept null silently, so it is rejected first; strings and bools already
+// fail there.
+func decodeNumber(raw json.RawMessage) (float64, error) {
+	v := bytes.TrimSpace(raw)
+	if bytes.Equal(v, []byte("null")) {
+		return 0, errors.New("null is not a number")
+	}
+	var f float64
+	if err := json.Unmarshal(v, &f); err != nil {
+		return 0, fmt.Errorf("%s is not a number", v)
+	}
+	return f, nil
 }
