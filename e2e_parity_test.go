@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/MeKo-Christian/go-laya/backend"
@@ -30,6 +31,24 @@ var e2eTol = map[string]float64{
 	golden.English:        8.6e-6,
 	golden.Multilingual:   5.6e-6,
 	golden.TypedDecisions: 2.8e-6,
+}
+
+// e2eActTol is the largest relative act-logit difference, |go-py|/max(|py|,1),
+// TestE2EParity accepts between the action head over ONNX Runtime and the act
+// logits Python recorded, per checkpoint. The act logits sit in the thousands
+// (about ±1100 to ±5000), where one float32 ulp is already up to 4.9e-4, so an
+// absolute bound would have to scale with the checkpoint; a relative one does
+// not.
+//
+// Measured over every logits.jsonl case (2026-09-27, ORT 1.23.0 on the dynamo
+// exports): english 3.9e-06 (about 0.02 absolute), multilingual 1.4e-06,
+// typed-decisions 1.2e-06, with no act argmax flipping. Each gets 2x headroom.
+// The formatted confidence, score and act_probability matched Python's exactly
+// in every case, so roundStep covers them with room to spare.
+var e2eActTol = map[string]float64{
+	golden.English:        7.8e-6,
+	golden.Multilingual:   2.8e-6,
+	golden.TypedDecisions: 2.5e-6,
 }
 
 // e2eCeiling is Task 7.5.2's bound on any per-checkpoint tolerance.
@@ -81,6 +100,7 @@ func TestE2EParity(t *testing.T) {
 		QIDs       []string        `json:"qids"`
 		QTypes     []int           `json:"qtypes"`
 		Logits     json.RawMessage `json:"logits"`
+		ActLogits  json.RawMessage `json:"act_logits"`
 		ResultJSON string          `json:"result_json"`
 	}
 	cases := golden.Load(t, "logits")
@@ -93,7 +113,7 @@ func TestE2EParity(t *testing.T) {
 			}
 			tee, a := e2eAgent(t, golden.CheckpointDir(root, ck), graph)
 
-			worst, n := 0.0, 0
+			worst, worstAct, n := 0.0, 0.0, 0
 			for _, rec := range cases {
 				var c logitsCase
 				rec.Unmarshal(t, &c)
@@ -116,12 +136,19 @@ func TestE2EParity(t *testing.T) {
 						rec.Name, len(tee.logits), len(res.Answers), len(want), len(c.QIDs))
 				}
 
+				// The action head is a separate output of the same graph, and
+				// the recorded act_probability is saturated at 1.0 in every
+				// case, so only its logits can expose a wrong act output.
+				wantAct := golden.Matrix[float32](t, c.ActLogits, rec.Name+" act_logits")
+				if len(tee.act) != len(wantAct) {
+					t.Fatalf("%s: %d act rows, recorded %d", rec.Name, len(tee.act), len(wantAct))
+				}
+				for r := range wantAct {
+					worstAct = max(worstAct, compareActRow(t, rec.Name, r, tee.act[r], wantAct[r], e2eActTol[ck]))
+				}
+
 				var py struct {
-					Answers map[string]struct {
-						Choice        string             `json:"choice"`
-						Noul          *float64           `json:"noul"`
-						Probabilities map[string]float64 `json:"probabilities"`
-					} `json:"answers"`
+					Answers map[string]pyAnswer `json:"answers"`
 				}
 				if err := json.Unmarshal([]byte(c.ResultJSON), &py); err != nil {
 					t.Fatalf("%s: result_json: %v", rec.Name, err)
@@ -148,38 +175,19 @@ func TestE2EParity(t *testing.T) {
 						t.Errorf("%s %s: argmax %d, Python %d\n got %v\nwant %v", rec.Name, na.ID, g, p, pGo, pPy)
 					}
 
-					// The formatted answer, against what Python's system_one
-					// returned: the same decision, and probabilities that, both
-					// rounded to four places, sit at most one step apart. That
-					// is also what catches a wrong temperature, which moves no
-					// argmax.
-					pa := py.Answers[na.ID]
-					for _, e := range na.A.Probabilities {
-						if pp, ok := pa.Probabilities[e.Key]; !ok || math.Abs(e.P-pp) > roundStep {
-							t.Errorf("%s %s: probability %s = %v, Python %v", rec.Name, na.ID, e.Key, e.P, pp)
-						}
+					pa, ok := py.Answers[na.ID]
+					if !ok {
+						t.Errorf("%s: Python has no answer %q", rec.Name, na.ID)
+						continue
 					}
-					if len(na.A.Probabilities) != len(pa.Probabilities) {
-						t.Errorf("%s %s: %d probabilities, Python %d",
-							rec.Name, na.ID, len(na.A.Probabilities), len(pa.Probabilities))
-					}
-					switch na.A.Type {
-					case "choice":
-						if na.A.Choice != pa.Choice {
-							t.Errorf("%s %s: choice %q, Python %q", rec.Name, na.ID, na.A.Choice, pa.Choice)
-						}
-					case "noul":
-						if pa.Noul == nil || (*na.A.Noul > 0.5) != (*pa.Noul > 0.5) ||
-							math.Abs(*na.A.Noul-*pa.Noul) > roundStep {
-							t.Errorf("%s %s: noul %v, Python %v", rec.Name, na.ID, *na.A.Noul, pa.Noul)
-						}
-					}
+					compareFormatted(t, rec.Name+" "+na.ID, na.A, pa)
 				}
 			}
 			if n == 0 {
 				t.Fatalf("logits.jsonl has no cases for %s", ck)
 			}
 			t.Logf("%d cases; worst per-option probability diff vs PyTorch: %.3g (tolerance %g)", n, worst, e2eTol[ck])
+			t.Logf("worst relative act-logit diff vs PyTorch: %.3g (tolerance %g)", worstAct, e2eActTol[ck])
 		})
 	}
 }
@@ -215,6 +223,122 @@ func e2eAgent(t *testing.T, dir, graph string) (*teeBackend, *onnxAgent) {
 		t.Fatal(err)
 	}
 	return tee, a
+}
+
+// pyAnswer is one answer of Python's system_one result_json. Optional keys are
+// pointers, so a key missing from Python's answer fails rather than reading
+// as zero.
+type pyAnswer struct {
+	Choice        string             `json:"choice"`
+	Score         *float64           `json:"score"`
+	Legend        map[string]any     `json:"legend"`
+	Noul          *float64           `json:"noul"`
+	Probabilities map[string]float64 `json:"probabilities"`
+	Confidence    *float64           `json:"confidence"`
+	Action        *struct {
+		ActProbability *float64 `json:"act_probability"`
+	} `json:"action"`
+}
+
+// compareFormatted holds the formatted answer to what Python's system_one
+// returned: the same decision, and probabilities that, both rounded to four
+// places, sit at most one step apart. That is also what catches a wrong
+// temperature, which moves no argmax. Score, confidence and act_probability
+// are rounded the same way and get the same one-step bound.
+func compareFormatted(t *testing.T, name string, got Answer, pa pyAnswer) {
+	t.Helper()
+	for _, e := range got.Probabilities {
+		if pp, ok := pa.Probabilities[e.Key]; !ok || math.Abs(e.P-pp) > roundStep {
+			t.Errorf("%s: probability %s = %v, Python %v", name, e.Key, e.P, pp)
+		}
+	}
+	if len(got.Probabilities) != len(pa.Probabilities) {
+		t.Errorf("%s: %d probabilities, Python %d", name, len(got.Probabilities), len(pa.Probabilities))
+	}
+	switch got.Type {
+	case "choice":
+		if got.Choice != pa.Choice {
+			t.Errorf("%s: choice %q, Python %q", name, got.Choice, pa.Choice)
+		}
+	case "noul":
+		if pa.Noul == nil || (*got.Noul > 0.5) != (*pa.Noul > 0.5) ||
+			math.Abs(*got.Noul-*pa.Noul) > roundStep {
+			t.Errorf("%s: noul %v, Python %v", name, *got.Noul, orMissing(pa.Noul))
+		}
+	case "score":
+		if got.Score == nil || pa.Score == nil || math.Abs(*got.Score-*pa.Score) > roundStep {
+			t.Errorf("%s: score %v, Python %v", name, orMissing(got.Score), orMissing(pa.Score))
+		}
+		compareLegend(t, name, got.Legend, pa.Legend)
+	}
+	// Confidence is present for every type, and act_probability in every
+	// answer's action block.
+	if pa.Confidence == nil || math.Abs(got.Confidence-*pa.Confidence) > roundStep {
+		t.Errorf("%s: confidence %v, Python %v", name, got.Confidence, orMissing(pa.Confidence))
+	}
+	var pyAct *float64
+	if pa.Action != nil {
+		pyAct = pa.Action.ActProbability
+	}
+	if pyAct == nil || math.Abs(got.Action.ActProbability-*pyAct) > roundStep {
+		t.Errorf("%s: act_probability %v, Python %v", name, got.Action.ActProbability, orMissing(pyAct))
+	}
+}
+
+// compareActRow holds one row of the action head's logits to the recorded row:
+// the same width, every entry within the relative tolerance, and the same
+// argmax, which is what decides the act probability once it saturates. It
+// returns the row's worst relative difference.
+func compareActRow(t *testing.T, name string, r int, got, want []float32, tol float64) float64 {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Errorf("%s: act row %d has %d logits, recorded %d", name, r, len(got), len(want))
+		return 0
+	}
+	worst := 0.0
+	for i := range want {
+		d := math.Abs(float64(got[i])-float64(want[i])) / max(math.Abs(float64(want[i])), 1)
+		worst = max(worst, d)
+		if d > tol {
+			t.Errorf("%s: act[%d][%d] = %.8g, Python %.8g (relative diff %.3g > %g)",
+				name, r, i, got[i], want[i], d, tol)
+		}
+	}
+	if g, p := argmax(got), argmax(want); g != p {
+		t.Errorf("%s: act row %d argmax %d, Python %d\n got %v\nwant %v", name, r, g, p, got, want)
+	}
+	return worst
+}
+
+// compareLegend holds a score answer's legend to Python's. The legend is the
+// caller's criteria, not model output, so it has to match exactly; both sides
+// go through JSON so the comparison sees what Python would have serialized.
+func compareLegend(t *testing.T, name string, got Obj, want map[string]any) {
+	t.Helper()
+	if want == nil {
+		t.Errorf("%s: Python has no legend", name)
+		return
+	}
+	b, err := jsonx.Marshal(got)
+	if err != nil {
+		t.Fatalf("%s: marshal legend: %v", name, err)
+	}
+	var g map[string]any
+	if err := json.Unmarshal(b, &g); err != nil {
+		t.Fatalf("%s: legend %s: %v", name, b, err)
+	}
+	if !reflect.DeepEqual(g, want) {
+		t.Errorf("%s: legend %v, Python %v", name, g, want)
+	}
+}
+
+// orMissing formats an optional field for a failure message: its value, or
+// "missing" rather than a pointer address.
+func orMissing(p *float64) any {
+	if p == nil {
+		return "missing"
+	}
+	return *p
 }
 
 // argmax is the first maximum, as numpy's and torch's argmax pick it.
