@@ -30,19 +30,19 @@ finished tasks cited in code comments refer to that history.
 Tick a box only when the work is committed and `just ci` is green. A milestone is done when every
 box under it is ticked.
 
-| Milestone                                                       | Delivers                                                | Status                           |
-| --------------------------------------------------------------- | ------------------------------------------------------- | -------------------------------- |
-| [M0 — Scaffolding](#m0--scaffolding)                            | Go module, tooling, CI, frozen Python, `Version`        | ✅ done                          |
-| [Spikes S1–S3](#3-spikes)                                       | ONNX export, binding choice, latency floor              | ✅ done                          |
-| [M1 — Reference harness](#m1--the-python-reference-harness)     | `testdata/*.jsonl` golden vectors                       | ✅ done                          |
-| [M2 — Tier-1 core](#m2--tier-1-core)                            | `jsonx`, `lang`, `mailtext`, `presets`, render          | ✅ done                          |
-| [M3 — Router](#m3--router)                                      | `Route`, model registry, LRU                            | ✅ done                          |
-| [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done                          |
-| [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done                          |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                          |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | 🟡 7.1–7.4 done bar 7.2.3, 7.2.5 |
-| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | ⬜ open                          |
-| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred                      |
+| Milestone                                                       | Delivers                                                | Status                                        |
+| --------------------------------------------------------------- | ------------------------------------------------------- | --------------------------------------------- |
+| [M0 — Scaffolding](#m0--scaffolding)                            | Go module, tooling, CI, frozen Python, `Version`        | ✅ done                                       |
+| [Spikes S1–S3](#3-spikes)                                       | ONNX export, binding choice, latency floor              | ✅ done                                       |
+| [M1 — Reference harness](#m1--the-python-reference-harness)     | `testdata/*.jsonl` golden vectors                       | ✅ done                                       |
+| [M2 — Tier-1 core](#m2--tier-1-core)                            | `jsonx`, `lang`, `mailtext`, `presets`, render          | ✅ done                                       |
+| [M3 — Router](#m3--router)                                      | `Route`, model registry, LRU                            | ✅ done                                       |
+| [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done                                       |
+| [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done                                       |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                                       |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | 🟡 7.1–7.4 done bar 7.2.3, 7.2.5; 7.5 in part |
+| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | ⬜ open                                       |
+| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred                                   |
 
 **Critical path to 1.0:** M7 (loader → `SystemOne` → answer parity → e2e parity → README). The
 Backlog and M8 do not gate 1.0.
@@ -396,21 +396,38 @@ Done:
 
 **Task 7.5: End-to-end parity.**
 
-- [ ] **7.5.1** Test against `testdata/logits.jsonl`, gated behind `testing.Short()` and
-      `LAYA_MODELS`.
-- [ ] **7.5.2** Assert per-option probabilities within 1e-4 **and** that the argmax decision never
+- [x] **7.5.1** Test against `testdata/logits.jsonl`, gated behind `testing.Short()` and
+      `LAYA_MODELS`. (2026-09-27) `e2e_parity_test.go`: `TestE2EParity` runs every case through
+      `SystemOne` with the real tokenizer and ONNX Runtime on the dynamo exports, behind `-short`,
+      `LAYA_MODELS` and `LAYA_ONNX_DIR`; `go test -short` reports it skipped.
+- [x] **7.5.2** Assert per-option probabilities within 1e-4 **and** that the argmax decision never
       flips. The tolerance is per checkpoint, taken from measured numbers rather than a round
       figure. Go ORT at real prompts is already ≤ 9.8e-06 scaled on `logits` (eager export).
       PyTorch's own eager-vs-sdpa gap (absolute, logits / act) is english 1.0e-06 / 4.9e-04,
       multilingual 5.1e-05 / 1.2e-02, typed-decisions 1.5e-06 / 7.3e-04. See
-      `docs/ARCHITECTURE.md` §5.
-- [ ] **7.5.3** Run it for all three checkpoints.
+      `docs/ARCHITECTURE.md` §5. (2026-09-27) The unrounded probabilities from Go's logits are
+      compared with those from Python's recorded logits at the same temperature. Measured worst:
+      english 4.3e-06, multilingual 2.8e-06, typed-decisions 1.4e-06, with no argmax flipping.
+      `e2eTol` is 2× each, and the test holds every entry to 1e-4. The formatted answer is also
+      checked against `result_json`: the same decision, and rounded probabilities at most one
+      step (1e-4) apart. Adding 1e-3 to one logit fails all three checkpoints, and swapping the
+      top two logits of a choice row fails them too. Ignoring the config's temperatures fails
+      english and typed-decisions; multilingual's temperatures are all 1.0, so nothing changes.
+- [x] **7.5.3** Run it for all three checkpoints. (2026-09-27)
+      `LAYA_MODELS=$PWD/models LAYA_ONNX_DIR=$PWD/build/onnx go test -count=1 -run TestE2EParity -v .`
+      passes english, multilingual and typed-decisions, 10 cases each.
 - [ ] **7.5.4** Port sections 2–5 of `original/tests/test_local_e2e.py`, with its loose directional
-      thresholds (≥ 6/8 land on `billing`, ≥ 2/3 on the preset checks).
+      thresholds (≥ 6/8 land on `billing`, ≥ 2/3 on the preset checks). (2026-09-27) — partial:
+      sections 2–4 are ported in `local_e2e_test.go` (`TestLocalE2E`, agents from the default
+      loader, gated like 7.5.1) and pass: multilingual 8/8 on billing, and every preset check
+      met. Section 5 needs `Router.Predict` and the `routing` payload (7.7.2/7.7.3). The
+      thresholds are weak: the english checkpoint also scores 8/8, so they cannot tell the two
+      checkpoints apart on these texts, and moderation's ≥ 2/3 still passes with an empty state.
 - [ ] **7.5.5** Port `test_local_e2e.py:190-211`, gated like 7.5.1: the triage intent lands in
       `{refund, billing_question}`; a language switch at `max_loaded=1` leaves
       `Loaded() == ["multilingual"]` (the only eviction test with real weights); and the `routing`
-      payload is present and marshals.
+      payload is present and marshals. (2026-09-27) The triage clause is already asserted by
+      `TestLocalE2E` (7.5.4, intent `refund`); the rest waits for `Router.Predict` (7.7).
 
 **Task 7.6: README + examples.**
 

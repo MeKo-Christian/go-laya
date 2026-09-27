@@ -199,6 +199,11 @@ carries the −1e4 mask sentinel.
 against PyTorch. PyTorch's own eager-vs-sdpa gap (absolute, logits / act) is english
 1.0e-06 / 4.9e-04, multilingual 5.1e-05 / 1.2e-02, typed-decisions 1.5e-06 / 7.3e-04.
 
+**End to end** (Task 7.5, `TestE2EParity`): `SystemOne` over ORT against the probabilities
+Python's recorded logits give, over every `logits.jsonl` case. The worst per-option probability
+diff is english 4.3e-06, multilingual 2.8e-06, typed-decisions 1.4e-06, with no argmax flipping.
+`e2eTol` is 2× each.
+
 **Backend constraints** (`internal/backend/onnx`):
 
 - Every `*Value` is closed explicitly (D5). `LAYA_ORT_FINALIZER=1` keeps the race reproduction.
