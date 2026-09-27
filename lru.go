@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sync"
 )
 
 // The Router's agent cache: router.py:169-238, plus the releasing Python does
@@ -20,12 +21,23 @@ import (
 // an agent handed to Attach belongs to whoever attached it and is only ever
 // forgotten, never closed. Without that line a caller could not attach one
 // checkpoint to two routers, and the second Close would be a double free.
+//
+// And it is bounded by use (PLAN.md task 7.7.6, D27). In Python the agent a
+// running predict holds stays alive after eviction, because that local
+// reference keeps it; closing it on eviction would fail the pass instead. So
+// Predict leases the agent it runs, and a dropped agent is closed only once its
+// last lease is released. The drop itself is immediate -- Loaded() no longer
+// lists it -- and the close runs after the Router's lock is released, in the
+// call that dropped it, which therefore waits for those passes and still
+// reports the close error.
 
 // residentAgent is one cache entry. owned records whether the Router built it
-// and may therefore close it.
+// and may therefore close it; leases counts the Predict calls running on it.
 type residentAgent struct {
-	agent Agent
-	owned bool
+	key    string
+	agent  Agent
+	owned  bool
+	leases sync.WaitGroup
 }
 
 // preloadOrder is the order Preload builds checkpoints in when it is not given
@@ -42,6 +54,10 @@ var preloadOrder = []string{ModelEnglish, ModelMultilingual, ModelTypedDecisions
 // build is seconds and hundreds of megabytes -- at the cost of serialising
 // loads of *different* checkpoints too. Route is unaffected: it reads nothing
 // the lock protects.
+//
+// The agent is not leased. A concurrent load, Unload or Close may drop and
+// close it while the caller still holds it; Predict is the way to run an agent
+// under concurrency.
 func (r *Router) Load(ctx context.Context, name string) (Agent, error) {
 	key, err := NormalizeModelName(name)
 	if err != nil {
@@ -49,30 +65,61 @@ func (r *Router) Load(ctx context.Context, name string) (Agent, error) {
 	}
 
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.loadLocked(ctx, key)
+	resident, dropped, err := r.loadLocked(ctx, key)
+	r.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	return resident.agent, closeDropped(dropped)
 }
 
-func (r *Router) loadLocked(ctx context.Context, key string) (Agent, error) {
+// lease is Load for Predict: the agent cannot be closed until release is
+// called. The lease is taken under the lock that found the entry in the cache,
+// so no drop can come between the two.
+func (r *Router) lease(ctx context.Context, key string) (agent Agent, release func(), err error) {
+	r.mu.Lock()
+	resident, dropped, err := r.loadLocked(ctx, key)
+	if err == nil {
+		resident.leases.Add(1)
+	}
+	r.mu.Unlock()
+	if err != nil {
+		return nil, nil, err
+	}
+	release = sync.OnceFunc(resident.leases.Done)
+
+	// The load may have evicted others; closing them waits for their own
+	// leases, never for this one.
+	if err := closeDropped(dropped); err != nil {
+		release()
+		return nil, nil, err
+	}
+	return resident.agent, release, nil
+}
+
+// loadLocked returns the entry for key, building it if need be, and the
+// entries the build evicted, which the caller closes after unlocking.
+func (r *Router) loadLocked(ctx context.Context, key string) (*residentAgent, []*residentAgent, error) {
 	if resident, ok := r.agents[key]; ok {
 		r.touchLocked(key)
-		return resident.agent, nil
+		return resident, nil, nil
 	}
 	if r.loader == nil {
-		return nil, fmt.Errorf("%w: cannot build %q", ErrNoLoader, key)
+		return nil, nil, fmt.Errorf("%w: cannot build %q", ErrNoLoader, key)
 	}
 
 	agent, err := r.loader(ctx, key, r.models[key])
 	if err != nil {
-		return nil, fmt.Errorf("laya: load %q: %w", key, err)
+		return nil, nil, fmt.Errorf("laya: load %q: %w", key, err)
 	}
 
-	r.agents[key] = residentAgent{agent: agent, owned: true}
+	resident := &residentAgent{key: key, agent: agent, owned: true}
+	r.agents[key] = resident
 	r.order = append(r.order, key)
 
 	// Appended before evicting, as upstream does (router.py:178-180), so at a
 	// cap of 1 the newcomer survives and the incumbent is dropped.
-	return agent, r.evictLocked()
+	return resident, r.evictLocked(), nil
 }
 
 // Attach registers an already-built agent under name instead of loading a
@@ -92,7 +139,7 @@ func (r *Router) Attach(name string, agent Agent) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	r.agents[key] = residentAgent{agent: agent}
+	r.agents[key] = &residentAgent{key: key, agent: agent}
 	r.touchLocked(key)
 	r.maxLoaded = max(r.maxLoaded, len(r.agents))
 	return nil
@@ -118,18 +165,21 @@ func (r *Router) Preload(ctx context.Context, names ...string) error {
 	}
 
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	r.maxLoaded = max(r.maxLoaded, len(keys), len(r.agents))
+	var dropped []*residentAgent
+	var err error
 	for _, key := range keys {
 		if _, ok := r.agents[key]; ok {
 			continue
 		}
-		if _, err := r.loadLocked(ctx, key); err != nil {
-			return err
+		var evicted []*residentAgent
+		if _, evicted, err = r.loadLocked(ctx, key); err != nil {
+			break
 		}
+		dropped = append(dropped, evicted...)
 	}
-	return nil
+	r.mu.Unlock()
+	return errors.Join(err, closeDropped(dropped))
 }
 
 // Unload frees the named checkpoints, or every one of them when called with no
@@ -140,38 +190,41 @@ func (r *Router) Preload(ctx context.Context, names ...string) error {
 // It reports an error where Python returns nothing, for the same reason
 // eviction closes at all: in Go "free" is a call that can fail, and a backend
 // that would not shut down is worth hearing about.
+//
+// An agent with a Predict still running on it leaves the cache at once and is
+// closed when that pass ends; Unload waits for it.
 func (r *Router) Unload(names ...string) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	if len(names) == 0 {
 		names = slices.Clone(r.order)
 	}
-
-	errs := make([]error, 0, len(names))
+	dropped := make([]*residentAgent, 0, len(names))
 	for _, name := range names {
 		key, err := NormalizeModelName(name)
 		if err != nil {
 			continue
 		}
-		errs = append(errs, r.dropLocked(key))
+		if resident := r.dropLocked(key); resident != nil {
+			dropped = append(dropped, resident)
+		}
 	}
-	return errors.Join(errs...)
+	r.mu.Unlock()
+	return closeDropped(dropped)
 }
 
 // Close releases every agent the Router built and forgets the rest. It is
 // idempotent: a Router that has been closed is empty, so closing it again
-// closes nothing twice.
+// closes nothing twice. Like Unload, it waits for any Predict still running.
 func (r *Router) Close() error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	resident := slices.Clone(r.order)
-	errs := make([]error, 0, len(resident))
-	for _, key := range resident {
-		errs = append(errs, r.dropLocked(key))
+	dropped := make([]*residentAgent, 0, len(r.order))
+	for _, key := range slices.Clone(r.order) {
+		if resident := r.dropLocked(key); resident != nil {
+			dropped = append(dropped, resident)
+		}
 	}
-	return errors.Join(errs...)
+	r.mu.Unlock()
+	return closeDropped(dropped)
 }
 
 // Loaded returns the resident checkpoint names, least recently used first.
@@ -212,29 +265,43 @@ func (r *Router) touchLocked(key string) {
 // Upstream follows this with a reconciliation pass over _agents
 // (router.py:191-195), because two Python dicts can drift apart. One map and
 // one slice maintained together cannot, so there is nothing here to reconcile.
-func (r *Router) evictLocked() error {
-	errs := make([]error, 0, max(0, len(r.order)-r.maxLoaded))
+func (r *Router) evictLocked() []*residentAgent {
+	dropped := make([]*residentAgent, 0, max(0, len(r.order)-r.maxLoaded))
 	for len(r.order) > r.maxLoaded {
-		errs = append(errs, r.dropLocked(r.order[0]))
+		dropped = append(dropped, r.dropLocked(r.order[0]))
 	}
-	return errors.Join(errs...)
+	return dropped
 }
 
-// dropLocked removes key from both views and closes the agent if the Router
-// built it.
-func (r *Router) dropLocked(key string) error {
+// dropLocked removes key from both views and returns its entry, or nil if it
+// was not resident. The caller closes it with closeDropped once unlocked.
+func (r *Router) dropLocked(key string) *residentAgent {
 	resident, ok := r.agents[key]
 	if !ok {
 		return nil
 	}
 	delete(r.agents, key)
 	r.order = slices.DeleteFunc(r.order, func(k string) bool { return k == key })
+	return resident
+}
 
-	if !resident.owned {
-		return nil
+// closeDropped closes the entries the Router built, each after the last
+// Predict leasing it has finished, and forgets the attached ones. It must run
+// without the Router's lock: a lease is released without taking it, but the
+// wait can be long, and nothing else should stall behind it.
+//
+// No new lease can start on a dropped entry, because leases are only taken on
+// entries found in the cache, so the wait ends.
+func closeDropped(dropped []*residentAgent) error {
+	errs := make([]error, 0, len(dropped))
+	for _, resident := range dropped {
+		if !resident.owned {
+			continue
+		}
+		resident.leases.Wait()
+		if err := resident.agent.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("laya: close %q: %w", resident.key, err))
+		}
 	}
-	if err := resident.agent.Close(); err != nil {
-		return fmt.Errorf("laya: close %q: %w", key, err)
-	}
-	return nil
+	return errors.Join(errs...)
 }

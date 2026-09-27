@@ -14,20 +14,23 @@ import (
 //
 // A failed route loads nothing. The load and the forward pass take ctx.
 //
-// Two goroutines on one Router may evict each other's agent: at max_loaded=1,
-// a request in another language can close the agent between the load and its
-// forward pass. Close waits for a pass already running, so nothing is freed
-// under it, but a pass that has not started fails, as the ONNX backend fails
-// every call after Close. Python has the same window and GC to hide it.
+// The agent is leased for the length of the pass, so it outlives its own
+// eviction as it does in Python, where the local reference keeps it
+// (router.py:303-309). A concurrent request that evicts it, or an Unload or
+// Close, drops it from the cache at once and closes it when this pass ends,
+// waiting for that. An Agent whose SystemOne calls back into the same Router
+// and drops itself would therefore wait on its own pass.
 func (r *Router) Predict(ctx context.Context, state any, qs Questions, opts ...RouteOption) (*Result, error) {
 	decision, err := r.Route(state, qs, opts...)
 	if err != nil {
 		return nil, err
 	}
-	agent, err := r.Load(ctx, decision.Model)
+	agent, release, err := r.lease(ctx, decision.Model)
 	if err != nil {
 		return nil, err
 	}
+	defer release()
+
 	res, err := agent.SystemOne(ctx, state, qs)
 	if err != nil {
 		return nil, fmt.Errorf("laya: %s: %w", decision.Model, err)

@@ -302,7 +302,7 @@ type Router struct {
 
 	loader    func(context.Context, string, ModelSpec) (Agent, error)
 	maxLoaded int
-	agents    map[string]residentAgent
+	agents    map[string]*residentAgent
 	order     []string // least recently used first
 }
 
@@ -334,7 +334,7 @@ func NewRouter(opts ...RouterOption) (*Router, error) {
 		autoTaskDetection: cfg.autoTaskDetection,
 		loader:            loader,
 		maxLoaded:         max(1, cfg.maxLoaded),
-		agents:            map[string]residentAgent{},
+		agents:            map[string]*residentAgent{},
 	}, nil
 }
 
