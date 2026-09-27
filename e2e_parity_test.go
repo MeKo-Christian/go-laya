@@ -87,9 +87,9 @@ func TestE2EParity(t *testing.T) {
 
 	for _, ck := range []string{golden.English, golden.Multilingual, golden.TypedDecisions} {
 		t.Run(ck, func(t *testing.T) {
-			graph := filepath.Join(exports, "laya-"+ck+"-dynamo.onnx")
-			if _, err := os.Stat(graph); err != nil {
-				t.Skipf("no export: %v (run scripts/export_onnx.py --all --dynamo)", err)
+			graph, ok := findExport(exports, ck)
+			if !ok {
+				t.Skipf("no %s export in %s (run scripts/export_onnx.py --all --dynamo)", ck, exports)
 			}
 			tee, a := e2eAgent(t, golden.CheckpointDir(root, ck), graph)
 

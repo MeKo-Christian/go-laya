@@ -388,26 +388,40 @@ func TestDefaultLoaderReal(t *testing.T) {
 	}
 }
 
+// findExport returns the export of checkpoint name in dir: the canonical
+// laya-<name>.onnx that scripts/README.md's export command writes, else the
+// S1 laya-<name>-dynamo.onnx.
+func findExport(dir, name string) (graph string, ok bool) {
+	for _, suffix := range []string{"", "-dynamo"} {
+		graph = filepath.Join(dir, "laya-"+name+suffix+".onnx")
+		if _, err := os.Stat(graph); err == nil {
+			return graph, true
+		}
+	}
+	return "", false
+}
+
 // linkExports returns a directory holding the default loader's export
 // (laya-<name>.onnx) for each name, skipping the test without one.
 //
-// $LAYA_ONNX_DIR is used as it is when it already holds them all. The S1
-// exports carry a -dynamo suffix instead, so each gets a hard link under the
-// name the loader expects; a symlink would not do, since the header check
-// rejects them. The external data keeps the name the graph refers to.
+// $LAYA_ONNX_DIR is used as it is when it already holds them all. Otherwise
+// each name gets a hard link under the name the loader expects, to its
+// canonical export where there is one and to its -dynamo export where not; a
+// symlink would not do, since the header check rejects them. Every external
+// data file of the name keeps its own, which is the one the graph refers to.
 func linkExports(t *testing.T, names ...string) string {
 	t.Helper()
 	exports := os.Getenv("LAYA_ONNX_DIR")
 	if exports == "" {
 		t.Skip("no export (set LAYA_ONNX_DIR)")
 	}
-	missing := false
+	canonical := true
 	for _, name := range names {
 		if _, err := os.Stat(filepath.Join(exports, "laya-"+name+".onnx")); err != nil {
-			missing = true
+			canonical = false
 		}
 	}
-	if !missing {
+	if canonical {
 		return exports
 	}
 
@@ -418,14 +432,20 @@ func linkExports(t *testing.T, names ...string) string {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(graphs) })
 	for _, name := range names {
-		src := filepath.Join(exports, "laya-"+name+"-dynamo.onnx")
-		if _, err := os.Stat(src); err != nil {
+		src, ok := findExport(exports, name)
+		if !ok {
 			t.Skipf("no %s export in %s", name, exports)
 		}
-		for dst, from := range map[string]string{
-			"laya-" + name + ".onnx":             src,
-			"laya-" + name + "-dynamo.onnx.data": src + ".data",
-		} {
+		// The external data, under whatever name the graph refers to.
+		data, err := filepath.Glob(filepath.Join(exports, "laya-"+name+"*.onnx.data"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		links := map[string]string{"laya-" + name + ".onnx": src}
+		for _, d := range data {
+			links[filepath.Base(d)] = d
+		}
+		for dst, from := range links {
 			if err := os.Link(from, filepath.Join(graphs, dst)); err != nil {
 				t.Skipf("cannot hardlink the export: %v", err)
 			}
