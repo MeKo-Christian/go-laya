@@ -1796,8 +1796,10 @@ def dump_logits(models_root: Path, out_dir: Path, checkpoints: list[str]) -> Non
                     qid: answer_block(
                         lg[r].tolist(),
                         act[r].tolist(),
-                        cfg["temperature"],
-                        cfg["temperature_by_options"],
+                        # The Agent's defaults (agent.py:194-195): a checkpoint
+                        # shipped without fitted temperatures still replays.
+                        cfg.get("temperature", [1.0, 1.0, 1.0]),
+                        cfg.get("temperature_by_options", {}),
                         len(items[r]["markers"]),
                         to_internal(LOGITS_QUESTIONS[qid])["t"],
                         to_internal(LOGITS_QUESTIONS[qid])["crit"],
@@ -1937,8 +1939,8 @@ def verify_answer_block(models_root: Path) -> None:
         got = answer_block(
             logits[r].tolist(),
             act[r].tolist(),
-            cfg["temperature"],
-            cfg["temperature_by_options"],
+            cfg.get("temperature", [1.0, 1.0, 1.0]),
+            cfg.get("temperature_by_options", {}),
             len(items[r]["markers"]),
             q["t"],
             q["crit"],
