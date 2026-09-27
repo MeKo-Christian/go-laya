@@ -79,7 +79,9 @@ is always looser than `logits` in every parity measurement.
 
 ```
 go-laya/
-  laya.go        Agent interface (D13), Version; planned: Open, SystemOne, Result/Answer (PLAN 7.3)
+  laya.go        Agent interface (D13), Version; planned: a public Open (PLAN 7.7.5)
+  answer.go      Result, Answer, Probs, AnswerSet and their Python-byte JSON; formatAnswer
+  systemone.go   SystemOne: validate, BuildSequence, Collate, one Forward, formatAnswer
   question.go    type aliases re-exporting question/ (D11)
   router.go      Router, RouteDecision, model registry; lru.go the agent cache
   loader.go      the default agent loader: snapshot, config, tokenizer, local ONNX export (D24)
@@ -92,7 +94,7 @@ go-laya/
   tokenizer/     Tokenizer interface + pure-Go tokenizer.json loader (D10)
   backend/       Backend interface + Batch — public leaf, stdlib only (D9)
   internal/prompt/        render_options, render_criterion, serialize_state, BuildSequence, Collate
-  internal/calib/         temperatures, float32 softmax, entropy confidence, ECE, Brier, numpy exp/log
+  internal/calib/         temperatures, float32 softmax, entropy confidence, ECE, Brier, numpy exp/log, ATen act softmax
   internal/golden/        the testdata/ loader shared by every package
   internal/hub/           HF resolve + verified cache + snapshot + offline
   internal/checkpoint/    rl_agent_config.json loading and validation
@@ -274,8 +276,11 @@ Each of these gives a plausible wrong answer rather than an error if done the ob
   single-rounding float32 FMA built from an exact float64 product plus round-to-odd. It has been
   verified on all 2^32 inputs. The fixtures record `"simd": "X86_V3"`, and the generator refuses
   other targets, because a host without FMA gives different reference numbers.
-- **The act head is torch, not numpy.** `act_probability` comes from torch's float32 softmax
-  (ATen's exp), so `exp32` does not make it bit-exact (PLAN Task 7.3.10).
+- **The act head is torch, not numpy** (D26). `act_probability` is torch's float32 softmax:
+  ATen's `_vec_softmax_lastdim` on AVX2, i.e. a lane-wise max, SLEEF's `xexpf`
+  (`Sleef_expf8_u10`), a left-to-right sum and a multiply by `1/sum`. `calib.ActSoftmax` ports
+  it and is bit-exact on all 4529 rows of `act_softmax.jsonl`. numpy's `exp32` with a divide
+  misses 2234 of them in the last bits, and 96 after `Round4`. Only the AVX2 kernel is verified.
 - **`p.argmax()` is the first max.**
 
 ## 8. Golden corpus
@@ -299,6 +304,7 @@ diff (R6).
 | `round4.jsonl`            | 26 `round()` ties, including `-2.5e-05 → -0.0`.                                                                                                                                                                                             |
 | `ece.jsonl`               | 16 upstream `ece_score` cases, plus 6 Brier cases (our definition).                                                                                                                                                                         |
 | `f32math.jsonl`           | numpy float32 exp/log on 15 423 inputs, plus 64 softmax rows, all as bit patterns.                                                                                                                                                          |
+| `act_softmax.jsonl`       | torch 2.14.0+cpu `softmax(-1)` on 4529 two-wide float32 rows (AVX2), as bit patterns; 2800 of them sit within 3 ulp of a `Round4` tie.                                                                                                      |
 
 The ONNX fixtures live beside the backend: `internal/backend/onnx/testdata/forward_pass.json` and
 `matrix/forward-<checkpoint>.json` (S1's four shapes, from `export_onnx.py --fixture-matrix`).

@@ -107,19 +107,12 @@ func (o Obj) MarshalJSON() ([]byte, error)
 
 // ---------------------------------------------------------------- state
 
-// State is the document a question is asked about: text, an ordered object, or a
-// list (e.g. conversation turns). Python accepts str|dict|list at every call
-// site; Go makes the three cases explicit.
-type State interface {
-	// Serialize reproduces common.serialize_state.
-	Serialize() string
-	// TextLeaves reproduces lang._iter_text: string leaves only, dict keys ignored.
-	TextLeaves(depth int) []string
-}
-
-func TextState(s string) State   // str
-func ObjState(o Obj) State       // dict
-func ListState(v ...any) State   // list
+// state is `any` (D25): a string, a jsonx.Obj, a []any, or anything else
+// jsonx.Marshal accepts. Python takes str|dict|list at every call site. The
+// prompt serializes it with common.serialize_state's rules and refuses a Go map
+// or struct (ErrUnorderedMap, D23); detection flattens its string leaves. A
+// State interface with TextState/ObjState/ListState was proposed here and
+// rejected in Task 7.3.13.
 
 // ---------------------------------------------------------------- questions
 
@@ -247,6 +240,9 @@ type Result struct {
 
 // ---------------------------------------------------------------- agent
 
+// Implemented (Task 7.3) on the loader's unexported onnxAgent, which the
+// Router's Agent interface does not expose yet (7.7.1). The exported *Agent
+// and Open below are planned (PLAN 7.7.5).
 type Agent struct {
 	// unexported: cfg, tokenizer, backend, temperature tables
 	mu sync.RWMutex
@@ -254,8 +250,8 @@ type Agent struct {
 
 func Open(ctx context.Context, ref string, opts ...Option) (*Agent, error)
 
-func (a *Agent) SystemOne(ctx context.Context, state State, qs Questions) (*Result, error)
-func (a *Agent) Predict(ctx context.Context, state State, qs Questions) (*Result, error) // alias
+func (a *Agent) SystemOne(ctx context.Context, state any, qs Questions) (*Result, error)
+func (a *Agent) Predict(ctx context.Context, state any, qs Questions) (*Result, error) // alias
 func (a *Agent) MaxLen() int
 func (a *Agent) HeadMaxLen() int
 func (a *Agent) SetLimits(maxLen, headMaxLen int) error // replaces agent.cfg[...] mutation
@@ -338,7 +334,7 @@ func NewRouter(opts ...RouterOption) (*Router, error)
 
 // Route is pure: it never loads or runs anything, never touches the network,
 // and needs no context.
-func (r *Router) Route(state State, qs Questions, ro ...RouteOption) (RouteDecision, error)
+func (r *Router) Route(state any, qs Questions, ro ...RouteOption) (RouteDecision, error)
 
 // Agent is an interface, not a struct, and today carries only Close(). The
 // Router caches agents and must release what it evicts; that is the whole of
@@ -362,8 +358,8 @@ func (r *Router) Close() error
 
 // Deferred to M7 (PLAN Task 7.7): they call agent.system_one, so they need the
 // widened Agent and the Result type.
-func (r *Router) Predict(ctx context.Context, state State, qs Questions, ro ...RouteOption) (*Result, error)
-func (r *Router) SystemOne(ctx context.Context, state State, qs Questions, ro ...RouteOption) (*Result, error) // alias, router.py:311
+func (r *Router) Predict(ctx context.Context, state any, qs Questions, ro ...RouteOption) (*Result, error)
+func (r *Router) SystemOne(ctx context.Context, state any, qs Questions, ro ...RouteOption) (*Result, error) // alias, router.py:311
 
 type RouterOption func(*routerConfig) error
 
@@ -403,6 +399,7 @@ var (
 	ErrOptionsExceedHeadBudget = errors.New("laya: question options exceed head_max_len")
 	ErrEmptyQuestions          = errors.New("laya: no questions")          // Python: TypeError from collate_items returning None
 	ErrDuplicateQuestionID     = errors.New("laya: duplicate question id") // Python: impossible in a dict
+	ErrNoOptions               = errors.New("laya: question has no options") // Python: ValueError from an empty softmax
 )
 
 // OptionBudgetError names the offending question, replacing Python's
@@ -429,7 +426,7 @@ func (e *OptionBudgetError) Unwrap() error // ErrOptionsExceedHeadBudget
 | `criteria` on `choice`: `dict[str, Any]` **or** `list[str]` (agent.py:233-234)                    | list means "bare labels"; dict values may be `None`/`""` (bare) or any JSON value | `[]ChoiceOption{Key, Desc any}` + a `Labels("a","b")` helper. One representation, order preserved, both forms expressible                                                                                                                |
 | `criteria` on `score`: `list[Any]`                                                                | may hold strings, dicts, numbers, even `None` (test_criteria.py:92)               | `[]Criterion` where `Criterion = any`                                                                                                                                                                                                    |
 | `criteria` on `noul`: `dict` with `"true"`/`"false"`, or absent                                   | ordering is fixed (false=0, true=1) regardless of dict order                      | explicit `True`/`False` fields — removes the possibility of getting the index order wrong                                                                                                                                                |
-| `state`: `str \| dict \| list`                                                                    | serialized one way for the prompt, flattened another way for detection            | `State` interface with `TextState`/`ObjState`/`ListState`. Rejected `any` + reflection: it makes both behaviours implicit and makes `Obj` ordering easy to lose                                                                          |
+| `state`: `str \| dict \| list`                                                                    | serialized one way for the prompt, flattened another way for detection            | `any` (D25, Task 7.3.13). A `State` interface was proposed and rejected: order is carried by `Obj`/`[]any`, and the prompt path refuses an unordered Go `map` loudly (D23)                                                               |
 | criterion value: anything (`dict`, `list`, `int`, `bool`, `float`, `None`, unserialisable object) | `render_criterion` JSON-encodes with `default=str`                                | `Criterion = any`; encoder mirrors `json.dumps`, and falls back to `fmt.Sprintf("%v", v)` for anything `encoding/json` refuses (matching `default=str`)                                                                                  |
 | `instructions`: `str` or anything (agent.py:236-237)                                              | non-str is `json.dumps`'d with `ensure_ascii=True` (unlike everything else)       | `Ins string` only. Callers serialise themselves. Document the dropped edge case                                                                                                                                                          |
 | dict iteration order                                                                              | drives prompt bytes, probabilities key order, and two tie-breaks                  | `Obj`/`Probs`/`Questions`/`AnswerSet`/`Detection.ScriptProfile` ordered slices. No Go `map` anywhere the order reaches JSON — `script_profile` sits inside the emitted `routing` payload, so it was never unobservable (PLAN Task 2.2.7) |

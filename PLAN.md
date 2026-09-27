@@ -19,7 +19,7 @@ byte-identical prompts and numerically equivalent decisions from the same Huggin
 **Where things live.** This file holds **open work** and a short record of what is done.
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) holds what the system is: checkpoints, tokenizer
 semantics, export recipe, trust model and numerics rules. [`docs/DECISIONS.md`](docs/DECISIONS.md)
-holds why, as D1–D23. The dated history of every finished task (evidence, mutation runs,
+holds why, as D1–D26. The dated history of every finished task (evidence, mutation runs,
 re-measurements) was condensed out on 2026-09-27 and is in git: `git show 8125f40:PLAN.md`. Ids of
 finished tasks cited in code comments refer to that history.
 
@@ -30,19 +30,19 @@ finished tasks cited in code comments refer to that history.
 Tick a box only when the work is committed and `just ci` is green. A milestone is done when every
 box under it is ticked.
 
-| Milestone                                                       | Delivers                                                | Status                            |
-| --------------------------------------------------------------- | ------------------------------------------------------- | --------------------------------- |
-| [M0 — Scaffolding](#m0--scaffolding)                            | Go module, tooling, CI, frozen Python, `Version`        | ✅ done                           |
-| [Spikes S1–S3](#3-spikes)                                       | ONNX export, binding choice, latency floor              | ✅ done                           |
-| [M1 — Reference harness](#m1--the-python-reference-harness)     | `testdata/*.jsonl` golden vectors                       | ✅ done                           |
-| [M2 — Tier-1 core](#m2--tier-1-core)                            | `jsonx`, `lang`, `mailtext`, `presets`, render          | ✅ done                           |
-| [M3 — Router](#m3--router)                                      | `Route`, model registry, LRU                            | ✅ done                           |
-| [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done                           |
-| [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done                           |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                           |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | 🟡 7.1, 7.2 done bar 7.2.3, 7.2.5 |
-| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | ⬜ open                           |
-| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred                       |
+| Milestone                                                       | Delivers                                                | Status                           |
+| --------------------------------------------------------------- | ------------------------------------------------------- | -------------------------------- |
+| [M0 — Scaffolding](#m0--scaffolding)                            | Go module, tooling, CI, frozen Python, `Version`        | ✅ done                          |
+| [Spikes S1–S3](#3-spikes)                                       | ONNX export, binding choice, latency floor              | ✅ done                          |
+| [M1 — Reference harness](#m1--the-python-reference-harness)     | `testdata/*.jsonl` golden vectors                       | ✅ done                          |
+| [M2 — Tier-1 core](#m2--tier-1-core)                            | `jsonx`, `lang`, `mailtext`, `presets`, render          | ✅ done                          |
+| [M3 — Router](#m3--router)                                      | `Route`, model registry, LRU                            | ✅ done                          |
+| [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done                          |
+| [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done                          |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                          |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | 🟡 7.1–7.3 done bar 7.2.3, 7.2.5 |
+| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | ⬜ open                          |
+| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred                      |
 
 **Critical path to 1.0:** M7 (loader → `SystemOne` → answer parity → e2e parity → README). The
 Backlog and M8 do not gate 1.0.
@@ -79,6 +79,8 @@ Full rationale is in [`docs/DECISIONS.md`](docs/DECISIONS.md). Index:
 | D22 | `cuda` falls back to CPU until the binding supports it                |
 | D23 | Parity emitters reject rather than guess on unordered input           |
 | D24 | Forward pass is a local ONNX export; only config + tokenizer download |
+| D25 | `state` stays `any`; no `State` interface                             |
+| D26 | `act_probability` uses a port of ATen's softmax                       |
 
 ## 1. What we are porting — verified facts
 
@@ -275,43 +277,96 @@ Done:
 
 **Task 7.3: `Agent.SystemOne`.** Invariants §5 items 19–34.
 
-- [ ] **7.3.1** The `choice` answer shape.
-- [ ] **7.3.2** The `score` answer: `Σ i·p[i]`, an expectation, **not** an argmax.
-- [ ] **7.3.3** The `noul` answer: **no** `probabilities`, no `legend`, and confidence
+- [x] **7.3.1** The `choice` answer shape. (2026-09-27) `answer.go`: `Answer`, `Probs`,
+      `Action`, `Usage`, `AnswerSet` and `Result` as `docs/API.md` gives them, and
+      `formatAnswer`, a port of agent.py:302-337. Choice keys come in option order, and `zip`
+      truncates to the shorter of keys and `p`.
+- [x] **7.3.2** The `score` answer: `Σ i·p[i]`, an expectation, **not** an argmax. (2026-09-27)
+      `Round4(calib.Expectation(p))`. `TestAnswerScoreIsExpectation` uses logits whose argmax and
+      expectation differ.
+- [x] **7.3.3** The `noul` answer: **no** `probabilities`, no `legend`, and confidence
       `max(p1, 1-p1)`, **not** the entropy formula, which for k=2 genuinely disagrees (#26).
-- [ ] **7.3.4** `legend` carries the **raw** criterion value, not the rendered option text.
-- [ ] **7.3.5** The act head: `act = softmax(act_logits.float(), -1)` (torch float32,
+      (2026-09-27) `TestAnswerNoulConfidence`: uniform logits give 0.5, not the entropy's 0.
+- [x] **7.3.4** `legend` carries the **raw** criterion value, not the rendered option text.
+      (2026-09-27) It covers every level, not just k. `score/dict-legend`
+      (`[{"d":"low"},"mid",2]`) and `TestAnswerLegendIsRaw`.
+      `go test -count=1 -run 'TestAnswer|TestProbs|TestResult' -v .` passes all 10 tests, covering
+      7.3.1–7.3.4, 7.3.7 and 7.3.8.
+- [x] **7.3.5** The act head: `act = softmax(act_logits.float(), -1)` (torch float32,
       `agent.py:295`), then `action.act_probability = round(act[r, 0], 4)` (`agent.py:310`).
       Column 0 only. There is no threshold and no decision upstream. The width is
       `len(cfg["act_costs"]) + 1`, validated in 6.4.5. This is torch's exp, not numpy's (7.3.10).
-- [ ] **7.3.6** Batching: several questions in one forward pass, with per-question `qtype`,
-      through `Collate`.
-- [ ] **7.3.7** **Precision and tie-break** (#24a/#30a). Softmax and entropy are numpy float32,
+      (2026-09-27) `Round4(calib.ActSoftmax(act[r])[0])` over the whole act row (D26).
+      `TestSystemOneBatches` checks that every answer carries the same row's value.
+- [x] **7.3.6** Batching: several questions in one forward pass, with per-question `qtype`,
+      through `Collate`. (2026-09-27) `systemone.go`: `(*onnxAgent).SystemOne(ctx, state any, qs)`
+      and `Predict`. It validates, then `CheckCriteria`, then `BuildSequence` at the config's
+      `max_len`/`head_max_len`. A lost marker is an `*OptionBudgetError`. It then runs
+      `Collate` and **one** `Forward`, and `formatAnswer` per row with the config's
+      temperatures. `input_tokens` is the batch's attention-mask sum. New errors:
+      `ErrEmptyQuestions`, `ErrOptionsExceedHeadBudget`, `ErrNoOptions` (an empty choice question,
+      rejected before the forward pass; Python fails in the softmax), and a re-exported
+      `ErrDuplicateQuestionID`. `go test -count=1 -run 'TestSystemOne|TestOptionBudget|TestPredict' -v .`
+      passes 6 tests. `TestSystemOneReplay` runs all 30 `logits.jsonl` cases through
+      `SystemOne` against the fake backend, which accepts only the recorded batch, cell for cell.
+      Mutating qtype to 0 fails all 30. Locally, `TestDefaultLoaderReal` runs `SystemOne` through
+      ONNX Runtime on the english export, and its result is byte-identical to upstream
+      `Agent.system_one` for the same state and questions.
+- [x] **7.3.7** **Precision and tie-break** (#24a/#30a). Softmax and entropy are numpy float32,
       `score` is float64 over a float32 `p`, `noul` is float64 from a float32 `p[1]`, and the act
       softmax is torch float32. `p.argmax()` is the **first** max. Acceptance: all 33
       `answers.jsonl` cases byte-equal, plus a test with two exactly equal logits that picks the
-      first key.
-- [ ] **7.3.8** `Answer.MarshalJSON` per type via `jsonx.Obj`, with **no `omitempty`**: a
+      first key. (2026-09-27) `TestAnswerGolden` checks all 33 against `answer_json`, byte for
+      byte. `TestAnswerTieTakesFirstKey` checks keys `b, a` with logits `[0, 0]`. Mutating the
+      tie-break to `>=` fails both.
+- [x] **7.3.8** `Answer.MarshalJSON` per type via `jsonx.Obj`, with **no `omitempty`**: a
       criteria key of `""` is legal in Python, and `omitempty` would drop `"choice"` (#30). The
       same applies to empty `legend`/`probabilities`. Acceptance: key sets and order per
-      `docs/API.md` for every `answers.jsonl` case, plus an injected `""` key.
-- [ ] **7.3.9** `Questions.Validate` rejects duplicate IDs with `ErrDuplicateQuestionID`, because
-      a Python dict cannot hold them.
-- [ ] **7.3.10** Measure whether the act head's torch float32 softmax (`agent.py:295`) agrees with
+      `docs/API.md` for every `answers.jsonl` case, plus an injected `""` key. (2026-09-27)
+      `TestAnswerGolden` asserts the key order per type, and `TestAnswerEmptyKeyIsEmitted` and
+      `TestAnswerEmptyCollectionsAreEmitted` cover the rest. `json.Marshal` goes through
+      `MarshalJSON` and equals the compacted fixture (D12).
+- [x] **7.3.9** `Questions.Validate` rejects duplicate IDs with `ErrDuplicateQuestionID`, because
+      a Python dict cannot hold them. (2026-09-27) This was already in `question/question.go`, and
+      `SystemOne` calls it. `go test -count=1 -run TestQuestionsValidate -v ./question/` passes.
+- [x] **7.3.10** Measure whether the act head's torch float32 softmax (`agent.py:295`) agrees with
       `exp32`, or with narrowed `math.Exp`, after `Round4`. If it does not, decide between porting
       ATen's exp and accepting a last-digit gap on `act_probability`. `answers.jsonl`'s 33
       `act_probability` values came from the dumper's **numpy** copy (`answer_block`), not from
-      torch, so they cannot tell the two apart.
-- [ ] **7.3.11** A behavioural test on the Go device-fallback policy, replacing upstream's
+      torch, so they cannot tell the two apart. (2026-09-27) Neither agrees. The dumper's
+      `--act-softmax` writes `testdata/act_softmax.jsonl`: torch 2.14.0+cpu on AVX2, 4529 rows,
+      2800 of them within 3 ulp of a `Round4` tie. Against it, `exp32` with a divide misses 96
+      rows after Round4, and narrowed `math.Exp` misses 42. The user chose the port (D26):
+      `calib.ActSoftmax` is ATen's short-row `_vec_softmax_lastdim` with SLEEF's `xexpf` and a
+      multiply by `1/sum`, and it is bit-exact on all 4529 rows.
+      `go test -count=1 -run TestActSoftmax -v ./internal/calib/` passes. Mutations to a divide,
+      or to `exp32`, fail with 975 and 1754 rows off. The 33 `answers.jsonl` values still match
+      under `ActSoftmax`.
+- [x] **7.3.11** A behavioural test on the Go device-fallback policy, replacing upstream's
       `test_criteria.py:103-116` (which asserted source strings via `inspect.getsource` and is
-      not ported).
-- [ ] **7.3.12** The Go `_to_internal` (`agent.py:229-238`) rejects a `crit` of the wrong shape
+      not ported). (2026-09-27) The resolve, CPU-retry and warn-once logic moved from `openSession`
+      into the pure `placeSession` (`internal/backend/onnx/device.go`). `TestFallbackWarning` runs
+      without ORT. It checks exactly one warning with `requested` and `reason` on a real
+      fallback, including a failed session, and none on explicit `cpu`, on `auto` settling on
+      CPU, or on a working device. `go test -count=1 -run 'TestDevice|TestFallbackWarning' -v ./internal/backend/onnx/`
+      passes 4 tests. Locally, `TestOpenDevice` against ORT 1.23.0 asserts the same attributes
+      on its 9 cases.
+- [x] **7.3.12** The Go `_to_internal` (`agent.py:229-238`) rejects a `crit` of the wrong shape
       where Python raises (`crit.items()` on a non-dict for choice, `crit.get` on a list for noul,
       `common.py:42`). Today the renderer returns an empty or default option list instead, which
-      is a silent plausible answer.
-- [ ] **7.3.13** Settle `state`'s type. `lang.Analyse`, `lang.IsEnglish` and `Route` take `any`,
+      is a silent plausible answer. (2026-09-27) Adds `prompt.CheckCriteria` and
+      `ErrCriteriaShape`, and `question.ToInternal` for the root. Choice needs an object. Score
+      needs a list, an object or `""`. Noul needs an object or a Python-falsy value. An unknown
+      type is rejected. A non-empty string for score is rejected, where Python would render one
+      level per character. The typed API cannot produce any of these shapes, so the check guards
+      the `Internal` path. `go test -count=1 -run 'TestCheckCriteria|TestToInternal' -v ./internal/prompt/ ./question/`
+      passes.
+- [x] **7.3.13** Settle `state`'s type. `lang.Analyse`, `lang.IsEnglish` and `Route` take `any`,
       while `docs/API.md` proposes a `State` interface. Either introduce `State` and narrow all
       three, or record `any` as a decision and strike the §7 row. Do not add a third spelling.
+      (2026-09-27) The user chose `any` (D25). `SystemOne` takes `any`. The `State` block in
+      `docs/API.md` is replaced by a note, its signatures read `state any`, and the §7 row here
+      says so.
 
 **Task 7.4: Answer-formatting parity.**
 
@@ -347,7 +402,9 @@ Done:
 - [ ] **7.6.3** Document the deliberate deviations: `repo` is always a string (3.1.4);
       `instructions` is `string` only; the pinned default revision (D17); the graph is a local
       export and only the config and tokenizer are downloaded (D24); no ONNX backend off D21's platform list
-      (`ErrUnsupportedPlatform`); `cuda` falls back to CPU (D22); no `mps` device; `$LAYA_CACHE`
+      (`ErrUnsupportedPlatform`); `cuda` falls back to CPU (D22); no `mps` device; a config with `max_len`/`head_max_len` ≤ 0 or a
+      `temperature` list that is not 3 long is rejected; an empty choice question is
+      `ErrNoOptions` before the forward pass; `$LAYA_CACHE`
       instead of the huggingface_hub cache; and every dropped or renamed export: `proper_reward`,
       `td_lambda_targets` (D3), `ece_score` (internal `calib.ECE`), `load` (→ `Open`), `RLAgent`
       (no alias), `QTYPES`/`QTYPE_NAMES` (→ `QType`), `detect_language` (→ `lang.Analyse`), and
@@ -369,6 +426,10 @@ Done:
 - [ ] **7.7.3** `result["routing"] = dict(decision)` (#53). This is where 3.1.4's string `repo`
       becomes visible to a caller.
 - [ ] **7.7.4** The `routing` block goes through `jsonx.Marshal` (D12), not `encoding/json`.
+- [ ] **7.7.5** A public entry point to a single agent. `docs/API.md` proposes an exported `*Agent`
+      with `Open`, `SystemOne`, `Predict`, `MaxLen`/`HeadMaxLen`/`SetLimits`. Today `SystemOne`
+      lives on the loader's unexported `onnxAgent`, reachable only through the Router, and no
+      task owns the exported surface.
 
 ### Backlog — open work that does not gate 1.0
 
@@ -480,14 +541,14 @@ These four cause silent wrong answers rather than loud failures:
 Full type definitions are in **`docs/API.md`**, together with the exact JSON shapes Python emits.
 The dynamic-typing decisions:
 
-| Python                                                      | Go decision                                                                                                                   |
-| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `criteria` on choice: `dict` **or** `list[str]`             | `[]ChoiceOption{Key, Desc any}` + a `Labels("a","b")` helper. One representation, order preserved.                            |
-| `criteria` on noul: dict with `"true"`/`"false"`, or absent | Explicit `True`/`False` fields (false=0, true=1 always).                                                                      |
-| `state`: `str \| dict \| list`                              | Proposed: a `State` interface. Shipped so far: `any` in `lang.Analyse`, `lang.IsEnglish` and `Route`. Settled by Task 7.3.13. |
-| `instructions`: `str` or anything                           | `string` only. The dropped edge case (non-str instructions are `json.dumps`'d with `ensure_ascii=True`) is documented.        |
-| dict iteration order                                        | Ordered slices wherever it is observable; `map` only where it provably is not.                                                |
-| `RouteDecision` as a `dict` subclass                        | A struct with JSON tags, plus `Map() Obj`.                                                                                    |
+| Python                                                      | Go decision                                                                                                            |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `criteria` on choice: `dict` **or** `list[str]`             | `[]ChoiceOption{Key, Desc any}` + a `Labels("a","b")` helper. One representation, order preserved.                     |
+| `criteria` on noul: dict with `"true"`/`"false"`, or absent | Explicit `True`/`False` fields (false=0, true=1 always).                                                               |
+| `state`: `str \| dict \| list`                              | `any` everywhere (`lang.Analyse`, `lang.IsEnglish`, `Route`, `SystemOne`); no `State` interface (D25).                 |
+| `instructions`: `str` or anything                           | `string` only. The dropped edge case (non-str instructions are `json.dumps`'d with `ensure_ascii=True`) is documented. |
+| dict iteration order                                        | Ordered slices wherever it is observable; `map` only where it provably is not.                                         |
+| `RouteDecision` as a `dict` subclass                        | A struct with JSON tags, plus `Map() Obj`.                                                                             |
 
 ---
 
