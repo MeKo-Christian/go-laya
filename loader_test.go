@@ -337,10 +337,7 @@ func TestNewRouterInstallsDefaultLoader(t *testing.T) {
 // Task 7.2.1 end to end, gated like the backend's own tests: the default
 // loader builds a real agent from the downloaded english checkpoint
 // ($LAYA_MODELS) and its export ($LAYA_ONNX_DIR), with ONNX Runtime resolved
-// the default way. The S1 exports carry a -dynamo suffix, so the graph gets a
-// hard link under the name the loader expects; a symlink would not do, since
-// the header check rejects them. Its external data keeps the name the graph
-// refers to.
+// the default way, through linkExports.
 func TestDefaultLoaderReal(t *testing.T) {
 	if testing.Short() {
 		t.Skip("-short: needs the checkpoints, an export and ONNX Runtime")
@@ -349,32 +346,7 @@ func TestDefaultLoaderReal(t *testing.T) {
 	if !ok {
 		t.Skip("no checkpoints (set LAYA_MODELS)")
 	}
-	exports := os.Getenv("LAYA_ONNX_DIR")
-	if exports == "" {
-		t.Skip("no export (set LAYA_ONNX_DIR)")
-	}
-
-	graphs := exports
-	if _, err := os.Stat(filepath.Join(exports, "laya-english.onnx")); err != nil {
-		src := filepath.Join(exports, "laya-english-dynamo.onnx")
-		if _, err := os.Stat(src); err != nil {
-			t.Skipf("no english export in %s", exports)
-		}
-		// Same directory as the export, so the hardlinks stay on one filesystem.
-		graphs, err = os.MkdirTemp(exports, "loader-test-")
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = os.RemoveAll(graphs) })
-		for dst, from := range map[string]string{
-			"laya-english.onnx":             src,
-			"laya-english-dynamo.onnx.data": src + ".data",
-		} {
-			if err := os.Link(from, filepath.Join(graphs, dst)); err != nil {
-				t.Skipf("cannot hardlink the export: %v", err)
-			}
-		}
-	}
+	graphs := linkExports(t, ModelEnglish)
 
 	r, err := NewRouter(
 		WithONNXDir(graphs),
@@ -414,6 +386,52 @@ func TestDefaultLoaderReal(t *testing.T) {
 	if err := r.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
+}
+
+// linkExports returns a directory holding the default loader's export
+// (laya-<name>.onnx) for each name, skipping the test without one.
+//
+// $LAYA_ONNX_DIR is used as it is when it already holds them all. The S1
+// exports carry a -dynamo suffix instead, so each gets a hard link under the
+// name the loader expects; a symlink would not do, since the header check
+// rejects them. The external data keeps the name the graph refers to.
+func linkExports(t *testing.T, names ...string) string {
+	t.Helper()
+	exports := os.Getenv("LAYA_ONNX_DIR")
+	if exports == "" {
+		t.Skip("no export (set LAYA_ONNX_DIR)")
+	}
+	missing := false
+	for _, name := range names {
+		if _, err := os.Stat(filepath.Join(exports, "laya-"+name+".onnx")); err != nil {
+			missing = true
+		}
+	}
+	if !missing {
+		return exports
+	}
+
+	// Same directory as the exports, so the hardlinks stay on one filesystem.
+	graphs, err := os.MkdirTemp(exports, "loader-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(graphs) })
+	for _, name := range names {
+		src := filepath.Join(exports, "laya-"+name+"-dynamo.onnx")
+		if _, err := os.Stat(src); err != nil {
+			t.Skipf("no %s export in %s", name, exports)
+		}
+		for dst, from := range map[string]string{
+			"laya-" + name + ".onnx":             src,
+			"laya-" + name + "-dynamo.onnx.data": src + ".data",
+		} {
+			if err := os.Link(from, filepath.Join(graphs, dst)); err != nil {
+				t.Skipf("cannot hardlink the export: %v", err)
+			}
+		}
+	}
+	return graphs
 }
 
 // Task 7.2.2: the token goes to the Hub client, falling back to $HF_TOKEN as
