@@ -18,8 +18,13 @@ import (
 // eviction as it does in Python, where the local reference keeps it
 // (router.py:303-309). A concurrent request that evicts it, or an Unload or
 // Close, drops it from the cache at once and closes it when this pass ends,
-// waiting for that. An Agent whose SystemOne calls back into the same Router
-// and drops itself would therefore wait on its own pass.
+// waiting for that.
+//
+// So SystemOne must not drop its own agent through the same Router: not by
+// Unload or Close, and not by a Load or Predict that evicts it. That call would
+// wait for the pass it runs inside, which then never ends. Go cannot tell such
+// a call from a concurrent one, so this is a contract on Agent implementations,
+// not a check.
 func (r *Router) Predict(ctx context.Context, state any, qs Questions, opts ...RouteOption) (*Result, error) {
 	decision, err := r.Route(state, qs, opts...)
 	if err != nil {

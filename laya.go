@@ -47,6 +47,10 @@ type Agent interface {
 	// SystemOne answers every question about state in one forward pass:
 	// agent.system_one (agent.py:240-343). The answers come back in question
 	// order; Routing is nil, since no router was involved.
+	//
+	// It must not unload, close or evict its own agent through the Router
+	// running it: Router.Predict holds a lease on the agent for the length
+	// of this call, and dropping it waits for that lease (D27).
 	SystemOne(ctx context.Context, state any, qs Questions) (*Result, error)
 
 	// Close releases the agent's backend. A leaked ONNX Runtime session is
