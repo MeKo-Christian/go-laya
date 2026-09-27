@@ -91,8 +91,14 @@ type Question interface {
 	// label-index order, which is the order the output logits are indexed by.
 	RenderOptions() []string
 
+	internal() prompt.Internal
 	validate() error
 }
+
+// ToInternal flattens q into Python's per-question dict, as Agent._to_internal
+// does at agent.py:229-238. The root package needs it to build sequences; the
+// typed API cannot produce a crit that prompt.CheckCriteria rejects.
+func ToInternal(q Question) prompt.Internal { return q.internal() }
 
 // ChoiceOption is one option of a choice question: a key, which is both the
 // label in the prompt and the key the probability comes back under, and an
