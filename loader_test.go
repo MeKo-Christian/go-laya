@@ -3,6 +3,7 @@ package laya
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,6 +13,7 @@ import (
 	"github.com/MeKo-Christian/go-laya/backend"
 	"github.com/MeKo-Christian/go-laya/internal/backend/onnx"
 	"github.com/MeKo-Christian/go-laya/internal/golden"
+	"github.com/MeKo-Christian/go-laya/internal/hub"
 )
 
 // testConfig is the smallest rl_agent_config.json LoadConfig accepts, with
@@ -221,8 +223,8 @@ func TestDefaultLoaderErrors(t *testing.T) {
 		// not a Hub repo to download.
 		for _, p := range []string{"./nope", "../nope", filepath.Join(t.TempDir(), "nope")} {
 			l, _, _ := stubbedLoader(t, t.TempDir())
-			if _, err := l.load(context.Background(), ModelEnglish, ModelSpecFromString(p)); !errors.Is(err, ErrModelNotFound) {
-				t.Errorf("%s: err = %v, want ErrModelNotFound", p, err)
+			if _, err := l.load(context.Background(), ModelEnglish, ModelSpecFromString(p)); !errors.Is(err, ErrCheckpointNotFound) {
+				t.Errorf("%s: err = %v, want ErrCheckpointNotFound", p, err)
 			}
 		}
 	})
@@ -230,8 +232,61 @@ func TestDefaultLoaderErrors(t *testing.T) {
 		// agent.py:131-135.
 		l, _, _ := stubbedLoader(t, t.TempDir())
 		_, err := l.load(context.Background(), ModelMultilingual, ModelSpec{Repo: t.TempDir(), Subfolder: "nope"})
-		if !errors.Is(err, ErrModelNotFound) {
-			t.Errorf("err = %v, want ErrModelNotFound", err)
+		if !errors.Is(err, ErrCheckpointNotFound) {
+			t.Errorf("err = %v, want ErrCheckpointNotFound", err)
+		}
+	})
+	t.Run("subfolder escapes the checkpoint", func(t *testing.T) {
+		// A sibling directory that is a complete checkpoint: joining ../other
+		// would load it, so the check must come before anything is read.
+		parent := t.TempDir()
+		writeCheckpoint(t, filepath.Join(parent, "other"))
+		base := filepath.Join(parent, "base")
+		if err := os.Mkdir(base, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		for _, sub := range []string{"../other", "a/../../other", "/abs"} {
+			l, _, _ := stubbedLoader(t, t.TempDir())
+			_, err := l.load(context.Background(), ModelMultilingual, ModelSpec{Repo: base, Subfolder: sub})
+			if !errors.Is(err, ErrCheckpointNotFound) {
+				t.Errorf("%q: err = %v, want ErrCheckpointNotFound", sub, err)
+			}
+			l, _, _ = stubbedLoader(t, t.TempDir())
+			l.snapshot = func(context.Context, string, string, []string) (string, error) {
+				t.Fatalf("%q: snapshot called with an escaping subfolder", sub)
+				return "", nil
+			}
+			if _, err := l.load(context.Background(), ModelMultilingual,
+				ModelSpec{Repo: bundleRepo, Subfolder: sub}); !errors.Is(err, ErrCheckpointNotFound) {
+				t.Errorf("hub %q: err = %v, want ErrCheckpointNotFound", sub, err)
+			}
+		}
+	})
+	t.Run("hub subfolder not found", func(t *testing.T) {
+		// Snapshot's allow filter reports a subfolder with no files as
+		// hub.ErrNotFound; the caller sees the same sentinel as locally.
+		l, _, _ := stubbedLoader(t, t.TempDir())
+		l.snapshot = func(context.Context, string, string, []string) (string, error) {
+			return "", fmt.Errorf("%w: no file matches", hub.ErrNotFound)
+		}
+		_, err := l.load(context.Background(), ModelMultilingual, ModelSpec{Repo: bundleRepo, Subfolder: "nope"})
+		if !errors.Is(err, ErrCheckpointNotFound) || !errors.Is(err, hub.ErrNotFound) {
+			t.Errorf("err = %v, want ErrCheckpointNotFound wrapping hub.ErrNotFound", err)
+		}
+	})
+	t.Run("graph inaccessible, not missing", func(t *testing.T) {
+		// A path component that is a file: stat fails with ENOTDIR, not
+		// ENOENT, and telling the caller to export would be wrong.
+		ck := t.TempDir()
+		writeCheckpoint(t, ck)
+		notDir := filepath.Join(t.TempDir(), "file")
+		if err := os.WriteFile(notDir, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		l, _, _ := stubbedLoader(t, notDir)
+		_, err := l.load(context.Background(), ModelEnglish, ModelSpecFromString(ck))
+		if err == nil || errors.Is(err, ErrNoGraph) {
+			t.Errorf("err = %v, want a stat error that is not ErrNoGraph", err)
 		}
 	})
 	t.Run("no config", func(t *testing.T) {

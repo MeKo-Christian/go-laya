@@ -117,19 +117,21 @@ func (l *defaultLoader) load(ctx context.Context, name string, spec ModelSpec) (
 // and anything else is a Hub snapshot. The subfolder is joined afterwards in
 // both cases and must exist.
 func (l *defaultLoader) checkpointDir(ctx context.Context, spec ModelSpec) (string, error) {
+	// Before anything is read or requested: joined as it is, "../other" would
+	// load whatever checkpoint sits beside the one selected.
+	if spec.Subfolder != "" && !filepath.IsLocal(spec.Subfolder) {
+		return "", fmt.Errorf("%w: subfolder %q is not a path inside %q",
+			ErrCheckpointNotFound, spec.Subfolder, spec.Repo)
+	}
 	dir := spec.Repo
 	if _, err := os.Stat(dir); err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
 			return "", fmt.Errorf("laya: %w", err)
 		}
 		if pathShaped(spec.Repo) {
-			return "", fmt.Errorf("%w: local path %q", ErrModelNotFound, spec.Repo)
+			return "", fmt.Errorf("%w: local path %q", ErrCheckpointNotFound, spec.Repo)
 		}
-		rev := "main"
-		if spec.Repo == bundleRepo {
-			rev = pinnedRevision
-		}
-		if dir, err = l.snapshot(ctx, spec.Repo, rev, allowPatterns(spec.Subfolder)); err != nil {
+		if dir, err = l.download(ctx, spec); err != nil {
 			return "", err
 		}
 	}
@@ -138,9 +140,26 @@ func (l *defaultLoader) checkpointDir(ctx context.Context, spec ModelSpec) (stri
 	}
 	sub := filepath.Join(dir, spec.Subfolder)
 	if info, err := os.Stat(sub); err != nil || !info.IsDir() {
-		return "", fmt.Errorf("%w: subfolder %q not in %q", ErrModelNotFound, spec.Subfolder, spec.Repo)
+		return "", fmt.Errorf("%w: subfolder %q not in %q", ErrCheckpointNotFound, spec.Subfolder, spec.Repo)
 	}
 	return sub, nil
+}
+
+// download snapshots the spec's config and tokenizer, the bundle repo at
+// D17's pin and any other repo at main.
+func (l *defaultLoader) download(ctx context.Context, spec ModelSpec) (string, error) {
+	rev := "main"
+	if spec.Repo == bundleRepo {
+		rev = pinnedRevision
+	}
+	dir, err := l.snapshot(ctx, spec.Repo, rev, allowPatterns(spec.Subfolder))
+	// A missing repo, and a subfolder the allow filter finds no file for, are
+	// both hub.ErrNotFound; the local cases answer with ErrCheckpointNotFound,
+	// so the Hub's do too.
+	if errors.Is(err, hub.ErrNotFound) {
+		return "", fmt.Errorf("%w: %w", ErrCheckpointNotFound, err)
+	}
+	return dir, err
 }
 
 // pathShaped is agent.py:117's test for an id that can only mean a local path.
@@ -183,6 +202,11 @@ func (l *defaultLoader) graph(name string) (string, error) {
 	}
 	path := filepath.Join(dir, "laya-"+name+".onnx")
 	if _, err := os.Stat(path); err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			// There may well be an export; it cannot be reached. Saying
+			// "export it" would send the caller after the wrong problem.
+			return "", fmt.Errorf("laya: ONNX export: %w", err)
+		}
 		return "", fmt.Errorf("%w: %s (export it with "+
 			"`scripts/export_onnx.py --checkpoint %s --out %s`, or point WithONNXDir or "+
 			"LAYA_ONNX_DIR at an existing export)", ErrNoGraph, path, name, dir)
