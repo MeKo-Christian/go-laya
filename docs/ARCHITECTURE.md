@@ -79,11 +79,12 @@ is always looser than `logits` in every parity measurement.
 
 ```
 go-laya/
-  laya.go        Agent interface (D13), Version; planned: a public Open (PLAN 7.7.5)
+  laya.go        Agent interface (SystemOne, Close; D13), Version; planned: a public Open (7.7.5)
   answer.go      Result, Answer, Probs, AnswerSet and their Python-byte JSON; formatAnswer
   systemone.go   SystemOne: validate, BuildSequence, Collate, one Forward, formatAnswer
   question.go    type aliases re-exporting question/ (D11)
   router.go      Router, RouteDecision, model registry; lru.go the agent cache
+  predict.go     Router.Predict / SystemOne: route, load, run, add the routing block
   loader.go      the default agent loader: snapshot, config, tokenizer, local ONNX export (D24)
   options.go  errors.go
   lang/          script + language detection            (public, zero deps)

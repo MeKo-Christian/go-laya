@@ -30,19 +30,19 @@ finished tasks cited in code comments refer to that history.
 Tick a box only when the work is committed and `just ci` is green. A milestone is done when every
 box under it is ticked.
 
-| Milestone                                                       | Delivers                                                | Status                                        |
-| --------------------------------------------------------------- | ------------------------------------------------------- | --------------------------------------------- |
-| [M0 — Scaffolding](#m0--scaffolding)                            | Go module, tooling, CI, frozen Python, `Version`        | ✅ done                                       |
-| [Spikes S1–S3](#3-spikes)                                       | ONNX export, binding choice, latency floor              | ✅ done                                       |
-| [M1 — Reference harness](#m1--the-python-reference-harness)     | `testdata/*.jsonl` golden vectors                       | ✅ done                                       |
-| [M2 — Tier-1 core](#m2--tier-1-core)                            | `jsonx`, `lang`, `mailtext`, `presets`, render          | ✅ done                                       |
-| [M3 — Router](#m3--router)                                      | `Route`, model registry, LRU                            | ✅ done                                       |
-| [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done                                       |
-| [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done                                       |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                                       |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | 🟡 7.1–7.4 done bar 7.2.3, 7.2.5; 7.5 in part |
-| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | ⬜ open                                       |
-| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred                                   |
+| Milestone                                                       | Delivers                                                | Status                                     |
+| --------------------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------ |
+| [M0 — Scaffolding](#m0--scaffolding)                            | Go module, tooling, CI, frozen Python, `Version`        | ✅ done                                    |
+| [Spikes S1–S3](#3-spikes)                                       | ONNX export, binding choice, latency floor              | ✅ done                                    |
+| [M1 — Reference harness](#m1--the-python-reference-harness)     | `testdata/*.jsonl` golden vectors                       | ✅ done                                    |
+| [M2 — Tier-1 core](#m2--tier-1-core)                            | `jsonx`, `lang`, `mailtext`, `presets`, render          | ✅ done                                    |
+| [M3 — Router](#m3--router)                                      | `Route`, model registry, LRU                            | ✅ done                                    |
+| [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done                                    |
+| [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done                                    |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                                    |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | 🟡 7.1–7.5 done bar 7.2.5; 7.7 bar 7.7.5–6 |
+| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | ⬜ open                                    |
+| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred                                |
 
 **Critical path to 1.0:** M7 (loader → `SystemOne` → answer parity → e2e parity → README). The
 Backlog and M8 do not gate 1.0.
@@ -265,8 +265,9 @@ Done:
       token fallback is read once by `NewRouter`. The device reaches `onnx.Options.Device` unchanged
       and is validated at load time.
       `go test -count=1 -run 'TestRouterDevice|TestRouterToken' -v .` passes both.
-- [ ] **7.2.3** Widen `Agent` past `Close() error` only when M7 needs it (D13). The loader's
-      `onnxAgent` carries only `Close` until Task 7.7.1 adds `SystemOne`.
+- [x] **7.2.3** Widen `Agent` past `Close() error` only when M7 needs it (D13). The loader's
+      `onnxAgent` carries only `Close` until Task 7.7.1 adds `SystemOne`. (2026-09-27) Done by
+      7.7.1, when `Router.Predict` needed it: `Agent` is `SystemOne` plus `Close` and nothing else.
 - [x] **7.2.4** Offline from the environment: map `HF_HUB_OFFLINE` and/or `LAYA_OFFLINE` onto
       `hub.Client.Offline`. (2026-09-27) `HF_HUB_OFFLINE` is read as huggingface_hub reads it,
       `_is_true(HF_HUB_OFFLINE or TRANSFORMERS_OFFLINE)` (`constants.py:194`), and `LAYA_OFFLINE`
@@ -394,7 +395,7 @@ Done:
       heads are saturated (every `act_probability` is 1.0), so D26 stays covered by
       `act_softmax.jsonl` alone.
 
-**Task 7.5: End-to-end parity.**
+**Task 7.5: End-to-end parity.** — ✅ DONE (2026-09-27)
 
 - [x] **7.5.1** Test against `testdata/logits.jsonl`, gated behind `testing.Short()` and
       `LAYA_MODELS`. (2026-09-27) `e2e_parity_test.go`: `TestE2EParity` runs every case through
@@ -416,18 +417,25 @@ Done:
 - [x] **7.5.3** Run it for all three checkpoints. (2026-09-27)
       `LAYA_MODELS=$PWD/models LAYA_ONNX_DIR=$PWD/build/onnx go test -count=1 -run TestE2EParity -v .`
       passes english, multilingual and typed-decisions, 10 cases each.
-- [ ] **7.5.4** Port sections 2–5 of `original/tests/test_local_e2e.py`, with its loose directional
-      thresholds (≥ 6/8 land on `billing`, ≥ 2/3 on the preset checks). (2026-09-27) — partial:
-      sections 2–4 are ported in `local_e2e_test.go` (`TestLocalE2E`, agents from the default
-      loader, gated like 7.5.1) and pass: multilingual 8/8 on billing, and every preset check
-      met. Section 5 needs `Router.Predict` and the `routing` payload (7.7.2/7.7.3). The
-      thresholds are weak: the english checkpoint also scores 8/8, so they cannot tell the two
-      checkpoints apart on these texts, and moderation's ≥ 2/3 still passes with an empty state.
-- [ ] **7.5.5** Port `test_local_e2e.py:190-211`, gated like 7.5.1: the triage intent lands in
+- [x] **7.5.4** Port sections 2–5 of `original/tests/test_local_e2e.py`, with its loose directional
+      thresholds (≥ 6/8 land on `billing`, ≥ 2/3 on the preset checks). (2026-09-27)
+      `local_e2e_test.go`: `TestLocalE2E`, agents from the default loader, gated like 7.5.1.
+      Sections 2–4 pass with multilingual 8/8 on billing and every preset check met; section 5
+      (`TestLocalE2E/router`) is a second Router at `max_loaded=1` over all three checkpoints,
+      driven only through `Predict`.
+      `LAYA_MODELS=$PWD/models LAYA_ONNX_DIR=$PWD/build/onnx go test -count=1 -run 'TestLocalE2E|TestE2EParity' -v .`
+      passes all four subtests. The thresholds are weak: the english checkpoint also scores 8/8,
+      so they cannot tell the two checkpoints apart on these texts, and moderation's ≥ 2/3 still
+      passes with an empty state.
+- [x] **7.5.5** Port `test_local_e2e.py:190-211`, gated like 7.5.1: the triage intent lands in
       `{refund, billing_question}`; a language switch at `max_loaded=1` leaves
       `Loaded() == ["multilingual"]` (the only eviction test with real weights); and the `routing`
-      payload is present and marshals. (2026-09-27) The triage clause is already asserted by
-      `TestLocalE2E` (7.5.4, intent `refund`); the rest waits for `Router.Predict` (7.7).
+      payload is present and marshals. (2026-09-27) The triage clause is asserted by
+      `TestLocalE2E/presets` (intent `refund`), the rest by `TestLocalE2E/router`: english, then
+      hindi routes to multilingual and leaves `Loaded() == [multilingual]` with `dept` on
+      `billing`, then `ForModel("typed-decisions")` is honoured and its `routing` marshals
+      through jsonx to valid JSON. Same command as 7.5.4; with `WithMaxLoaded(2)` the eviction
+      assertion fails (`Loaded() = [english multilingual]`).
 
 **Task 7.6: README + examples.**
 
@@ -458,15 +466,39 @@ Done:
 **Task 7.7: `Router.Predict` / `Router.SystemOne`.** `router.py:293-311`: route, load, run
 `system_one`, then add the decision under a `routing` key.
 
-- [ ] **7.7.1** Widen `Agent` with `SystemOne` (D13) and have the concrete agent satisfy it.
-- [ ] **7.7.2** `Predict`, and `SystemOne` as its alias (#53, `router.py:311`).
-- [ ] **7.7.3** `result["routing"] = dict(decision)` (#53). This is where 3.1.4's string `repo`
-      becomes visible to a caller.
-- [ ] **7.7.4** The `routing` block goes through `jsonx.Marshal` (D12), not `encoding/json`.
+- [x] **7.7.1** Widen `Agent` with `SystemOne` (D13) and have the concrete agent satisfy it.
+      (2026-09-27) `laya.go`: `SystemOne(ctx, state, qs) (*Result, error)` beside `Close`;
+      `var _ Agent = (*onnxAgent)(nil)` in `predict_test.go`, and the LRU tests' `stubAgent`
+      answers as upstream's `_Stub.system_one` does (`test_router.py:171`).
+      `go test -count=1 -run 'TestRouterPredict|TestAgentInterface|TestUpstreamLRU' -v .` passes.
+- [x] **7.7.2** `Predict`, and `SystemOne` as its alias (#53, `router.py:311`). (2026-09-27)
+      `predict.go`: `Route`, `Load(decision.Model)`, `agent.SystemOne`. A failed route loads
+      nothing; load and agent errors come back wrapped, and a nil result is an error.
+      `TestRouterPredict`, `…Loading`, `…Alias` and `…Errors` pass with stub agents: the route
+      options reach `Route`, the routed model loads once, a switch at `max_loaded=1` evicts and
+      closes, an attached agent is used. Dropping the route options, or loading a fixed model,
+      fails them.
+- [x] **7.7.3** `result["routing"] = dict(decision)` (#53). This is where 3.1.4's string `repo`
+      becomes visible to a caller. (2026-09-27) `Result.Routing` is a copy of the decision and
+      equals `Route`'s for the same request. `TestRouterPredictRouting/workflow-repo-is-a-string`:
+      on the auto-workflow path the repo is `DefaultModels()["typed-decisions"].String()`, a JSON
+      string. Skipping the assignment fails three subtests.
+- [x] **7.7.4** The `routing` block goes through `jsonx.Marshal` (D12), not `encoding/json`.
+      (2026-09-27) `TestRouterPredictRouting/marshals-through-jsonx`: `jsonx.Marshal(res.Map())`
+      is the bare result's bytes with a `"routing"` key holding `jsonx.Marshal(decision.Map())`
+      appended last, in Python's separators, detection block included; `json.Marshal(res)` stays valid, routing after
+      usage.
 - [ ] **7.7.5** A public entry point to a single agent. `docs/API.md` proposes an exported `*Agent`
       with `Open`, `SystemOne`, `Predict`, `MaxLen`/`HeadMaxLen`/`SetLimits`. Today `SystemOne`
       lives on the loader's unexported `onnxAgent`, reachable only through the Router, and no
-      task owns the exported surface.
+      task owns the exported surface. `Agent` is already the Router's interface name, so the
+      exported type needs another name or the interface does.
+- [ ] **7.7.6** Eviction during `Predict`. Two goroutines on one Router can evict each other's
+      agent between `Load` and `SystemOne` (at `max_loaded=1`, requests in two languages). The
+      backend's `Close` waits for a pass already running, so nothing is freed under it, but a pass
+      that has not started fails with the ONNX backend's `ErrClosed`, which is internal and not
+      reachable with `errors.Is`. Python has the same window and GC to hide it. Decide between
+      reference counting resident agents, a retry, or documenting it (the GoDoc does today).
 
 ### Backlog — open work that does not gate 1.0
 

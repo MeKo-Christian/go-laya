@@ -240,9 +240,10 @@ type Result struct {
 
 // ---------------------------------------------------------------- agent
 
-// Implemented (Task 7.3) on the loader's unexported onnxAgent, which the
-// Router's Agent interface does not expose yet (7.7.1). The exported *Agent
-// and Open below are planned (PLAN 7.7.5).
+// Implemented (Task 7.3) on the loader's unexported onnxAgent; the Router's
+// Agent interface exposes SystemOne since Task 7.7.1. The exported *Agent and
+// Open below are planned (PLAN 7.7.5), and the name collides with that
+// interface, which 7.7.5 has to settle.
 type Agent struct {
 	// unexported: cfg, tokenizer, backend, temperature tables
 	mu sync.RWMutex
@@ -336,11 +337,11 @@ func NewRouter(opts ...RouterOption) (*Router, error)
 // and needs no context.
 func (r *Router) Route(state any, qs Questions, ro ...RouteOption) (RouteDecision, error)
 
-// Agent is an interface, not a struct, and today carries only Close(). The
-// Router caches agents and must release what it evicts; that is the whole of
-// what it asks of one. M7 widens it with SystemOne (PLAN D13). Corrected
-// 2026-09-20 (M3): this block used to say *Agent, which M3 could not build
-// against because the concrete agent arrives in M6/M7.
+// Agent is an interface, not a struct: SystemOne and Close. The Router runs
+// what it routes to and must release what it evicts; that is the whole of
+// what it asks of one. Task 7.7.1 widened it with SystemOne (PLAN D13).
+// Corrected 2026-09-20 (M3): this block used to say *Agent, which M3 could
+// not build against because the concrete agent arrives in M6/M7.
 func (r *Router) Load(ctx context.Context, name string) (Agent, error)
 func (r *Router) MaxLoaded() int
 func (r *Router) SetMaxLoaded(n int) // clamped to >= 1; the upstream tests mutate it after construction
@@ -356,8 +357,9 @@ func (r *Router) Loaded() []string // LRU order, least-recent first
 func (r *Router) Unload(names ...string) error
 func (r *Router) Close() error
 
-// Deferred to M7 (PLAN Task 7.7): they call agent.system_one, so they need the
-// widened Agent and the Result type.
+// Task 7.7 (predict.go): Route, Load, agent.SystemOne, then Result.Routing =
+// the decision, as router.py:305-308 sets result["routing"]. An agent evicted
+// by another goroutine between the load and its pass fails that pass (7.7.6).
 func (r *Router) Predict(ctx context.Context, state any, qs Questions, ro ...RouteOption) (*Result, error)
 func (r *Router) SystemOne(ctx context.Context, state any, qs Questions, ro ...RouteOption) (*Result, error) // alias, router.py:311
 
