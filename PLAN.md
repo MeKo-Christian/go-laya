@@ -40,7 +40,7 @@ box under it is ticked.
 | [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done                          |
 | [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done                          |
 | [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                          |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | 🟡 7.1–7.3 done bar 7.2.3, 7.2.5 |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | 🟡 7.1–7.4 done bar 7.2.3, 7.2.5 |
 | [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | ⬜ open                          |
 | [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred                      |
 
@@ -372,9 +372,27 @@ Done:
 
 **Task 7.4: Answer-formatting parity.**
 
-- [ ] **7.4.1** Table test against `testdata/answers.jsonl`, running against the fake backend,
-      with no model needed.
-- [ ] **7.4.2** Compare the serialized JSON bytes, not just the parsed struct (#18 again).
+- [x] **7.4.1** Table test against `testdata/answers.jsonl`, running against the fake backend,
+      with no model needed. (2026-09-27) `answer_parity_test.go` sends every case through
+      `SystemOne` with the mini_en tokenizer, a config carrying the case's temperatures and a
+      one-row stub backend serving the recorded logits. Deviation (user decision): the stub
+      replaces `internal/backend/fake`, which answers only logits.jsonl batches, and answers.jsonl
+      records no state or batch; 7.4.3 adds the real-fake route. The three synthetic noul cases
+      with k≠2 (`noul/k03`, `k06`, `k11`) are unreachable through `SystemOne`, since noul always
+      renders two options, and stay covered by `TestAnswerGolden` alone; the test asserts exactly
+      three skips. `go test -count=1 -run TestAnswerParity -v .` passes 30 cases; with the config's
+      temperatures ignored, 23 fail.
+- [x] **7.4.2** Compare the serialized JSON bytes, not just the parsed struct (#18 again).
+      (2026-09-27) The same test compares `jsonx.Marshal` bytes with `answer_json`, and
+      `json.Marshal` with its compacted form, besides the key order.
+- [x] **7.4.3** `testdata/logits.jsonl` carries `result_json`, Python's whole `system_one` result,
+      and the fake-backend replay compares it byte for byte. (2026-09-27) The generator builds it
+      from the recorded forward pass (act head via torch softmax, D26) and refuses unless it equals
+      a real `laya.Agent.system_one` run on every state; the existing fields regenerated
+      bit-identically. `LAYA_MODELS=$PWD/models go test -count=1 -run TestSystemOneReplay -v .`
+      passes 30 cases; a changed model name or a score off by 1e-4 fails all 30. The recorded act
+      heads are saturated (every `act_probability` is 1.0), so D26 stays covered by
+      `act_softmax.jsonl` alone.
 
 **Task 7.5: End-to-end parity.**
 
