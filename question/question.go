@@ -18,6 +18,7 @@ package question
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"strconv"
 
 	"github.com/MeKo-Christian/go-laya/internal/prompt"
@@ -258,7 +259,9 @@ func (qs Questions) Validate() error {
 		}
 		seen[nq.ID] = struct{}{}
 
-		if nq.Q == nil {
+		// A typed nil (*ChoiceQuestion)(nil) is a non-nil interface whose
+		// value-receiver methods panic on the dereference, so it counts too.
+		if nq.Q == nil || isNilPointer(nq.Q) {
 			return fmt.Errorf("laya: question %q is nil; it would panic at render "+
 				"time, long after the caller could act on it", nq.ID)
 		}
@@ -267,4 +270,10 @@ func (qs Questions) Validate() error {
 		}
 	}
 	return nil
+}
+
+// isNilPointer reports a question held as a nil pointer.
+func isNilPointer(q Question) bool {
+	v := reflect.ValueOf(q)
+	return v.Kind() == reflect.Pointer && v.IsNil()
 }

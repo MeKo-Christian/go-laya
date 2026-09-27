@@ -222,9 +222,18 @@ func TestQuestionsValidate(t *testing.T) {
 			"instead, well after the caller could do anything about it")
 	}
 
+	// A typed nil is a non-nil Question whose value-receiver methods panic on
+	// the nil dereference; Validate must refuse it before calling any.
+	for _, q := range []Question{(*ChoiceQuestion)(nil), (*ScoreQuestion)(nil), (*NoulQuestion)(nil)} {
+		if err := (Questions{{ID: "intent", Q: q}}).Validate(); err == nil {
+			t.Errorf("Validate() accepted a typed nil %T", q)
+		}
+	}
+
 	good := Questions{
 		{ID: "intent", Q: ChoiceQuestion{Ins: "x", Opts: Labels("a", "b")}},
 		{ID: "urgency", Q: ScoreQuestion{Ins: "y", Levels: []Criterion{"low", "high"}}},
+		{ID: "angry", Q: &NoulQuestion{Ins: "z"}},
 	}
 	if err := good.Validate(); err != nil {
 		t.Errorf("Validate() = %v, want nil", err)

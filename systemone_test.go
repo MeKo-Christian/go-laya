@@ -374,3 +374,17 @@ func recordedQuestions(t *testing.T, raw json.RawMessage) Questions {
 	}
 	return qs
 }
+
+// TestSystemOneTypedNilQuestion: a nil *ChoiceQuestion is an error, not a
+// panic, and never reaches the model.
+func TestSystemOneTypedNilQuestion(t *testing.T) {
+	be := &recordingBackend{logits: [][]float32{{0, 1}}, act: [][]float32{{0, 0}}}
+	a := testAgent(t, "", be)
+	_, err := a.SystemOne(context.Background(), "s", Questions{{ID: "q", Q: (*ChoiceQuestion)(nil)}})
+	if err == nil {
+		t.Fatal("SystemOne accepted a typed-nil question")
+	}
+	if len(be.calls) != 0 {
+		t.Errorf("forward passes = %d, want 0", len(be.calls))
+	}
+}
