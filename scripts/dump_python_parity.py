@@ -88,6 +88,13 @@ def torch_version() -> str:
     return str(torch.__version__)
 
 
+def torch_cpu_capability() -> str:
+    """The ATen CPU kernel variant (DEFAULT/AVX2/AVX512) torch dispatches to."""
+    import torch
+
+    return str(torch.backends.cpu.get_cpu_capability())
+
+
 def stable_seed(name: str) -> int:
     """A per-case seed that does not move between processes or Python versions."""
     return int(hashlib.sha256(name.encode()).hexdigest()[:8], 16)
@@ -1377,6 +1384,119 @@ def f32math_cases() -> list[dict[str, Any]]:
     return cases
 
 
+# ------------------------------------------------------------ 7.3.10 act_softmax
+
+
+def _act_rows() -> list[tuple[str, np.ndarray]]:
+    """[n, 2] float32 act-head logit rows, grouped by what each group probes.
+
+    The act head's softmax is two-wide, so p[0] is 1/(1+e) or e/(1+e) with
+    e = exp(-|a - b|): Round4 only moves where p[0] sits near a half boundary
+    (k + 0.5)/1e4. "boundary" aims at those: for each sampled k it solves for the
+    gap in float64, then takes the float32 neighbours of the second logit, so
+    the rounded outputs straddle the boundary from both sides.
+    """
+    groups: list[tuple[str, np.ndarray]] = []
+
+    rng = np.random.default_rng(stable_seed("act_softmax/boundary"))
+    rows: list[tuple[float, float]] = []
+    ks = rng.choice(10000, 400, replace=False)
+    for k in sorted(int(k) for k in ks):
+        t = (k + 0.5) / 1e4
+        gap = math.log(t / (1.0 - t))
+        a = np.float32(rng.uniform(-8.0, 8.0))
+        bits = int(np.array([np.float64(a) - gap], dtype=np.float32).view(np.uint32)[0])
+        for d in range(-3, 4):
+            bb = np.array([bits + d], dtype=np.uint32).view(np.float32)[0]
+            rows.append((float(a), float(bb)))
+    groups.append(("boundary", np.array(rows, dtype=np.float32)))
+
+    rng = np.random.default_rng(stable_seed("act_softmax/uniform"))
+    a = rng.uniform(-10.0, 10.0, 1000)
+    gap = rng.uniform(-20.0, 20.0, 1000)
+    groups.append(("uniform", np.stack([a, a - gap], axis=1).astype(np.float32)))
+
+    rng = np.random.default_rng(stable_seed("act_softmax/normal"))
+    groups.append(("normal", (rng.standard_normal((500, 2)) * 3.0).astype(np.float32)))
+
+    rng = np.random.default_rng(stable_seed("act_softmax/tiny"))
+    a = rng.uniform(-4.0, 4.0, 200).astype(np.float32)
+    ulps = rng.integers(-64, 65, 200).astype(np.int64)
+    b = (a.view(np.uint32).astype(np.int64) + ulps).astype(np.uint32).view(np.float32)
+    groups.append(("tiny-gap", np.stack([a, b], axis=1)))
+
+    nz = -0.0
+    f32 = np.float32
+    edges = [
+        (0.0, 0.0),
+        (5.0, 5.0),
+        (-3.0, -3.0),
+        (0.0, nz),
+        (nz, 0.0),
+        (nz, nz),
+        (100.0, 0.0),
+        (0.0, 100.0),
+        (-100.0, 0.0),
+        (0.0, -100.0),
+        (1e4, -1e4),
+        (-1e4, 1e4),
+        (1e4, 0.0),
+        (0.0, 1e4),
+        (1.0, float(np.nextafter(f32(1.0), f32(2.0)))),
+        (float(np.nextafter(f32(1.0), f32(2.0))), 1.0),
+        (0.0, 1e-7),
+        (1e-7, 0.0),
+        (0.0, 1e-45),
+        (1e-45, 0.0),
+        (88.0, -88.0),
+        (-88.0, 88.0),
+        (3e38, -3e38),
+        (-3e38, 3e38),
+        (3e38, 3e38),
+        (9.2103, 0.0),  # p0 near 0.9999
+        (0.0, 9.2103),
+        (9.9035, 0.0),  # p0 near 0.99995, where Round4 reaches 1.0
+        (0.0, 9.9035),
+    ]
+    groups.append(("edges", np.array(edges, dtype=np.float32)))
+    return groups
+
+
+def act_softmax_cases() -> list[dict[str, Any]]:
+    """torch's float32 softmax over the act head's [n, 2] logits (Task 7.3.10).
+
+    agent.py:295 is ``torch.softmax(act.float(), -1)`` over the whole batch, and
+    ``act_probability`` is ``round(float(act[r, 0]), 4)`` (agent.py:311). This is
+    ATen's CPU softmax kernel, not numpy's exp, and answers.jsonl cannot tell the
+    two apart: its act_probability values come from answer_block's numpy copy.
+    All groups go through one matrix, as the agent's batch does; torch runs
+    single-threaded on CPU. Logits and outputs are float32 bit patterns in hex.
+    """
+    import torch
+
+    torch.set_num_threads(1)
+    groups = _act_rows()
+    mat = np.concatenate([g for _, g in groups], axis=0)
+    with torch.no_grad():
+        p = torch.softmax(torch.from_numpy(mat).float(), -1).cpu().numpy()
+
+    cases: list[dict[str, Any]] = []
+    off = 0
+    for name, g in groups:
+        pg = p[off : off + len(g)]
+        off += len(g)
+        cases.append(
+            {
+                "name": f"act_softmax/{name}",
+                "fn": "act_softmax",
+                "act_logits": [_bits(r) for r in g],
+                "p": [_bits(r) for r in pg],
+                "act_probability": [round(float(r[0]), 4) for r in pg],
+            }
+        )
+    return cases
+
+
 # ------------------------------------------------------------------- 7.1.6 ece
 
 
@@ -1709,6 +1829,7 @@ FIXTURES = (
     "f32math",
     "mailtext",
     "logits",
+    "act_softmax",
 )
 
 
@@ -1728,11 +1849,18 @@ def main() -> int:
         help="restrict the logits fixture; the others always cover every checkpoint",
     )
     ap.add_argument(
+        "--act-softmax",
+        action="store_true",
+        help="only the act head's torch softmax fixture (same as --fixture act_softmax)",
+    )
+    ap.add_argument(
         "--verify-agent",
         action="store_true",
         help="cross-check answer_block against laya.Agent (needs weights)",
     )
     args = ap.parse_args()
+    if args.act_softmax:
+        args.fixture.append("act_softmax")
 
     wanted = list(FIXTURES) if args.all or not args.fixture else args.fixture
     print(json.dumps(versions(), indent=2))
@@ -1770,6 +1898,17 @@ def main() -> int:
     if "mailtext" in wanted:
         write_jsonl(
             args.out / "mailtext.jsonl", header("mailtext", args.models_root), mailtext_cases()
+        )
+    if "act_softmax" in wanted:
+        write_jsonl(
+            args.out / "act_softmax.jsonl",
+            header(
+                "act_softmax",
+                args.models_root,
+                torch=torch_version(),
+                torch_cpu_capability=torch_cpu_capability(),
+            ),
+            act_softmax_cases(),
         )
     if args.verify_agent:
         verify_answer_block(args.models_root)
