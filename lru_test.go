@@ -11,11 +11,16 @@ import (
 )
 
 // stubAgent stands in for a loaded checkpoint, as _Stub does upstream
-// (test_router.py:167-172). The whole of what the Router asks of an agent is
-// Close, so the whole of what a stub needs is to record it.
+// (test_router.py:167-172): SystemOne answers with its own name, and Close is
+// recorded, since eviction is what most of these tests are asking about.
 type stubAgent struct {
 	name   string
 	closed atomic.Int32
+}
+
+// SystemOne is _Stub.system_one (test_router.py:171-172).
+func (s *stubAgent) SystemOne(context.Context, any, Questions) (*Result, error) {
+	return &Result{Model: s.name, Answers: AnswerSet{}}, nil
 }
 
 func (s *stubAgent) Close() error {
