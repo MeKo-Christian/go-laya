@@ -11,6 +11,7 @@ import (
 
 	"github.com/MeKo-Christian/go-laya/backend"
 	"github.com/MeKo-Christian/go-laya/internal/backend/onnx"
+	"github.com/MeKo-Christian/go-laya/internal/calib"
 	"github.com/MeKo-Christian/go-laya/internal/checkpoint"
 	"github.com/MeKo-Christian/go-laya/internal/hub"
 	"github.com/MeKo-Christian/go-laya/tokenizer"
@@ -109,7 +110,12 @@ func (l *defaultLoader) load(ctx context.Context, name string, spec ModelSpec) (
 	if err != nil {
 		return nil, err
 	}
-	return &onnxAgent{backend: be, cfg: cfg, tok: tok}, nil
+	a, err := newONNXAgent(be, cfg, tok)
+	if err != nil {
+		_ = be.Close()
+		return nil, err
+	}
+	return a, nil
 }
 
 // checkpointDir is agent.py:115-135: a directory that exists is used as it is,
@@ -215,11 +221,15 @@ func (l *defaultLoader) graph(name string) (string, error) {
 }
 
 // onnxAgent is a loaded checkpoint: its runtime session, its config and its
-// tokenizer. Today it is only closed; SystemOne arrives with PLAN Task 7.3.
+// tokenizer, plus the budgets and temperatures SystemOne reads from the config.
+// The Router's Agent interface still sees only Close; Task 7.7.1 widens it.
 type onnxAgent struct {
 	backend backend.Backend
 	cfg     *checkpoint.Config
 	tok     *tokenizer.HF
+
+	maxLen, headMaxLen int
+	temps              calib.Temperatures
 }
 
 // Close releases the runtime session.

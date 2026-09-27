@@ -14,6 +14,7 @@ import (
 	"github.com/MeKo-Christian/go-laya/internal/backend/onnx"
 	"github.com/MeKo-Christian/go-laya/internal/golden"
 	"github.com/MeKo-Christian/go-laya/internal/hub"
+	"github.com/MeKo-Christian/go-laya/jsonx"
 )
 
 // testConfig is the smallest rl_agent_config.json LoadConfig accepts, with
@@ -392,6 +393,23 @@ func TestDefaultLoaderReal(t *testing.T) {
 	}
 	if w, _ := oa.cfg.ActWidth(); w < 1 {
 		t.Errorf("ActWidth = %d", w)
+	}
+	// One real forward pass through the loaded session. The numbers are Task
+	// 7.5's to check; this proves the loader's agent answers at all.
+	res, err := oa.SystemOne(context.Background(), "I was charged twice this month and want a refund.", Questions{
+		{ID: "intent", Q: ChoiceQuestion{Ins: "What does the customer want?", Opts: Labels("refund", "billing_question", "other")}},
+		{ID: "urgent", Q: NoulQuestion{Ins: "Is it urgent?"}},
+	})
+	if err != nil {
+		t.Fatalf("SystemOne: %v", err)
+	}
+	out, err := jsonx.Marshal(res.Map())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("%s", out)
+	if len(res.Answers) != 2 || res.Usage.InputTokens == 0 {
+		t.Errorf("result = %s", out)
 	}
 	if err := r.Close(); err != nil {
 		t.Fatalf("Close: %v", err)

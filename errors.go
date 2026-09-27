@@ -2,8 +2,10 @@ package laya
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/MeKo-Christian/go-laya/backend"
+	"github.com/MeKo-Christian/go-laya/question"
 )
 
 // The sentinel errors the public API returns. `.golangci.yml` disables err113
@@ -41,4 +43,42 @@ var (
 	// from _verify_compatibility (agent.py:49-93). It is
 	// backend.ErrIncompatibleCheckpoint, so errors.Is matches either name.
 	ErrIncompatibleCheckpoint = backend.ErrIncompatibleCheckpoint
+
+	// ErrEmptyQuestions reports a SystemOne call with no questions. Python
+	// fails with a TypeError when collate_items returns None (agent.py:266).
+	ErrEmptyQuestions = errors.New("laya: no questions")
+
+	// ErrDuplicateQuestionID reports two questions under one id, which a
+	// Python dict cannot hold. It is question.ErrDuplicateQuestionID.
+	ErrDuplicateQuestionID = question.ErrDuplicateQuestionID
+
+	// ErrOptionsExceedHeadBudget reports a question whose options did not all
+	// fit into max_len, so some lost their marker. It is what an
+	// *OptionBudgetError unwraps to.
+	ErrOptionsExceedHeadBudget = errors.New("laya: question options exceed head_max_len")
+
+	// ErrNoOptions reports a question that renders no options at all: a
+	// choice question with an empty option list. Python gets as far as the
+	// softmax and fails on an empty array (agent.py:306).
+	ErrNoOptions = errors.New("laya: question has no options")
 )
+
+// OptionBudgetError names the question whose options lost their markers,
+// replacing Python's ValueError("question %r options exceed head_max_len=%d")
+// at agent.py:262-263. HeadMaxLen is the value upstream names in the message;
+// the markers are lost to max_len, which bounds the whole sequence.
+type OptionBudgetError struct {
+	QuestionID  string
+	HeadMaxLen  int
+	WantMarkers int
+	GotMarkers  int
+}
+
+// Error words it as agent.py:263 does, with the marker counts after it.
+func (e *OptionBudgetError) Error() string {
+	return fmt.Sprintf("laya: question %q options exceed head_max_len=%d (%d of %d options kept a marker)",
+		e.QuestionID, e.HeadMaxLen, e.GotMarkers, e.WantMarkers)
+}
+
+// Unwrap returns ErrOptionsExceedHeadBudget.
+func (*OptionBudgetError) Unwrap() error { return ErrOptionsExceedHeadBudget }
