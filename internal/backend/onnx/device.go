@@ -3,6 +3,7 @@ package onnx
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strconv"
 	"strings"
@@ -128,4 +129,44 @@ func parseDevice(req string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("%w %q (want cpu, cuda, cuda:N, coreml or auto)", ErrUnknownDevice, req)
+}
+
+// fallbackWarning is the one warning a fallback to the CPU emits, upstream's
+// "could not place the model on %s, so it is running on CPU" (agent.py:218-227).
+const fallbackWarning = "onnx backend: requested device unavailable, running on CPU"
+
+// placeSession resolves req against the available providers and builds the
+// session there with newSession, which openSession binds to ONNX Runtime; it
+// is generic in the session so the policy is testable without the library.
+// It returns the session and the device it runs on.
+//
+// A session that fails on a non-CPU device is retried on the CPU, as upstream
+// retries a failed .to(device) (agent.py:205-216). It warns through log, once,
+// only when a fallback happened: resolveDevice could not meet an explicit
+// request, or the chosen device's session failed (for auto too). The warning
+// carries what was requested and why (upstream's "Reason: %s",
+// agent.py:221). A CPU session that fails is an error naming modelPath.
+func placeSession[S any](
+	req string, available []string, modelPath string,
+	newSession func(providers []string) (S, error), log *slog.Logger,
+) (sess S, device string, err error) {
+	choice, err := resolveDevice(req, available)
+	if err != nil {
+		return sess, "", err
+	}
+
+	sess, err = newSession(choice.providers)
+	if err != nil && len(choice.providers) > 0 {
+		choice.fallback = fmt.Sprintf("session on %s failed: %v", choice.device, err)
+		choice.device = deviceCPU
+		sess, err = newSession(nil)
+	}
+	if err != nil {
+		return sess, "", fmt.Errorf("onnx backend: session %s: %w", modelPath, err)
+	}
+
+	if choice.fallback != "" {
+		log.Warn(fallbackWarning, "requested", choice.requested, "reason", choice.fallback)
+	}
+	return sess, choice.device, nil
 }

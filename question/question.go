@@ -18,6 +18,7 @@ package question
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"strconv"
 
 	"github.com/MeKo-Christian/go-laya/internal/prompt"
@@ -91,8 +92,14 @@ type Question interface {
 	// label-index order, which is the order the output logits are indexed by.
 	RenderOptions() []string
 
+	internal() prompt.Internal
 	validate() error
 }
+
+// ToInternal flattens q into Python's per-question dict, as Agent._to_internal
+// does at agent.py:229-238. The root package needs it to build sequences; the
+// typed API cannot produce a crit that prompt.CheckCriteria rejects.
+func ToInternal(q Question) prompt.Internal { return q.internal() }
 
 // ChoiceOption is one option of a choice question: a key, which is both the
 // label in the prompt and the key the probability comes back under, and an
@@ -252,7 +259,9 @@ func (qs Questions) Validate() error {
 		}
 		seen[nq.ID] = struct{}{}
 
-		if nq.Q == nil {
+		// A typed nil (*ChoiceQuestion)(nil) is a non-nil interface whose
+		// value-receiver methods panic on the dereference, so it counts too.
+		if nq.Q == nil || isNilPointer(nq.Q) {
 			return fmt.Errorf("laya: question %q is nil; it would panic at render "+
 				"time, long after the caller could act on it", nq.ID)
 		}
@@ -261,4 +270,10 @@ func (qs Questions) Validate() error {
 		}
 	}
 	return nil
+}
+
+// isNilPointer reports a question held as a nil pointer.
+func isNilPointer(q Question) bool {
+	v := reflect.ValueOf(q)
+	return v.Kind() == reflect.Pointer && v.IsNil()
 }

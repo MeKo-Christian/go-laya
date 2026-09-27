@@ -222,9 +222,18 @@ func TestQuestionsValidate(t *testing.T) {
 			"instead, well after the caller could do anything about it")
 	}
 
+	// A typed nil is a non-nil Question whose value-receiver methods panic on
+	// the nil dereference; Validate must refuse it before calling any.
+	for _, q := range []Question{(*ChoiceQuestion)(nil), (*ScoreQuestion)(nil), (*NoulQuestion)(nil)} {
+		if err := (Questions{{ID: "intent", Q: q}}).Validate(); err == nil {
+			t.Errorf("Validate() accepted a typed nil %T", q)
+		}
+	}
+
 	good := Questions{
 		{ID: "intent", Q: ChoiceQuestion{Ins: "x", Opts: Labels("a", "b")}},
 		{ID: "urgency", Q: ScoreQuestion{Ins: "y", Levels: []Criterion{"low", "high"}}},
+		{ID: "angry", Q: &NoulQuestion{Ins: "z"}},
 	}
 	if err := good.Validate(); err != nil {
 		t.Errorf("Validate() = %v, want nil", err)
@@ -312,5 +321,41 @@ func TestRenderOptionsGoesThroughPrompt(t *testing.T) {
 	}
 	if !slices.Equal(want, []string{`level 0: {"d": "low"}`, "level 1: high", "level 2: 2"}) {
 		t.Errorf("the shared renderer produced %q", want)
+	}
+}
+
+// TestToInternal is the typed half of PLAN.md 7.3.12: no question the public
+// API can build reaches the renderer in a shape Python would raise on
+// (common.py:38-43), and each carries the T and Crit Agent._to_internal would
+// have produced (agent.py:229-238). The zero values are included because they
+// are the shapes a caller gets without trying.
+func TestToInternal(t *testing.T) {
+	cases := []struct {
+		name string
+		q    Question
+		t    string
+		crit string // jsonx.Compact of Crit
+	}{
+		{"choice", ChoiceQuestion{Ins: "p", Opts: []ChoiceOption{{Key: "a", Desc: "x"}, {Key: "b"}}}, "choice", `{"a": "x", "b": null}`},
+		{"choice/labels", ChoiceQuestion{Ins: "p", Opts: Labels("a", "b")}, "choice", `{"a": null, "b": null}`},
+		{"choice/zero", ChoiceQuestion{}, "choice", `{}`},
+		{"score", ScoreQuestion{Ins: "r", Levels: []Criterion{"lo", "hi"}}, "score", `["lo", "hi"]`},
+		{"score/zero", ScoreQuestion{}, "score", `[]`},
+		{"noul", NoulQuestion{Ins: "n", True: "y"}, "noul", `{"false": null, "true": "y"}`},
+		{"noul/zero", NoulQuestion{}, "noul", `{"false": null, "true": null}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ToInternal(tc.q)
+			if err := prompt.CheckCriteria(got); err != nil {
+				t.Errorf("CheckCriteria(ToInternal(%#v)) = %v, want nil", tc.q, err)
+			}
+			if got.T != tc.t || got.Ins != tc.q.Instructions() {
+				t.Errorf("ToInternal = {T:%q, Ins:%q}, want {%q, %q}", got.T, got.Ins, tc.t, tc.q.Instructions())
+			}
+			if c := jsonx.Compact(got.Crit); c != tc.crit {
+				t.Errorf("ToInternal Crit = %s, want %s", c, tc.crit)
+			}
+		})
 	}
 }

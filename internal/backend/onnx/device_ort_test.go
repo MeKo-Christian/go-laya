@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"testing"
 
 	ort "github.com/shota3506/onnxruntime-purego/onnxruntime"
@@ -18,43 +17,6 @@ import (
 	"github.com/MeKo-Christian/go-laya/backend"
 	"github.com/MeKo-Christian/go-laya/internal/golden"
 )
-
-// recorder is a slog.Handler that keeps every record, so a test can count the
-// warnings Open emitted.
-type recorder struct {
-	mu   sync.Mutex
-	recs []slog.Record
-}
-
-func (*recorder) Enabled(context.Context, slog.Level) bool { return true }
-func (*recorder) WithAttrs([]slog.Attr) slog.Handler       { panic("unused") }
-func (*recorder) WithGroup(string) slog.Handler            { panic("unused") }
-
-func (r *recorder) Handle(_ context.Context, rec slog.Record) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.recs = append(r.recs, rec)
-	return nil
-}
-
-func (r *recorder) warnings() []string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	var out []string
-	for _, rec := range r.recs {
-		if rec.Level < slog.LevelWarn {
-			continue
-		}
-		var b strings.Builder
-		b.WriteString(rec.Message)
-		rec.Attrs(func(a slog.Attr) bool {
-			b.WriteString(" " + a.String())
-			return true
-		})
-		out = append(out, b.String())
-	}
-	return out
-}
 
 // TestOpenDevice runs device selection against the real library: a device
 // that cannot be used falls back to the CPU with exactly one warning, and one
@@ -139,6 +101,13 @@ func TestOpenDevice(t *testing.T) {
 			}
 			for _, w := range warns {
 				t.Logf("warning: %s", w)
+			}
+			// What the warning carries: the request as given, and why it
+			// could not be met (upstream's "Reason: %s", agent.py:221).
+			for _, w := range rec.warnAttrs() {
+				if w["msg"] != fallbackWarning || w["requested"] != tc.device || w["reason"] == "" {
+					t.Errorf("warning %q, want %q with requested=%q and a reason", w, fallbackWarning, tc.device)
+				}
 			}
 
 			// The fallen-back session must still run.
