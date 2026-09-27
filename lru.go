@@ -64,9 +64,9 @@ func (r *Router) Load(ctx context.Context, name string) (Agent, error) {
 		return nil, err
 	}
 
-	r.mu.Lock()
-	resident, dropped, err := r.loadLocked(ctx, key)
-	r.mu.Unlock()
+	var resident *residentAgent
+	var dropped []*residentAgent
+	r.withLock(func() { resident, dropped, err = r.loadLocked(ctx, key) })
 	if err != nil {
 		return nil, err
 	}
@@ -77,12 +77,13 @@ func (r *Router) Load(ctx context.Context, name string) (Agent, error) {
 // called. The lease is taken under the lock that found the entry in the cache,
 // so no drop can come between the two.
 func (r *Router) lease(ctx context.Context, key string) (agent Agent, release func(), err error) {
-	r.mu.Lock()
-	resident, dropped, err := r.loadLocked(ctx, key)
-	if err == nil {
-		resident.leases.Add(1)
-	}
-	r.mu.Unlock()
+	var resident *residentAgent
+	var dropped []*residentAgent
+	r.withLock(func() {
+		if resident, dropped, err = r.loadLocked(ctx, key); err == nil {
+			resident.leases.Add(1)
+		}
+	})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -95,6 +96,16 @@ func (r *Router) lease(ctx context.Context, key string) (agent Agent, release fu
 		return nil, nil, err
 	}
 	return resident.agent, release, nil
+}
+
+// withLock runs fn under the Router's lock and releases it however fn ends.
+// The loads above cannot defer the unlock in their own scope, because they
+// close what they evicted after unlocking; and a load runs the loader, which is
+// caller code and may panic.
+func (r *Router) withLock(fn func()) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	fn()
 }
 
 // loadLocked returns the entry for key, building it if need be, and the
@@ -164,21 +175,21 @@ func (r *Router) Preload(ctx context.Context, names ...string) error {
 		keys = append(keys, key)
 	}
 
-	r.mu.Lock()
-	r.maxLoaded = max(r.maxLoaded, len(keys), len(r.agents))
 	var dropped []*residentAgent
 	var err error
-	for _, key := range keys {
-		if _, ok := r.agents[key]; ok {
-			continue
+	r.withLock(func() {
+		r.maxLoaded = max(r.maxLoaded, len(keys), len(r.agents))
+		for _, key := range keys {
+			if _, ok := r.agents[key]; ok {
+				continue
+			}
+			var evicted []*residentAgent
+			if _, evicted, err = r.loadLocked(ctx, key); err != nil {
+				return
+			}
+			dropped = append(dropped, evicted...)
 		}
-		var evicted []*residentAgent
-		if _, evicted, err = r.loadLocked(ctx, key); err != nil {
-			break
-		}
-		dropped = append(dropped, evicted...)
-	}
-	r.mu.Unlock()
+	})
 	return errors.Join(err, closeDropped(dropped))
 }
 
