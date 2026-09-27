@@ -101,6 +101,9 @@ func (a *onnxAgent) SystemOne(ctx context.Context, state any, qs Questions) (*Re
 		if len(logits[r]) < k {
 			return nil, fmt.Errorf("%w: %d logits for %d options", ErrIncompatibleCheckpoint, len(logits[r]), k)
 		}
+		if len(act[r]) == 0 {
+			return nil, fmt.Errorf("%w: an empty act row", ErrIncompatibleCheckpoint)
+		}
 		res.Answers[r] = NamedAnswer{ID: nq.ID, A: formatAnswer(nq.Q, logits[r], act[r], k, a.temps)}
 	}
 	// agent.py:298 counts the whole batch's real tokens.

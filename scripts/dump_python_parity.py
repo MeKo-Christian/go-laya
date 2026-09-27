@@ -1462,39 +1462,113 @@ def _act_rows() -> list[tuple[str, np.ndarray]]:
     return groups
 
 
+def _act_wide_rows(width: int) -> np.ndarray:
+    """[n, width] act-head rows for one head width (Task 7.3.10, wide heads).
+
+    A checkpoint with k act_costs has a head k + 1 wide, and from eight on ATen's
+    lastdim softmax leaves the lane-by-lane reduction for 8-wide chunks, a
+    blended tail and a shuffle tree -- each of which fixes a different float32
+    summation order. The rows vary magnitude, put the max in every lane
+    (tail lanes included), tie several maxima, and aim p[0] at Round4 half
+    boundaries as the two-wide "boundary" group does.
+    """
+    rng = np.random.default_rng(stable_seed(f"act_softmax/wide/{width}"))
+    rows: list[np.ndarray] = []
+    for _ in range(40):
+        rows.append(rng.standard_normal(width) * 3.0)
+    for _ in range(30):
+        rows.append(rng.uniform(-30.0, 30.0, width))
+    for _ in range(20):
+        rows.append(rng.standard_normal(width) * 0.01)
+    for j in range(40):
+        r = rng.standard_normal(width) * 2.0
+        r[j % width] = r.max() + rng.uniform(0.0, 2.0)
+        rows.append(r)
+    for j in range(20):
+        r = rng.standard_normal(width) * 2.0
+        top = float(np.float32(r.max() + 1.0))
+        r[j % width] = top
+        r[(j * 7 + 3) % width] = top
+        rows.append(r)
+    rows.append(np.zeros(width))
+    rows.append(np.full(width, -0.0))
+    rows.append(np.where(np.arange(width) % 2 == 0, 0.0, -0.0))
+    rows.append(np.full(width, 7.25))
+    out = [np.asarray(r, dtype=np.float32) for r in rows]
+    if width >= 2:
+        for _ in range(8):
+            r = (rng.standard_normal(width) * 3.0).astype(np.float32)
+            rest = float(np.exp(r[1:].astype(np.float64)).sum())
+            t = (int(rng.integers(0, 10000)) + 0.5) / 1e4
+            x0 = math.log(t / (1.0 - t)) + math.log(rest)
+            bits = int(np.array([x0], dtype=np.float32).view(np.uint32)[0])
+            for d in range(-2, 3):
+                rr = r.copy()
+                rr[0] = np.array([bits + d], dtype=np.uint32).view(np.float32)[0]
+                out.append(rr)
+    return np.stack(out).astype(np.float32)
+
+
+ACT_WIDE_WIDTHS = tuple(range(1, 21)) + (32, 33)
+
+
 def act_softmax_cases() -> list[dict[str, Any]]:
-    """torch's float32 softmax over the act head's [n, 2] logits (Task 7.3.10).
+    """torch's float32 softmax over the act head's [n, w] logits (Task 7.3.10).
 
     agent.py:295 is ``torch.softmax(act.float(), -1)`` over the whole batch, and
     ``act_probability`` is ``round(float(act[r, 0]), 4)`` (agent.py:311). This is
     ATen's CPU softmax kernel, not numpy's exp, and answers.jsonl cannot tell the
     two apart: its act_probability values come from answer_block's numpy copy.
-    All groups go through one matrix, as the agent's batch does; torch runs
-    single-threaded on CPU. Logits and outputs are float32 bit patterns in hex.
+    The two-wide groups go through one matrix, as the agent's batch does, and
+    each wider head width through its own; torch runs single-threaded on CPU.
+    Logits and outputs are float32 bit patterns in hex.
     """
     import torch
 
     torch.set_num_threads(1)
-    groups = _act_rows()
-    mat = np.concatenate([g for _, g in groups], axis=0)
-    with torch.no_grad():
-        p = torch.softmax(torch.from_numpy(mat).float(), -1).cpu().numpy()
 
+    def softmax(mat: np.ndarray) -> np.ndarray:
+        with torch.no_grad():
+            return torch.softmax(torch.from_numpy(mat).float(), -1).cpu().numpy()
+
+    def case(name: str, g: np.ndarray, pg: np.ndarray) -> dict[str, Any]:
+        return {
+            "name": f"act_softmax/{name}",
+            "fn": "act_softmax",
+            "act_logits": [_bits(r) for r in g],
+            "p": [_bits(r) for r in pg],
+            "act_probability": [round(float(r[0]), 4) for r in pg],
+        }
+
+    groups = _act_rows()
+    p = softmax(np.concatenate([g for _, g in groups], axis=0))
     cases: list[dict[str, Any]] = []
     off = 0
     for name, g in groups:
-        pg = p[off : off + len(g)]
+        cases.append(case(name, g, p[off : off + len(g)]))
         off += len(g)
-        cases.append(
-            {
-                "name": f"act_softmax/{name}",
-                "fn": "act_softmax",
-                "act_logits": [_bits(r) for r in g],
-                "p": [_bits(r) for r in pg],
-                "act_probability": [round(float(r[0]), 4) for r in pg],
-            }
-        )
+    for w in ACT_WIDE_WIDTHS:
+        g = _act_wide_rows(w)
+        cases.append(case(f"wide-w{w:02d}", g, softmax(g)))
     return cases
+
+
+# torch's CPU softmax is not one kernel: ATen compiles SoftMaxKernel.cpp per CPU
+# capability, and the AVX2 build's reduction order and Sleef exp are what
+# calib.ActSoftmax ports. AVX512 reduces through a 16-lane shuffle tree and DEFAULT
+# through scalar libm, so regenerating on either would silently move the reference
+# bits -- the same trap F32_SIMD_TARGET closes for numpy.
+TORCH_CPU_CAPABILITY = "AVX2"
+
+
+def require_torch_cpu_capability() -> None:
+    got = torch_cpu_capability()
+    if got != TORCH_CPU_CAPABILITY:
+        raise SystemExit(
+            f"torch runs its CPU kernels as {got}, act_softmax.jsonl needs "
+            f"{TORCH_CPU_CAPABILITY}; regenerate on an AVX2 host without AVX-512 "
+            f"(or with ATEN_CPU_CAPABILITY=avx2)"
+        )
 
 
 # ------------------------------------------------------------------- 7.1.6 ece
@@ -1900,6 +1974,7 @@ def main() -> int:
             args.out / "mailtext.jsonl", header("mailtext", args.models_root), mailtext_cases()
         )
     if "act_softmax" in wanted:
+        require_torch_cpu_capability()
         write_jsonl(
             args.out / "act_softmax.jsonl",
             header(

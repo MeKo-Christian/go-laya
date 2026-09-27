@@ -1,7 +1,9 @@
 package calib
 
 import (
+	"fmt"
 	"math"
+	"slices"
 	"testing"
 
 	"github.com/MeKo-Christian/go-laya/internal/golden"
@@ -70,8 +72,10 @@ func (a *actTally) add(group string, got []float32, want []uint32, r4 float64,
 }
 
 // TestActSoftmax requires ActSoftmax to equal the act head's torch float32
-// softmax (agent.py:295) bit for bit, both columns, on every row of
-// testdata/act_softmax.jsonl (Task 7.3.10). answers.jsonl cannot check this:
+// softmax (agent.py:295) bit for bit, every column, on every row of every
+// head width in testdata/act_softmax.jsonl (Task 7.3.10). Widths of eight and
+// more take ATen's chunked reduction, tail and shuffle tree, so the fixture
+// covers 1 to 20, 32 and 33. answers.jsonl cannot check this:
 // its act_probability values come from the dumper's numpy copy, not torch.
 //
 // It also logs, as measurement, how far the two alternatives fall short:
@@ -82,6 +86,7 @@ func TestActSoftmax(t *testing.T) {
 	cases := golden.ByFn(t, "act_softmax", "act_softmax")
 	var rows int
 	var aten, numpy, libm actTally
+	perWidth := map[int][2]int{} // width -> {rows, ActSoftmax bit mismatches}
 	for _, c := range cases {
 		var rec actSoftmaxCase
 		c.Unmarshal(t, &rec)
@@ -105,18 +110,26 @@ func TestActSoftmax(t *testing.T) {
 					c.Name, r, got, r4)
 			}
 			desc := func(got, want uint32) string {
-				return c.Name + ": logits " + lr[0] + "," + lr[1] +
-					" p0 " + hex32(got) + " vs torch " + hex32(want)
+				return fmt.Sprintf("%s row %d: logits %v p0 %s vs torch %s",
+					c.Name, r, lr, hex32(got), hex32(want))
 			}
 			numpy.add(c.Name, Softmax(row, len(row), 1.0), want, r4, desc)
 			libm.add(c.Name, softmaxLibm(row), want, r4, desc)
 			got := ActSoftmax(row)
 			aten.add(c.Name, got, want, r4, desc)
-			if !sameRow(got, want) && aten.bits <= 5 { // name the first few rows
-				t.Errorf("%s row %d: ActSoftmax(%s, %s) = %s, %s; torch %s, %s", c.Name, r,
-					lr[0], lr[1], hex32(math.Float32bits(got[0])), hex32(math.Float32bits(got[1])),
-					rec.P[r][0], rec.P[r][1])
+			w := perWidth[len(row)]
+			w[0]++
+			if !sameRow(got, want) {
+				w[1]++
+				if aten.bits <= 5 { // name the first few rows
+					gotHex := make([]string, len(got))
+					for i, v := range got {
+						gotHex[i] = hex32(math.Float32bits(v))
+					}
+					t.Errorf("%s row %d: ActSoftmax(%v) = %v; torch %v", c.Name, r, lr, gotHex, rec.P[r])
+				}
 			}
+			perWidth[len(row)] = w
 			rows++
 		}
 	}
@@ -132,6 +145,14 @@ func TestActSoftmax(t *testing.T) {
 	} {
 		t.Logf("%-32s %4d bit mismatches (max %d ulp), %3d Round4 mismatches %v",
 			c.name, c.a.bits, c.a.maxULP, c.a.round4, c.a.perGroup)
+	}
+	widths := make([]int, 0, len(perWidth))
+	for w := range perWidth {
+		widths = append(widths, w)
+	}
+	slices.Sort(widths)
+	for _, w := range widths {
+		t.Logf("width %2d: %4d rows, %d ActSoftmax bit mismatches", w, perWidth[w][0], perWidth[w][1])
 	}
 	if numpy.first != "" {
 		t.Logf("first calib.Softmax Round4 mismatch: %s", numpy.first)
@@ -152,29 +173,25 @@ func sameRow(got []float32, want []uint32) bool {
 }
 
 // TestActSoftmaxEdges pins what the fixture does not reach: a NaN spreads to
-// every output as vec::maximum makes it, and a row of eight or more, where
-// ATen switches to a reduction ActSoftmax does not port, is refused.
+// every output as vec::maximum makes it, in the lane-by-lane path, in a full
+// chunk and in the blended tail alike, and an empty row gives an empty
+// result, as torch.softmax does for a zero-width last dimension.
 func TestActSoftmaxEdges(t *testing.T) {
 	nan := float32(math.NaN())
-	for _, row := range [][]float32{{nan, 0}, {0, nan}} {
+	for _, tc := range []struct{ n, at int }{{2, 0}, {2, 1}, {9, 3}, {9, 8}, {17, 16}} {
+		row := make([]float32, tc.n)
+		row[tc.at] = nan
 		for i, v := range ActSoftmax(row) {
 			if v == v {
-				t.Errorf("ActSoftmax(%v)[%d] = %v, want NaN", row, i, v)
+				t.Errorf("width %d, NaN at %d: p[%d] = %v, want NaN", tc.n, tc.at, i, v)
 			}
 		}
 	}
 	if p := ActSoftmax([]float32{3}); p[0] != 1 {
 		t.Errorf("ActSoftmax([3]) = %v, want [1]", p)
 	}
-	for _, n := range []int{0, atenVecWidth} {
-		func() {
-			defer func() {
-				if recover() == nil {
-					t.Errorf("ActSoftmax of %d values did not panic", n)
-				}
-			}()
-			ActSoftmax(make([]float32, n))
-		}()
+	if p := ActSoftmax(nil); p == nil || len(p) != 0 {
+		t.Errorf("ActSoftmax(nil) = %#v, want an empty, non-nil slice", p)
 	}
 }
 

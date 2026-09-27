@@ -2,18 +2,19 @@ package calib
 
 import "math"
 
-// torch's float32 CPU softmax over a short last dimension, bit for bit
+// torch's float32 CPU softmax over the last dimension, bit for bit
 // (PLAN.md Task 7.3.10).
 //
-// agent.py:295 turns the act head's [batch, 2] logits into act_probability
+// agent.py:295 turns the act head's [batch, k+1] logits into act_probability
 // with torch.softmax(act.float(), -1), not with numpy, so calib.Softmax (numpy's
 // exp32 and a divide) is the wrong reference for it: it misses torch in the
 // last bits on about half of all rows and after Round4 near a tie.
 //
 // The reference is torch 2.14.0+cpu on the AVX2 kernel (the capability
-// testdata/act_softmax.jsonl records). For a contiguous tensor and dim = -1,
-// ATen's softmax_lastdim_kernel runs _vec_softmax_lastdim
-// (aten/src/ATen/native/cpu/SoftMaxKernel.cpp), which per row does
+// testdata/act_softmax.jsonl records, and the dumper refuses any other). For a
+// contiguous tensor and dim = -1, ATen's softmax_lastdim_kernel runs
+// _vec_softmax_lastdim (aten/src/ATen/native/cpu/SoftMaxKernel.cpp), which per
+// row does
 //
 //	max = vec::reduce_all(vec::maximum, input, n)
 //	out = vec::map((x - max).exp(), input, n)
@@ -22,16 +23,16 @@ import "math"
 //
 // SoftMaxKernel.cpp is not in the wheel. The reduction and exp come from the
 // headers it includes, ATen/cpu/vec/functional_base.h and
-// ATen/cpu/vec/vec256/vec256_float.h. The two details that set the bits are
-// the multiply by 1/sum, not a divide, and Vectorized<float>::exp, which is
-// Sleef_expf8_u10 and not the exp_u20 polynomial next to it. Both were picked
-// by testing against the fixture: numpy's exp, libm's exp and exp_u20, each
-// with a divide or a reciprocal, all miss on hundreds of its 4529 rows. This
-// port matches every one.
+// ATen/cpu/vec/vec256/vec256_float.h. The details that set the bits are the
+// float32 summation order of reduce_all (see atenReduceAll), the multiply by
+// 1/sum rather than a divide, and Vectorized<float>::exp, which is
+// Sleef_expf8_u10 and not the exp_u20 polynomial next to it. The last two
+// were picked by testing against the fixture: numpy's exp, libm's exp and
+// exp_u20, each with a divide or a reciprocal, all miss on hundreds of its
+// rows. vec::map is lane-wise, so its 8-wide chunks and masked tail compute
+// each element exactly as a scalar loop does.
 
-// atenVecWidth is Vectorized<float>::size() under AVX2. Below it, reduce_all
-// takes vec_reduce_all's lane-by-lane path (functional_base.h:30-45 and 190-191),
-// which is the only path ActSoftmax ports.
+// atenVecWidth is Vectorized<float>::size() under AVX2.
 const atenVecWidth = 8
 
 // sleefExpf's constants, from SLEEF's sleefsimdsp.c xexpf, which
@@ -53,26 +54,27 @@ const (
 
 // ActSoftmax is torch.softmax(row, -1) for one float32 row on the CPU, as
 // agent.py:295 computes the act head's probabilities: a NaN-propagating max,
-// exp(x - max) by SLEEF's xexpf, a left-to-right sum, and a multiply by the
-// float32 reciprocal of that sum. p[0] of a two-wide row is what agent.py:311
-// rounds into act_probability.
+// exp(x - max) by SLEEF's xexpf, a sum, and a multiply by the float32
+// reciprocal of that sum, with the max and the sum reduced in the order
+// ATen's reduce_all uses. p[0] is what agent.py:311 rounds into
+// act_probability. Any width works; an empty row gives an empty result, as
+// torch does for a zero-width last dimension.
 //
-// It reproduces ATen's AVX2 kernel (see the comment above atenVecWidth) and
-// panics on a row of eight or more, where ATen switches to a tree reduction
-// that is not ported. The act head is two wide. A NaN anywhere makes every
-// output NaN, as vec::maximum does; the NaN's payload is not reproduced.
+// The output is the same on every Go host: it is pure Go, with the kernel's
+// FMAs done in software by fma32. What it reproduces is torch's AVX2 kernel,
+// the reference testdata/act_softmax.jsonl pins. torch running another kernel
+// -- AVX512, NEON or SVE on arm64, or DEFAULT -- reduces in a different order
+// and may differ from this in the last bits; that is not verified.
+//
+// A NaN anywhere makes every output NaN, as vec::maximum does; the NaN's
+// payload is not reproduced.
 func ActSoftmax(row []float32) []float32 {
-	n := len(row)
-	if n == 0 || n >= atenVecWidth {
-		panic("calib: ActSoftmax ports ATen's short-row path only (1 <= len < 8)")
+	out := make([]float32, len(row))
+	if len(row) == 0 {
+		return out
 	}
-	out := make([]float32, n)
 
-	// vec_reduce_all folds lane i into lane 0 in order: acc = op(acc, x[i]).
-	top := row[0]
-	for _, v := range row[1:] {
-		top = atenMaximum(top, v)
-	}
+	top := atenReduceAll(row, atenMaximum)
 	if top != top {
 		for i := range out {
 			out[i] = float32(math.NaN())
@@ -83,15 +85,57 @@ func ActSoftmax(row []float32) []float32 {
 	for i, v := range row {
 		out[i] = sleefExpf(v - top)
 	}
-	sum := out[0]
-	for _, v := range out[1:] {
-		sum += v
-	}
-	inv := 1 / sum
+	inv := 1 / atenReduceAll(out, func(a, b float32) float32 { return a + b })
 	for i := range out {
 		out[i] *= inv
 	}
 	return out
+}
+
+// atenReduceAll is vec::reduce_all<float> under AVX2 (functional_base.h),
+// lane by lane. op is applied as the vector op is, acc first.
+//
+// Below eight values (lines 190-191) it is vec_reduce_all's slow path
+// (lines 30-45): lane i is folded into lane 0 in order, acc = op(acc, x[i]).
+//
+// From eight on (lines 192-202), eight lane accumulators start from the first
+// chunk and take each further full chunk lane-wise. A partial tail of
+// r = n mod 8 values is combined into lanes [0, r) only -- Vec::set(acc,
+// op(acc, loadu(tail, r)), r) keeps acc in the other lanes, so the zeros
+// loadu pads with never count. The eight lanes are then folded by
+// VecReduceAllSIMD<float>'s AVX2 specialisation (lines 58-77): a 128-bit
+// permute pairs lane i with i^4, a 64-bit shuffle (0x4E) with i^2, a 32-bit
+// shuffle (0xB1) with i^1, and lane 0 is the result.
+func atenReduceAll(x []float32, op func(a, b float32) float32) float32 {
+	n := len(x)
+	if n < atenVecWidth {
+		acc := x[0]
+		for _, v := range x[1:] {
+			acc = op(acc, v)
+		}
+		return acc
+	}
+
+	var acc [atenVecWidth]float32
+	copy(acc[:], x[:atenVecWidth])
+	d := atenVecWidth
+	for ; d < n-n%atenVecWidth; d += atenVecWidth {
+		for i := range acc {
+			acc[i] = op(acc[i], x[d+i])
+		}
+	}
+	for i := range n - d { // the tail, lanes [0, n-d)
+		acc[i] = op(acc[i], x[d+i])
+	}
+
+	for _, stride := range []int{4, 2, 1} {
+		var next [atenVecWidth]float32
+		for i := range acc {
+			next[i] = op(acc[i], acc[i^stride])
+		}
+		acc = next
+	}
+	return acc[0]
 }
 
 // atenMaximum is vec::maximum on one lane (vec256_float.h:585-591):
