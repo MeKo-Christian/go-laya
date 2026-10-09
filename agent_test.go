@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -338,7 +339,7 @@ func TestAgentSetLimits(t *testing.T) {
 	if a.MaxLen() != 512 || a.HeadMaxLen() != 192 {
 		t.Fatalf("limits = %d, %d; want the config defaults 512, 192", a.MaxLen(), a.HeadMaxLen())
 	}
-	long := Questions{{ID: "q", Q: NoulQuestion{Ins: strings.Repeat("is this a long instruction ", 20)}}}
+	long := Questions{{ID: "q", Q: NoulQuestion{Ins: strings.Repeat("is this a long instruction ", 2)}}}
 	rowLen := func() int {
 		t.Helper()
 		if _, err := a.SystemOne(context.Background(), "s", long); err != nil {
@@ -379,28 +380,95 @@ func TestAgentSetLimits(t *testing.T) {
 	}
 }
 
-// Task 7.7.5: SetLimits may run while passes are in flight. Under -race this
-// is the check that SystemOne reads the limits under the lock.
+// rowBackend answers like fixedBackend and records each pass's first row,
+// under a lock, since passes run concurrently.
+type rowBackend struct {
+	fixedBackend
+
+	mu   sync.Mutex
+	rows []string
+}
+
+func (b *rowBackend) Forward(ctx context.Context, in backend.Batch) (logits, act [][]float32, err error) {
+	b.mu.Lock()
+	b.rows = append(b.rows, fmt.Sprint(in.InputIDs[0]))
+	b.mu.Unlock()
+	return b.fixedBackend.Forward(ctx, in)
+}
+
+// Task 7.7.5: SetLimits may run while passes are in flight, and a pass sees
+// one complete pair: the limits of one SetLimits call, never max_len from one
+// and head_max_len from another. Under -race this is also the check that
+// SystemOne reads the limits under the lock.
+//
+// The two pairs differ in both limits, and every combination of them gives a
+// different first row (checked first), so a pass that mixed the pairs would
+// record a row neither pair produces.
 func TestAgentSetLimitsConcurrent(t *testing.T) {
-	a := testAgent(t, "", fixedBackend{})
-	qs := threeQuestions()
+	pairs := [2][2]int{{256, 24}, {192, 192}}
+	qs := Questions{{ID: "q", Q: NoulQuestion{Ins: strings.Repeat("is this a long instruction ", 2)}}}
+	state := strings.Repeat("the customer wrote a long message ", 40)
+
+	// The row each combination produces, sequentially.
+	ref := &rowBackend{}
+	a := testAgent(t, "", ref)
+	rowOf := map[[2]int]string{}
+	for _, m := range []int{pairs[0][0], pairs[1][0]} {
+		for _, h := range []int{pairs[0][1], pairs[1][1]} {
+			if err := a.SetLimits(m, h); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := a.SystemOne(context.Background(), state, qs); err != nil {
+				t.Fatalf("SystemOne at (%d, %d): %v", m, h, err)
+			}
+			rowOf[[2]int{m, h}] = ref.rows[len(ref.rows)-1]
+		}
+	}
+	allowed := map[string]bool{rowOf[pairs[0]]: true, rowOf[pairs[1]]: true}
+	distinct := map[string]bool{}
+	for _, r := range rowOf {
+		distinct[r] = true
+	}
+	if len(distinct) != 4 {
+		t.Fatalf("the four limit combinations give %d distinct rows, want 4", len(distinct))
+	}
+
+	be := &rowBackend{}
+	a = testAgent(t, "", be)
+	if err := a.SetLimits(pairs[0][0], pairs[0][1]); err != nil {
+		t.Fatal(err)
+	}
 	var wg sync.WaitGroup
 	for i := range 8 {
 		wg.Go(func() {
-			for j := range 20 {
+			for j := range 200 {
 				if i%2 == 0 {
-					if err := a.SetLimits(256+j, 64+j); err != nil {
+					p := pairs[j%2]
+					if err := a.SetLimits(p[0], p[1]); err != nil {
 						t.Errorf("SetLimits: %v", err)
 					}
 					continue
 				}
-				if _, err := a.SystemOne(context.Background(), "s", qs); err != nil {
+				if _, err := a.SystemOne(context.Background(), state, qs); err != nil {
 					t.Errorf("SystemOne: %v", err)
 				}
 			}
 		})
 	}
 	wg.Wait()
+
+	for _, r := range be.rows {
+		if allowed[r] {
+			continue
+		}
+		for pair, row := range rowOf {
+			if row == r {
+				t.Fatalf("a pass ran on max_len %d with head_max_len %d, a pair no SetLimits call set",
+					pair[0], pair[1])
+			}
+		}
+		t.Fatalf("a pass ran on a row no limit combination gives (%d tokens)", len(strings.Fields(r)))
+	}
 }
 
 // Task 7.7.5: WithLimits sets both limits at Open, and a bad pair is refused
