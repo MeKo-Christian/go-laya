@@ -30,19 +30,19 @@ finished tasks cited in code comments refer to that history.
 Tick a box only when the work is committed and `just ci` is green. A milestone is done when every
 box under it is ticked.
 
-| Milestone                                                       | Delivers                                                | Status                                             |
-| --------------------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------- |
-| [M0 — Scaffolding](#m0--scaffolding)                            | Go module, tooling, CI, frozen Python, `Version`        | ✅ done                                            |
-| [Spikes S1–S3](#3-spikes)                                       | ONNX export, binding choice, latency floor              | ✅ done                                            |
-| [M1 — Reference harness](#m1--the-python-reference-harness)     | `testdata/*.jsonl` golden vectors                       | ✅ done                                            |
-| [M2 — Tier-1 core](#m2--tier-1-core)                            | `jsonx`, `lang`, `mailtext`, `presets`, render          | ✅ done                                            |
-| [M3 — Router](#m3--router)                                      | `Route`, model registry, LRU                            | ✅ done                                            |
-| [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done                                            |
-| [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done                                            |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                                            |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | 🟡 7.1–7.5 done bar 7.2.5; 7.6 done; 7.7 bar 7.7.7 |
-| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | 🟡 B.1, B.6–B.9 done                               |
-| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred                                        |
+| Milestone                                                       | Delivers                                                | Status               |
+| --------------------------------------------------------------- | ------------------------------------------------------- | -------------------- |
+| [M0 — Scaffolding](#m0--scaffolding)                            | Go module, tooling, CI, frozen Python, `Version`        | ✅ done              |
+| [Spikes S1–S3](#3-spikes)                                       | ONNX export, binding choice, latency floor              | ✅ done              |
+| [M1 — Reference harness](#m1--the-python-reference-harness)     | `testdata/*.jsonl` golden vectors                       | ✅ done              |
+| [M2 — Tier-1 core](#m2--tier-1-core)                            | `jsonx`, `lang`, `mailtext`, `presets`, render          | ✅ done              |
+| [M3 — Router](#m3--router)                                      | `Route`, model registry, LRU                            | ✅ done              |
+| [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done              |
+| [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done              |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done              |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | ✅ done              |
+| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | 🟡 B.1, B.6–B.9 done |
+| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred          |
 
 **Critical path to 1.0:** M7 (loader → `SystemOne` → answer parity → e2e parity → README). The
 Backlog and M8 do not gate 1.0.
@@ -83,6 +83,7 @@ Full rationale is in [`docs/DECISIONS.md`](docs/DECISIONS.md). Index:
 | D26 | `act_probability` uses a port of ATen's softmax                       |
 | D27 | `Predict` leases its agent; a dropped agent closes after its lease    |
 | D28 | The exported struct is `Agent`; the Router's interface is `Predictor` |
+| D29 | Revision opt-in, backend ownership and cache reach                    |
 
 ## 1. What we are porting — verified facts
 
@@ -245,7 +246,7 @@ Done:
       `Softmax` fails `precision/choice-confidence`, and a sequential `numpySum` fails both
       `precision/sum-order-*` cases.
 
-**Task 7.2: The default agent loader.** `NewRouter()` without `WithLoader` loads through it;
+**Task 7.2: The default agent loader.** — ✅ DONE (2026-10-09). `NewRouter()` without `WithLoader` loads through it;
 `WithLoader(nil)` is the only way to get `ErrNoLoader`.
 
 - [x] **7.2.1** A default loader that builds an Agent from a spec's repo, subfolder, device and
@@ -274,9 +275,17 @@ Done:
       `hub.Client.Offline`. (2026-09-27) `HF_HUB_OFFLINE` is read as huggingface_hub reads it,
       `_is_true(HF_HUB_OFFLINE or TRANSFORMERS_OFFLINE)` (`constants.py:194`), and `LAYA_OFFLINE`
       also switches it on. `go test -count=1 -run 'TestDefaultLoaderOffline' -v .` passes 13 cases.
-- [ ] **7.2.5** An opt-in to follow `main` or another revision instead of D17's pin. D17 calls
+- [x] **7.2.5** An opt-in to follow `main` or another revision instead of D17's pin. D17 calls
       following `main` an explicit opt-in, but no option expresses it yet, so the default loader
       always loads the bundle repo at the pin.
+      (2026-10-09, user decision, D29) `WithRevision` for `Open` and `WithRouterRevision` for
+      `NewRouter`. Empty keeps D17's pin for the bundle repo and `main` for any other; any other
+      value is used for every Hub repo, and a local directory ignores it. An unsafe revision is
+      `ErrInvalidRevision` as the option is applied, so `NewRouter` refuses it too.
+      `go test -count=1 -run 'Revision' -v .` passes `TestOpenRevision`, `TestRouterRevision`,
+      `TestRevisionIgnoredForLocalDir`, `TestOpenRevisionInvalid` and `TestRouterRevisionInvalid`.
+      Ignoring the revision in `download` fails the first two, and dropping either option's check
+      fails its `…Invalid` test.
 
 **Task 7.3: `Agent.SystemOne`.** Invariants §5 items 19–34.
 
@@ -509,7 +518,7 @@ Python-only parts (pip, fine-tuning) are dropped or linked.
       the local export (`scripts/export_onnx.py`, whose default `--suffix ""` writes
       `laya-<name>.onnx`) with its lookup order. The full deviation list stays 7.6.3's.
 
-**Task 7.7: `Router.Predict` / `Router.SystemOne`.** `router.py:293-311`: route, load, run
+**Task 7.7: `Router.Predict` / `Router.SystemOne`.** — ✅ DONE (2026-10-09). `router.py:293-311`: route, load, run
 `system_one`, then add the decision under a `routing` key.
 
 - [x] **7.7.1** Widen `Agent` with `SystemOne` (D13) and have the concrete agent satisfy it.
@@ -571,9 +580,22 @@ Python-only parts (pip, fine-tuning) are dropped or linked.
       `TestRouterPredictSurvives{Eviction,Unload,Close}` hold a pass open while its agent is
       dropped, and `…ReportsDeferredCloseError` and `…Concurrent` (8×25 requests) also pass.
       Each of these mutations fails them: dropping the lease, not waiting, never releasing.
-- [ ] **7.7.7** The rest of `docs/API.md`'s `Open` options, left out of 7.7.5 (user decision):
+- [x] **7.7.7** The rest of `docs/API.md`'s `Open` options, left out of 7.7.5 (user decision):
       `WithCacheDir` (today only `$LAYA_CACHE`), `WithBackend` (a caller's `backend.Backend`,
       D9) and `WithLogger` (the ONNX device-fallback warning goes to `slog`'s default today).
+      (2026-10-09, user decision, D29) `WithCacheDir` and `WithRouterCacheDir` move the Hub
+      snapshots, the default `<cache>/onnx` and the ORT library lookup (`onnx.Options.CacheDir`).
+      `WithLogger` and `WithRouterLogger` reach `onnx.Options.Logger`. `WithBackend` skips the
+      export and the ONNX backend: a successful `Open` hands the backend to the `Agent`, a failed
+      one leaves it with the caller, and beside `WithGraph` or `WithDevice` it is
+      `ErrConflictingOptions`. Its outputs are held to the ONNX backend's shapes, so a wrong act
+      width is `ErrIncompatibleCheckpoint` rather than a plausible answer.
+      `go test -count=1 -run 'CacheDir|WithBackend|Logger' -v . ./internal/backend/onnx/` passes
+      14 tests. Each of these mutations fails at least one: the cache dir dropped from the Hub
+      client, from `<cache>/onnx`, or from the ORT lookup at any of its three steps; the logger
+      dropped; `Agent.Close` skipping the backend; the conflict check removed; `buildOn` closing
+      the backend on failure; the shape check removed. `GOOS=windows` and `GOARCH=386` `go vet`
+      pass.
 
 ### Backlog — open work that does not gate 1.0
 
