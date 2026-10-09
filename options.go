@@ -15,7 +15,7 @@ type RouterOption func(*routerConfig) error
 type routerConfig struct {
 	standaloneRepos   bool
 	maxLoaded         int
-	loader            func(context.Context, string, ModelSpec) (Agent, error)
+	loader            func(context.Context, string, ModelSpec) (Predictor, error)
 	loaderSet         bool
 	onnxDir           string
 	device            string
@@ -140,7 +140,7 @@ func WithMaxLoaded(n int) RouterOption {
 // monkeypatch Router.load to avoid building a real checkpoint
 // (test_router.py:177), and an injected loader is how that ports without
 // reflection.
-func WithLoader(fn func(context.Context, string, ModelSpec) (Agent, error)) RouterOption {
+func WithLoader(fn func(context.Context, string, ModelSpec) (Predictor, error)) RouterOption {
 	return func(c *routerConfig) error {
 		c.loader = fn
 		c.loaderSet = true

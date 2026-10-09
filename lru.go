@@ -35,7 +35,7 @@ import (
 // and may therefore close it; leases counts the Predict calls running on it.
 type residentAgent struct {
 	key    string
-	agent  Agent
+	agent  Predictor
 	owned  bool
 	leases sync.WaitGroup
 }
@@ -58,7 +58,7 @@ var preloadOrder = []string{ModelEnglish, ModelMultilingual, ModelTypedDecisions
 // The agent is not leased. A concurrent load, Unload or Close may drop and
 // close it while the caller still holds it; Predict is the way to run an agent
 // under concurrency.
-func (r *Router) Load(ctx context.Context, name string) (Agent, error) {
+func (r *Router) Load(ctx context.Context, name string) (Predictor, error) {
 	key, err := NormalizeModelName(name)
 	if err != nil {
 		return nil, err
@@ -76,7 +76,7 @@ func (r *Router) Load(ctx context.Context, name string) (Agent, error) {
 // lease is Load for Predict: the agent cannot be closed until release is
 // called. The lease is taken under the lock that found the entry in the cache,
 // so no drop can come between the two.
-func (r *Router) lease(ctx context.Context, key string) (agent Agent, release func(), err error) {
+func (r *Router) lease(ctx context.Context, key string) (agent Predictor, release func(), err error) {
 	var resident *residentAgent
 	var dropped []*residentAgent
 	r.withLock(func() {
@@ -141,7 +141,7 @@ func (r *Router) loadLocked(ctx context.Context, key string) (*residentAgent, []
 // unloaded, but never close it. Attaching over an existing entry likewise
 // replaces it without closing, because the entry being replaced may be one the
 // caller attached earlier.
-func (r *Router) Attach(name string, agent Agent) error {
+func (r *Router) Attach(name string, agent Predictor) error {
 	key, err := NormalizeModelName(name)
 	if err != nil {
 		return err

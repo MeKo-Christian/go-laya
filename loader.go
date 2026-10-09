@@ -84,7 +84,7 @@ func envTrue(v string) bool {
 }
 
 // load builds the agent for the checkpoint the router calls name.
-func (l *defaultLoader) load(ctx context.Context, name string, spec ModelSpec) (Agent, error) {
+func (l *defaultLoader) load(ctx context.Context, name string, spec ModelSpec) (Predictor, error) {
 	dir, err := l.checkpointDir(ctx, spec)
 	if err != nil {
 		return nil, err

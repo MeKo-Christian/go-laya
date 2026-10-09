@@ -300,7 +300,7 @@ type Router struct {
 	defaultModel      string
 	autoTaskDetection bool
 
-	loader    func(context.Context, string, ModelSpec) (Agent, error)
+	loader    func(context.Context, string, ModelSpec) (Predictor, error)
 	maxLoaded int
 	agents    map[string]*residentAgent
 	order     []string // least recently used first

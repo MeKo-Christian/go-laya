@@ -23,7 +23,7 @@ import (
 // So SystemOne must not drop its own agent through the same Router: not by
 // Unload or Close, and not by a Load or Predict that evicts it. That call would
 // wait for the pass it runs inside, which then never ends. Go cannot tell such
-// a call from a concurrent one, so this is a contract on Agent implementations,
+// a call from a concurrent one, so this is a contract on Predictor implementations,
 // not a check.
 func (r *Router) Predict(ctx context.Context, state any, qs Questions, opts ...RouteOption) (*Result, error) {
 	decision, err := r.Route(state, qs, opts...)

@@ -337,15 +337,21 @@ func NewRouter(opts ...RouterOption) (*Router, error)
 // and needs no context.
 func (r *Router) Route(state any, qs Questions, ro ...RouteOption) (RouteDecision, error)
 
-// Agent is an interface, not a struct: SystemOne and Close. The Router runs
+// Predictor is an interface, not a struct: SystemOne and Close. The Router runs
 // what it routes to and must release what it evicts; that is the whole of
-// what it asks of one. Task 7.7.1 widened it with SystemOne (PLAN D13).
+// what it asks of one. Task 7.7.1 widened it with SystemOne (PLAN D13). It was
+// called Agent until Task 7.7.5 gave that name to the exported struct (D28).
 // Corrected 2026-09-20 (M3): this block used to say *Agent, which M3 could
 // not build against because the concrete agent arrives in M6/M7.
-func (r *Router) Load(ctx context.Context, name string) (Agent, error)
+type Predictor interface {
+	SystemOne(ctx context.Context, state any, qs Questions) (*Result, error)
+	Close() error
+}
+
+func (r *Router) Load(ctx context.Context, name string) (Predictor, error)
 func (r *Router) MaxLoaded() int
 func (r *Router) SetMaxLoaded(n int) // clamped to >= 1; the upstream tests mutate it after construction
-func (r *Router) Attach(name string, a Agent) error
+func (r *Router) Attach(name string, a Predictor) error
 func (r *Router) Preload(ctx context.Context, names ...string) error
 func (r *Router) Loaded() []string // LRU order, least-recent first
 
@@ -376,7 +382,7 @@ func WithStandaloneRepos(on bool) RouterOption
 // and tokenizer and runs a local ONNX export of it (D24). WithLoader(nil) leaves
 // no loader, and Load returns ErrNoLoader. It is also the seam the upstream LRU
 // tests need, which monkeypatch Router.load (test_router.py:177).
-func WithLoader(fn func(context.Context, string, ModelSpec) (Agent, error)) RouterOption
+func WithLoader(fn func(context.Context, string, ModelSpec) (Predictor, error)) RouterOption
 
 // The default loader's settings; a custom WithLoader ignores all three.
 func WithRouterDevice(d string) RouterOption  // "cpu", "cuda[:N]", "coreml", "" / "auto"

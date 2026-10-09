@@ -62,7 +62,7 @@ type gateLoader struct {
 	made []*gateAgent
 }
 
-func (l *gateLoader) fn(_ context.Context, name string, _ ModelSpec) (Agent, error) {
+func (l *gateLoader) fn(_ context.Context, name string, _ ModelSpec) (Predictor, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	a := newGateAgent(name, false)
@@ -216,7 +216,7 @@ func TestRouterPredictReportsDeferredCloseError(t *testing.T) {
 	ctx := context.Background()
 	errClose := errors.New("close failed")
 	gate := &failingGate{gateAgent: newGateAgent(ModelEnglish, true), err: errClose}
-	r, err := NewRouter(WithMaxLoaded(1), WithLoader(func(context.Context, string, ModelSpec) (Agent, error) {
+	r, err := NewRouter(WithMaxLoaded(1), WithLoader(func(context.Context, string, ModelSpec) (Predictor, error) {
 		return gate, nil
 	}))
 	if err != nil {

@@ -399,7 +399,7 @@ func TestUpstreamAttach(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if again != Agent(sentinel) {
+	if again != Predictor(sentinel) {
 		t.Error("attach/still the same object")
 	}
 
