@@ -30,19 +30,19 @@ finished tasks cited in code comments refer to that history.
 Tick a box only when the work is committed and `just ci` is green. A milestone is done when every
 box under it is ticked.
 
-| Milestone                                                       | Delivers                                                | Status                                                            |
-| --------------------------------------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------- |
-| [M0 — Scaffolding](#m0--scaffolding)                            | Go module, tooling, CI, frozen Python, `Version`        | ✅ done                                                           |
-| [Spikes S1–S3](#3-spikes)                                       | ONNX export, binding choice, latency floor              | ✅ done                                                           |
-| [M1 — Reference harness](#m1--the-python-reference-harness)     | `testdata/*.jsonl` golden vectors                       | ✅ done                                                           |
-| [M2 — Tier-1 core](#m2--tier-1-core)                            | `jsonx`, `lang`, `mailtext`, `presets`, render          | ✅ done                                                           |
-| [M3 — Router](#m3--router)                                      | `Route`, model registry, LRU                            | ✅ done                                                           |
-| [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done                                                           |
-| [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done                                                           |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                                                           |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | 🟡 7.1–7.5 done bar 7.2.5; 7.6 bar 7.6.3 (partial); 7.7 bar 7.7.7 |
-| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | 🟡 B.1, B.6–B.8 done                                              |
-| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred                                                       |
+| Milestone                                                       | Delivers                                                | Status                                             |
+| --------------------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------- |
+| [M0 — Scaffolding](#m0--scaffolding)                            | Go module, tooling, CI, frozen Python, `Version`        | ✅ done                                            |
+| [Spikes S1–S3](#3-spikes)                                       | ONNX export, binding choice, latency floor              | ✅ done                                            |
+| [M1 — Reference harness](#m1--the-python-reference-harness)     | `testdata/*.jsonl` golden vectors                       | ✅ done                                            |
+| [M2 — Tier-1 core](#m2--tier-1-core)                            | `jsonx`, `lang`, `mailtext`, `presets`, render          | ✅ done                                            |
+| [M3 — Router](#m3--router)                                      | `Route`, model registry, LRU                            | ✅ done                                            |
+| [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done                                            |
+| [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done                                            |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                                            |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | 🟡 7.1–7.5 done bar 7.2.5; 7.6 done; 7.7 bar 7.7.7 |
+| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | 🟡 B.1, B.6–B.9 done                               |
+| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred                                        |
 
 **Critical path to 1.0:** M7 (loader → `SystemOne` → answer parity → e2e parity → README). The
 Backlog and M8 do not gate 1.0.
@@ -439,7 +439,7 @@ Done:
       through jsonx to valid JSON. Same command as 7.5.4; with `WithMaxLoaded(2)` the eviction
       assertion fails (`Loaded() = [english multilingual]`).
 
-**Task 7.6: README + examples.** (2026-10-09, user decision) Keep upstream's model results
+**Task 7.6: README + examples.** — ✅ DONE (2026-10-09). User decision (2026-10-09): keep upstream's model results
 (accuracy, calibration, the Jev comparison), credited to upstream, because the checkpoints are
 the same. Every code example becomes Go, the latency figures come from `BENCHMARKS.md`, and the
 Python-only parts (pip, fine-tuning) are dropped or linked.
@@ -463,7 +463,7 @@ Python-only parts (pip, fine-tuning) are dropped or linked.
       `grep -c 'raw.githubusercontent.com/NandhaKishorM' README.md` gives 0, and each of
       `logo-lockup.png`, `logo-lockup-dark.png`, `laya_vs_jev_full.png` and
       `laya_benchmark.png` exists under `assets/`.
-- [ ] **7.6.3** Document the deliberate deviations: `repo` is always a string (3.1.4);
+- [x] **7.6.3** Document the deliberate deviations: `repo` is always a string (3.1.4);
       `instructions` is `string` only; the pinned default revision (D17); the graph is a local
       export and only the config and tokenizer are downloaded (D24); no ONNX backend off D21's platform list
       (`ErrUnsupportedPlatform`); `cuda` falls back to CPU (D22); no `mps` device; a config with `max_len`/`head_max_len` ≤ 0 or a
@@ -473,18 +473,14 @@ Python-only parts (pip, fine-tuning) are dropped or linked.
       instead of the huggingface_hub cache; and every dropped or renamed export: `proper_reward`,
       `td_lambda_targets` (D3), `ece_score` (internal `calib.ECE`), `load` (→ `Open`), `RLAgent`
       (no alias), `QTYPES`/`QTYPE_NAMES` (→ `QType`), `detect_language` (→ `lang.Analyse`), and
-      `confidence_from_probs` and `render_options` (internal).
-      (2026-10-09) — partial: README "Differences from Python laya" lists every entry, each
-      with the Python line, the Go symbol and what a caller sees, read off the code and grepped
-      (commands in PR "docs: list deviations and verified revisions"). Two parts of this item's
-      list are not true of the code, and the README states the code instead. `render_options`
-      is not internal: every question type has a public `RenderOptions()` method, and only the
-      free function `prompt.RenderOptions` is internal. `ErrUnsupportedPlatform` exists but
-      lives in `internal/backend/onnx`, unexported from the root, so a caller cannot match it
-      with `errors.Is`; the same holds for `ErrUnknownDevice`, which `mps` gets (B.9). Also
-      recorded: the config's own limits and temperature fail with `ErrIncompatibleCheckpoint`,
-      not `ErrInvalidLimits`. What remains: correct this item's list, or export the
-      sentinels (B.9), then tick.
+      `confidence_from_probs` (internal) and `render_options` (→ the `RenderOptions()` method of
+      every question type; the free function is internal). (2026-10-09, user decision) The list
+      said `render_options` was internal, which the code never was; corrected here.
+      (2026-10-09) README "Differences from Python laya" lists every entry, each with the Python
+      line, the Go symbol and what a caller sees, read off the code and grepped (commands in PR
+      #36). `ErrUnsupportedPlatform` and the `mps` case's `ErrUnknownDevice` are root sentinels
+      since B.9. The config's own limits and temperature fail with `ErrIncompatibleCheckpoint`,
+      which the README says, not `ErrInvalidLimits`.
 - [x] **7.6.4** Replace the README's T4 latency claims ("33 ms", seven times) with the S3 numbers
       already in `BENCHMARKS.md`. (2026-10-09) The T4 speed table is now "Speed, CPU, measured
       here", with the one-question and batching tables copied row for row from `BENCHMARKS.md`
@@ -653,13 +649,18 @@ the ECE/Brier inputs.
       fixed in 1.26.9. (2026-10-09) go.mod gained `toolchain go1.26.9`, and the minimum Go for
       callers stays 1.26.0. `go version` in the repo gives go1.26.9, and `govulncheck ./...`
       gives "No vulnerabilities found." Bump the toolchain line by hand, like the other pins.
-- [ ] **B.9** Make the backend's errors matchable. `Open` returns `ErrUnsupportedPlatform` off
+- [x] **B.9** Make the backend's errors matchable. `Open` returns `ErrUnsupportedPlatform` off
       D21's list and `ErrUnknownDevice` for a name such as `mps`, but both live in
       `internal/backend/onnx`, so a caller can only match the message. Re-export them from the
       root, as `ErrIncompatibleCheckpoint` is, or decide not to and say so in 7.6.3. Found
-      while writing the README's deviation list (Task 7.6.3).
+      while writing the README's deviation list (Task 7.6.3). (2026-10-09, user decision:
+      re-export) `laya.ErrUnsupportedPlatform` and `laya.ErrUnknownDevice` are the backend's
+      sentinels, as `ErrIncompatibleCheckpoint` is. `TestOpenUnknownDevice` opens through the
+      real backend with `WithDevice("mps")` and matches the root name; with the root name made
+      a separate `errors.New`, it and `TestBackendErrorsReexported` fail. `GOOS=windows go vet .`
+      passes, so the stub platforms still build.
 - [ ] **B.10** Correct the comments that say Python silently truncates with a `max_len` ≤ 0
-      (errors.go:67, agent.go:80, internal/checkpoint/config.go:183). `build_sequence` then keeps
+      (errors.go:80, agent.go:80, internal/checkpoint/config.go:183). `build_sequence` then keeps
       no marker (`m < max_len`, common.py:86), so Python raises `ValueError` at agent.py:262-263.
       Only `head_max_len` ≤ 0 truncates silently, to 4 tokens per option (common.py:70-73).
 
@@ -768,4 +769,5 @@ The dynamic-typing decisions:
       from. Today it checks library versions and `compute`, not the Hub sha.
 - [ ] The ONNX artefacts are ones we export ourselves, not a third-party upload.
 - [ ] The ORT version is pinned and every downloaded artefact is ETag/sha-verified before use (R7).
-- [ ] The deliberate deviations from Python are listed in the README (Task 7.6.3).
+- [x] The deliberate deviations from Python are listed in the README (Task 7.6.3). (2026-10-09)
+      README "Differences from Python laya", Task 7.6.3.
