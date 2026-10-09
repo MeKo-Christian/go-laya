@@ -452,11 +452,11 @@ Python-only parts (pip, fine-tuning) are dropped or linked.
       Go line in the README occurs in that file. Only `ExampleRouter_Route` has an `Output`,
       because it routes without weights; `testableexamples` is off for this file alone.
       `go vet . && go test -count=1 -run '^Example' -v .` passes `ExampleRouter_Route`;
-      renaming `SetLimits` to `SetLimit` in an example fails `go vet` (`agent.SetLimit
-    undefined`). A temporary, uncommitted test ran all seven weight-bound Examples against the
-      local exports (`LAYA_ONNX_DIR`, hardlinked) and the pinned Hub config. They passed in
-      43.9 s, with `billing` on both routes, `english` then `multilingual`, and upstream's
-      devanagari reason. §8's "compiles and runs" stays open: CI only compiles them.
+      renaming `SetLimits` to `SetLimit` in an example fails `go vet` with
+      `agent.SetLimit undefined`. A temporary, uncommitted test ran all seven weight-bound
+      Examples against the local exports (`LAYA_ONNX_DIR`, hardlinked) and the pinned Hub
+      config. They passed in 43.9 s, with `billing` on both routes, `english` then
+      `multilingual`, and upstream's devanagari reason. §8's "compiles and runs" stays open: CI only compiles them.
 - [x] **7.6.2** Fix the image URLs. Upstream's point at
       `raw.githubusercontent.com/NandhaKishorM/laya/main/...`, so a fork's README renders
       upstream's assets. (2026-10-09) All four images are relative `assets/` paths.

@@ -449,7 +449,6 @@ temperatures at all, so fit them before relying on its probabilities.
   - `laya` (English) defaults to 512 context (`head_max_len = 192`, ~320 tokens for state).
   - `laya-multilingual` and `laya-typed-decisions` default to 1,024 context (`head_max_len = 256`, ~768 tokens for state; mmBERT-base encoder supports up to 8,192 with RoPE).
     At default settings, a 77-option question like Banking77 allocates only (256 − 16) / 77 ≈ 3 tokens per label, which causes accuracy to fall off sharply (0.425 vs Jev's 0.870). If evaluating 50+ options in a single question:
-
   1. Raise both limits so every option has enough tokens to remain distinct (or `max_len` up to 2048 / 4096 / 8192):
 
      ```go
