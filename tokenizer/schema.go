@@ -65,16 +65,18 @@ type patternJSON struct {
 }
 
 type modelJSON struct {
-	Type                    string           `json:"type"`
-	Dropout                 *float64         `json:"dropout"`
-	UnkToken                *string          `json:"unk_token"`
-	ContinuingSubwordPrefix *string          `json:"continuing_subword_prefix"`
-	EndOfWordSuffix         *string          `json:"end_of_word_suffix"`
-	FuseUnk                 bool             `json:"fuse_unk"`
-	ByteFallback            bool             `json:"byte_fallback"`
-	IgnoreMerges            bool             `json:"ignore_merges"`
-	Vocab                   map[string]int32 `json:"vocab"`
-	Merges                  [][2]string      `json:"merges"`
+	Type                    string   `json:"type"`
+	Dropout                 *float64 `json:"dropout"`
+	UnkToken                *string  `json:"unk_token"`
+	ContinuingSubwordPrefix *string  `json:"continuing_subword_prefix"`
+	EndOfWordSuffix         *string  `json:"end_of_word_suffix"`
+	FuseUnk                 bool     `json:"fuse_unk"`
+	ByteFallback            bool     `json:"byte_fallback"`
+	IgnoreMerges            bool     `json:"ignore_merges"`
+	// The two big values stay raw and decode.go scans them: decoding them
+	// through encoding/json was most of the cost of Open (Task B.1).
+	Vocab  rawOccurrences `json:"vocab"`
+	Merges rawOccurrences `json:"merges"`
 }
 
 // tokenizerConfigJSON is the half of tokenizer_config.json this port reads.
