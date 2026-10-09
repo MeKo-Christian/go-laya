@@ -30,19 +30,19 @@ finished tasks cited in code comments refer to that history.
 Tick a box only when the work is committed and `just ci` is green. A milestone is done when every
 box under it is ticked.
 
-| Milestone                                                       | Delivers                                                | Status                                                         |
-| --------------------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------- |
-| [M0 — Scaffolding](#m0--scaffolding)                            | Go module, tooling, CI, frozen Python, `Version`        | ✅ done                                                        |
-| [Spikes S1–S3](#3-spikes)                                       | ONNX export, binding choice, latency floor              | ✅ done                                                        |
-| [M1 — Reference harness](#m1--the-python-reference-harness)     | `testdata/*.jsonl` golden vectors                       | ✅ done                                                        |
-| [M2 — Tier-1 core](#m2--tier-1-core)                            | `jsonx`, `lang`, `mailtext`, `presets`, render          | ✅ done                                                        |
-| [M3 — Router](#m3--router)                                      | `Route`, model registry, LRU                            | ✅ done                                                        |
-| [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done                                                        |
-| [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done                                                        |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                                                        |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | 🟡 7.1–7.5 done bar 7.2.5; 7.6 bar 7.6.3, 7.6.5; 7.7 bar 7.7.7 |
-| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | 🟡 B.1, B.6–B.8 done                                           |
-| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred                                                    |
+| Milestone                                                       | Delivers                                                | Status                                                            |
+| --------------------------------------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------- |
+| [M0 — Scaffolding](#m0--scaffolding)                            | Go module, tooling, CI, frozen Python, `Version`        | ✅ done                                                           |
+| [Spikes S1–S3](#3-spikes)                                       | ONNX export, binding choice, latency floor              | ✅ done                                                           |
+| [M1 — Reference harness](#m1--the-python-reference-harness)     | `testdata/*.jsonl` golden vectors                       | ✅ done                                                           |
+| [M2 — Tier-1 core](#m2--tier-1-core)                            | `jsonx`, `lang`, `mailtext`, `presets`, render          | ✅ done                                                           |
+| [M3 — Router](#m3--router)                                      | `Route`, model registry, LRU                            | ✅ done                                                           |
+| [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done                                                           |
+| [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done                                                           |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                                                           |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | 🟡 7.1–7.5 done bar 7.2.5; 7.6 bar 7.6.3 (partial); 7.7 bar 7.7.7 |
+| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | 🟡 B.1, B.6–B.8 done                                              |
+| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred                                                       |
 
 **Critical path to 1.0:** M7 (loader → `SystemOne` → answer parity → e2e parity → README). The
 Backlog and M8 do not gate 1.0.
@@ -474,13 +474,31 @@ Python-only parts (pip, fine-tuning) are dropped or linked.
       `td_lambda_targets` (D3), `ece_score` (internal `calib.ECE`), `load` (→ `Open`), `RLAgent`
       (no alias), `QTYPES`/`QTYPE_NAMES` (→ `QType`), `detect_language` (→ `lang.Analyse`), and
       `confidence_from_probs` and `render_options` (internal).
+      (2026-10-09) — partial: README "Differences from Python laya" lists every entry, each
+      with the Python line, the Go symbol and what a caller sees, read off the code and grepped
+      (commands in PR "docs: list deviations and verified revisions"). Two parts of this item's
+      list are not true of the code, and the README states the code instead. `render_options`
+      is not internal: every question type has a public `RenderOptions()` method, and only the
+      free function `prompt.RenderOptions` is internal. `ErrUnsupportedPlatform` exists but
+      lives in `internal/backend/onnx`, unexported from the root, so a caller cannot match it
+      with `errors.Is`; the same holds for `ErrUnknownDevice`, which `mps` gets (B.9). Also
+      recorded: the config's own limits and temperature fail with `ErrIncompatibleCheckpoint`,
+      not `ErrInvalidLimits`. What remains: correct this item's list, or export the
+      sentinels (B.9), then tick.
 - [x] **7.6.4** Replace the README's T4 latency claims ("33 ms", seven times) with the S3 numbers
       already in `BENCHMARKS.md`. (2026-10-09) The T4 speed table is now "Speed, CPU, measured
       here", with the one-question and batching tables copied row for row from `BENCHMARKS.md`
       (each row diffed against it). The preload table and the Jev latency row use the CPU
       figures. `grep -nE '33 ?ms|35 ?ms|39\.5|32\.8' README.md` leaves two lines, both
       labelled as upstream's T4 run and not measured here.
-- [ ] **7.6.5** State the tokenizer and checkpoint revisions the port is verified against.
+- [x] **7.6.5** State the tokenizer and checkpoint revisions the port is verified against.
+      (2026-10-09) README "Verified against" gives the Hub revision
+      `1c5edc17a7acd8701df6fc341c0d179f1c62c982` (`pinnedRevision`, loader.go:22, and
+      `checkpoint_sha` in all 13 golden headers), tokenizers 0.23.2 and transformers 5.17.0
+      (requirements-ref.txt:51, :54; provenance_test.go:22-23), torch 2.14.0+cpu with the
+      `compute` block, ORT 1.23.0 (ortlib.go:36) and the exporter's onnxruntime 1.30.0
+      (requirements-ref.txt:39), each with its file. Every value was grepped in that file. It
+      also says `TestGoldenProvenance` does not check the revision; §8's item for that stays open.
 - [x] **7.6.6** State the **measured** CPU latency and that batching does not amortise it. Never
       describe the port as "CPU-first". (2026-10-09) The intro gives 160 ms (`laya-multilingual`,
       128 tokens) to 1.7 s (`laya`, 512). "Speed" states that batching does not amortise on CPU,
@@ -635,6 +653,15 @@ the ECE/Brier inputs.
       fixed in 1.26.9. (2026-10-09) go.mod gained `toolchain go1.26.9`, and the minimum Go for
       callers stays 1.26.0. `go version` in the repo gives go1.26.9, and `govulncheck ./...`
       gives "No vulnerabilities found." Bump the toolchain line by hand, like the other pins.
+- [ ] **B.9** Make the backend's errors matchable. `Open` returns `ErrUnsupportedPlatform` off
+      D21's list and `ErrUnknownDevice` for a name such as `mps`, but both live in
+      `internal/backend/onnx`, so a caller can only match the message. Re-export them from the
+      root, as `ErrIncompatibleCheckpoint` is, or decide not to and say so in 7.6.3. Found
+      while writing the README's deviation list (Task 7.6.3).
+- [ ] **B.10** Correct the comments that say Python silently truncates with a `max_len` ≤ 0
+      (errors.go:67, agent.go:80, internal/checkpoint/config.go:183). `build_sequence` then keeps
+      no marker (`m < max_len`, common.py:86), so Python raises `ValueError` at agent.py:262-263.
+      Only `head_max_len` ≤ 0 truncates silently, to 4 tokens per option (common.py:70-73).
 
 ### M8 — Pure-Go native backend (after 1.0)
 
