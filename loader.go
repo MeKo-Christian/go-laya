@@ -153,13 +153,14 @@ func (l *defaultLoader) buildOn(ctx context.Context, spec ModelSpec, be backend.
 // probability of 1 from a row one wide, where it should fail.
 type shapeChecked struct {
 	backend.Backend
+
 	actWidth int
 }
 
 func (b shapeChecked) Forward(ctx context.Context, in backend.Batch) (logits, act [][]float32, err error) {
 	logits, act, err = b.Backend.Forward(ctx, in)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("caller's backend: %w", err)
 	}
 	if len(logits) != len(in.MarkerPos) || len(act) != len(in.MarkerPos) {
 		return nil, nil, fmt.Errorf("%w: %d logit rows and %d act rows for %d in the batch",
