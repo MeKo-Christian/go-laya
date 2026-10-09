@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,9 +31,12 @@ const pinnedRevision = "1c5edc17a7acd8701df6fc341c0d179f1c62c982"
 // is a local ONNX export of the same checkpoint and only the config and the
 // tokenizer are downloaded.
 type defaultLoader struct {
-	hub     *hub.Client
-	onnxDir string // "" is onnx/ under the laya cache, resolved per load
-	device  string
+	hub      *hub.Client
+	onnxDir  string // "" is onnx/ under the laya cache, resolved per load
+	device   string
+	revision string       // "" is D17's pin for the bundle repo, main for any other
+	cacheDir string       // "" is hub.DefaultDir(), resolved per load
+	logger   *slog.Logger // nil is slog.Default()
 
 	// snapshot and open are the network and the runtime. They are fields so
 	// that tests can stand in for both; CI has neither.
@@ -43,9 +47,12 @@ type defaultLoader struct {
 // loaderSettings configure the default loader. The Router's options set them
 // for every checkpoint it loads, Open's for the one it opens.
 type loaderSettings struct {
-	onnxDir string // "" is $LAYA_ONNX_DIR, else onnx/ under the laya cache
-	device  string
-	token   string // "" is $HF_TOKEN
+	onnxDir  string // "" is $LAYA_ONNX_DIR, else onnx/ under the laya cache
+	device   string
+	token    string       // "" is $HF_TOKEN
+	revision string       // "" is D17's pin for the bundle repo, main for any other
+	cacheDir string       // "" is hub.DefaultDir()
+	logger   *slog.Logger // nil is slog.Default()
 }
 
 func newDefaultLoader(cfg loaderSettings) *defaultLoader {
@@ -54,9 +61,12 @@ func newDefaultLoader(cfg loaderSettings) *defaultLoader {
 		token = os.Getenv("HF_TOKEN")
 	}
 	l := &defaultLoader{
-		hub:     &hub.Client{Token: token, Offline: offlineFromEnv()},
-		onnxDir: cfg.onnxDir,
-		device:  cfg.device,
+		hub:      &hub.Client{Token: token, Dir: cfg.cacheDir, Offline: offlineFromEnv()},
+		onnxDir:  cfg.onnxDir,
+		device:   cfg.device,
+		revision: cfg.revision,
+		cacheDir: cfg.cacheDir,
+		logger:   cfg.logger,
 	}
 	if l.onnxDir == "" {
 		l.onnxDir = os.Getenv("LAYA_ONNX_DIR")
@@ -104,28 +114,17 @@ func (l *defaultLoader) load(ctx context.Context, name string, spec ModelSpec) (
 // names. graph is asked for only once the checkpoint has been read, so a bad
 // checkpoint is reported as such rather than as a missing export.
 func (l *defaultLoader) build(ctx context.Context, spec ModelSpec, graph func() (string, error)) (*Agent, error) {
-	dir, err := l.checkpointDir(ctx, spec)
+	cfg, tok, actWidth, err := l.readCheckpoint(ctx, spec)
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := checkpoint.LoadConfig(dir)
-	if err != nil {
-		return nil, fmt.Errorf("laya: %w", err)
-	}
-	actWidth, err := cfg.ActWidth()
-	if err != nil {
-		return nil, fmt.Errorf("laya: %w", err)
-	}
-	tok, err := tokenizer.Open(filepath.Join(dir, "tokenizer"))
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrIncompatibleCheckpoint, err)
-	}
-
 	path, err := graph()
 	if err != nil {
 		return nil, err
 	}
-	be, err := l.open(path, onnx.Options{Device: l.device, ActWidth: actWidth})
+	be, err := l.open(path, onnx.Options{
+		Device: l.device, ActWidth: actWidth, Logger: l.logger, CacheDir: l.cacheDir,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -135,6 +134,71 @@ func (l *defaultLoader) build(ctx context.Context, spec ModelSpec, graph func() 
 		return nil, err
 	}
 	return a, nil
+}
+
+// buildOn loads the checkpoint spec locates and runs it on be, the caller's
+// backend (WithBackend). Unlike build it never closes be: on failure the
+// caller still owns it.
+func (l *defaultLoader) buildOn(ctx context.Context, spec ModelSpec, be backend.Backend) (*Agent, error) {
+	cfg, tok, actWidth, err := l.readCheckpoint(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+	return newAgent(shapeChecked{be, actWidth}, cfg, tok)
+}
+
+// shapeChecked holds a caller's backend to the output shapes the ONNX backend
+// enforces on itself: per row, one logit per marker column and the config's
+// act width. A wrong width would otherwise answer plausibly, an act
+// probability of 1 from a row one wide, where it should fail.
+type shapeChecked struct {
+	backend.Backend
+
+	actWidth int
+}
+
+func (b shapeChecked) Forward(ctx context.Context, in backend.Batch) (logits, act [][]float32, err error) {
+	logits, act, err = b.Backend.Forward(ctx, in)
+	if err != nil {
+		return nil, nil, fmt.Errorf("caller's backend: %w", err)
+	}
+	if len(logits) != len(in.MarkerPos) || len(act) != len(in.MarkerPos) {
+		return nil, nil, fmt.Errorf("%w: %d logit rows and %d act rows for %d in the batch",
+			ErrIncompatibleCheckpoint, len(logits), len(act), len(in.MarkerPos))
+	}
+	for r := range logits {
+		if kmax := len(in.MarkerPos[r]); len(logits[r]) != kmax {
+			return nil, nil, fmt.Errorf("%w: row %d has %d logits, %d marker columns",
+				ErrIncompatibleCheckpoint, r, len(logits[r]), kmax)
+		}
+		if len(act[r]) != b.actWidth {
+			return nil, nil, fmt.Errorf("%w: row %d has %d act logits, the config's act head %d",
+				ErrIncompatibleCheckpoint, r, len(act[r]), b.actWidth)
+		}
+	}
+	return logits, act, nil
+}
+
+// readCheckpoint reads the config and the tokenizer of the checkpoint spec
+// locates, downloading them first if it is on the Hub, and the act_logits
+// width the config derives.
+func (l *defaultLoader) readCheckpoint(ctx context.Context, spec ModelSpec) (
+	cfg *checkpoint.Config, tok *tokenizer.HF, actWidth int, err error,
+) {
+	dir, err := l.checkpointDir(ctx, spec)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	if cfg, err = checkpoint.LoadConfig(dir); err != nil {
+		return nil, nil, 0, fmt.Errorf("laya: %w", err)
+	}
+	if actWidth, err = cfg.ActWidth(); err != nil {
+		return nil, nil, 0, fmt.Errorf("laya: %w", err)
+	}
+	if tok, err = tokenizer.Open(filepath.Join(dir, "tokenizer")); err != nil {
+		return nil, nil, 0, fmt.Errorf("%w: %w", ErrIncompatibleCheckpoint, err)
+	}
+	return cfg, tok, actWidth, nil
 }
 
 // checkpointDir is agent.py:115-135: a directory that exists is used as it is,
@@ -170,12 +234,16 @@ func (l *defaultLoader) checkpointDir(ctx context.Context, spec ModelSpec) (stri
 	return sub, nil
 }
 
-// download snapshots the spec's config and tokenizer, the bundle repo at
-// D17's pin and any other repo at main.
+// download snapshots the spec's config and tokenizer at the loader's
+// revision, else the bundle repo at D17's pin and any other repo at main.
 func (l *defaultLoader) download(ctx context.Context, spec ModelSpec) (string, error) {
-	rev := "main"
-	if spec.Repo == bundleRepo {
+	rev := l.revision
+	switch {
+	case rev != "":
+	case spec.Repo == bundleRepo:
 		rev = pinnedRevision
+	default:
+		rev = "main"
 	}
 	dir, err := l.snapshot(ctx, spec.Repo, rev, allowPatterns(spec.Subfolder))
 	// A missing repo, and a subfolder the allow filter finds no file for, are
@@ -211,9 +279,12 @@ func (l *defaultLoader) graphDir() (string, error) {
 	if l.onnxDir != "" {
 		return l.onnxDir, nil
 	}
-	base, err := hub.DefaultDir()
-	if err != nil {
-		return "", fmt.Errorf("laya: %w", err)
+	base := l.cacheDir
+	if base == "" {
+		var err error
+		if base, err = hub.DefaultDir(); err != nil {
+			return "", fmt.Errorf("laya: %w", err)
+		}
 	}
 	return filepath.Join(base, "onnx"), nil
 }

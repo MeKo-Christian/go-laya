@@ -1,6 +1,12 @@
 package laya
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"log/slog"
+
+	"github.com/MeKo-Christian/go-laya/internal/hub"
+)
 
 // Functional options for the Router. They mirror the keyword arguments of
 // Python's Router.__init__ (router.py:144-153) and Router.route
@@ -173,11 +179,52 @@ func WithRouterToken(tok string) RouterOption {
 // WithONNXDir is where the default loader looks for ONNX exports: the file
 // laya-<name>.onnx for the checkpoint the Router calls name, which is what
 // `scripts/export_onnx.py --out dir` writes. Without it the loader uses
-// $LAYA_ONNX_DIR, else onnx/ under the laya cache ($LAYA_CACHE, else the
-// user cache directory). A custom WithLoader ignores it.
+// $LAYA_ONNX_DIR, else onnx/ under the laya cache (WithRouterCacheDir, else
+// $LAYA_CACHE, else the user cache directory). A custom WithLoader ignores it.
 func WithONNXDir(dir string) RouterOption {
 	return func(c *routerConfig) error {
 		c.onnxDir = dir
+		return nil
+	}
+}
+
+// WithRouterRevision is the Hub revision the default loader downloads every
+// checkpoint at: a branch such as "main", a tag or a commit sha. Empty keeps
+// the default, D17's pin for convaiinnovations/laya and main for any other
+// repo; any other value applies to every repo, the bundle repo included. A
+// local directory ignores it, and so does a custom WithLoader. An unsafe
+// revision fails NewRouter with ErrInvalidRevision; offline and the export
+// behave as WithRevision says.
+func WithRouterRevision(rev string) RouterOption {
+	return func(c *routerConfig) error {
+		if rev != "" && !hub.ValidRevision(rev) {
+			return fmt.Errorf("%w: %q", ErrInvalidRevision, rev)
+		}
+		c.revision = rev
+		return nil
+	}
+}
+
+// WithRouterCacheDir is the laya cache the default loader uses in place of
+// $LAYA_CACHE (else the user cache directory + /laya): where Hub snapshots
+// are kept, where the default export directory onnx/ is, and where the ONNX
+// Runtime library that cmd/laya-ort downloads is looked for. WithONNXDir,
+// $LAYA_ONNX_DIR, $LAYA_ORT_LIB and $ORT_LIBRARY_PATH still win over the last
+// two. Empty keeps the default; run cmd/laya-ort with LAYA_CACHE set to dir
+// to put the library there. A custom WithLoader ignores it.
+func WithRouterCacheDir(dir string) RouterOption {
+	return func(c *routerConfig) error {
+		c.cacheDir = dir
+		return nil
+	}
+}
+
+// WithRouterLogger receives the warnings of every ONNX backend the default
+// loader opens, one per device that falls back to the CPU. Nil keeps
+// slog.Default(). A custom WithLoader ignores it.
+func WithRouterLogger(l *slog.Logger) RouterOption {
+	return func(c *routerConfig) error {
+		c.logger = l
 		return nil
 	}
 }

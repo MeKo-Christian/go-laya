@@ -80,6 +80,19 @@ var (
 	// silently truncates every sequence with it; the config's own values are
 	// held to the same rule.
 	ErrInvalidLimits = errors.New("laya: max_len and head_max_len must be positive")
+
+	// ErrInvalidRevision reports a WithRevision or WithRouterRevision value
+	// that is not safe to put into a Hub URL and a cache path: an absolute
+	// path, a "." or ".." segment, an empty segment or a backslash. Open and
+	// NewRouter refuse it as the option is applied.
+	ErrInvalidRevision = errors.New("laya: invalid revision")
+
+	// ErrConflictingOptions reports Open options that cannot apply together:
+	// WithBackend beside WithGraph or WithDevice, which choose the graph and
+	// the device of the ONNX backend WithBackend replaces, so either would be
+	// silently ignored. WithLogger beside it is accepted and has nothing to
+	// log, since only the ONNX backend warns. The message names the options.
+	ErrConflictingOptions = errors.New("laya: conflicting options")
 )
 
 // OptionBudgetError names the question whose options lost their markers,

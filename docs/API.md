@@ -268,16 +268,34 @@ func WithDevice(d string) Option    // "cpu" | "cuda" | "cuda:0" | "coreml" | ""
 func WithHFToken(tok string) Option // default: $HF_TOKEN
 func WithSubfolder(sub string) Option
 func WithLimits(maxLen, headMaxLen int) Option
+// WithRevision is the Hub revision: "main", a tag or a commit sha. "" keeps D17's
+// pin for convaiinnovations/laya and main for any other repo; any other value is
+// used for every repo, the bundle repo included (D29). A local directory ignores it;
+// an unsafe one ("..", an absolute path, a backslash) is ErrInvalidRevision.
+func WithRevision(rev string) Option
 // WithGraph names the export. Without it, Open looks for laya-<name>.onnx in
 // $LAYA_ONNX_DIR, else <cache>/onnx, where name is the checkpoint the repo
 // and subfolder locate in DefaultModels or StandaloneModels; anything else,
 // such as a local directory, is ErrNoGraph.
 func WithGraph(path string) Option
 
-// Planned (PLAN 7.7.7), not yet implemented:
-func WithCacheDir(dir string) Option    // default: $LAYA_CACHE or os.UserCacheDir()/laya
-func WithBackend(b backend.Backend) Option // public leaf package (PLAN D9): test doubles, alternative runtimes
+// WithCacheDir replaces the laya cache, "" being $LAYA_CACHE, else
+// os.UserCacheDir()/laya. It moves all three things the cache holds (D29): the Hub
+// snapshots, the default export directory <cache>/onnx (WithGraph and
+// $LAYA_ONNX_DIR still win), and the lookup of the ONNX Runtime library
+// cmd/laya-ort downloads ($LAYA_ORT_LIB and $ORT_LIBRARY_PATH still win).
+func WithCacheDir(dir string) Option
+// WithLogger receives the ONNX backend's device-fallback warnings; nil is slog.Default().
 func WithLogger(l *slog.Logger) Option
+// WithBackend runs the checkpoint on b, a public leaf package type (PLAN D9): test
+// doubles, alternative runtimes. The config and tokenizer are still downloaded; no
+// export is looked for and no ONNX backend opened. Beside WithGraph or WithDevice it
+// is ErrConflictingOptions; nil keeps the ONNX backend. A successful Open hands b to
+// the Agent, whose Close closes it; a failed Open leaves b open and the caller's (D29).
+// Its outputs are held to the ONNX backend's shapes: kmax logits and the config's act
+// width per row, else ErrIncompatibleCheckpoint. b must be safe for concurrent
+// Forward calls, as backend.Backend requires: the Agent does not serialize them.
+func WithBackend(b backend.Backend) Option
 
 // ---------------------------------------------------------------- router
 
@@ -393,10 +411,13 @@ func WithStandaloneRepos(on bool) RouterOption
 // tests need, which monkeypatch Router.load (test_router.py:177).
 func WithLoader(fn func(context.Context, string, ModelSpec) (Predictor, error)) RouterOption
 
-// The default loader's settings; a custom WithLoader ignores all three.
+// The default loader's settings; a custom WithLoader ignores all of them.
 func WithRouterDevice(d string) RouterOption  // "cpu", "cuda[:N]", "coreml", "" / "auto"
 func WithRouterToken(tok string) RouterOption // falls back to $HF_TOKEN, read by NewRouter
 func WithONNXDir(dir string) RouterOption     // laya-<name>.onnx; else $LAYA_ONNX_DIR, else <cache>/onnx
+func WithRouterRevision(rev string) RouterOption // as WithRevision, for every checkpoint the loader downloads
+func WithRouterCacheDir(dir string) RouterOption // as WithCacheDir; WithONNXDir still wins over <cache>/onnx
+func WithRouterLogger(l *slog.Logger) RouterOption // as WithLogger, for every backend the loader opens
 // Offline comes from the environment: HF_HUB_OFFLINE (or TRANSFORMERS_OFFLINE), read as
 // huggingface_hub reads it, or LAYA_OFFLINE.
 
@@ -421,6 +442,8 @@ var (
 	ErrDuplicateQuestionID     = errors.New("laya: duplicate question id") // Python: impossible in a dict
 	ErrNoOptions               = errors.New("laya: question has no options") // Python: ValueError from an empty softmax
 	ErrInvalidLimits           = errors.New("laya: max_len and head_max_len must be positive") // SetLimits, WithLimits
+	ErrInvalidRevision         = errors.New("laya: invalid revision")    // WithRevision / WithRouterRevision not safe in a URL and a cache path
+	ErrConflictingOptions      = errors.New("laya: conflicting options") // WithBackend beside WithGraph or WithDevice
 )
 
 // OptionBudgetError names the offending question, replacing Python's

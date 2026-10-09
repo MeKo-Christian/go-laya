@@ -75,7 +75,7 @@ func loadFixture(t *testing.T) fixture {
 func requireORTLibrary(t testing.TB) string {
 	t.Helper()
 
-	lib, err := findORTLibrary()
+	lib, err := findORTLibrary("")
 	if err != nil {
 		t.Skipf("no ONNX Runtime: %v", err)
 	}

@@ -41,24 +41,26 @@ var ortLibraryCandidates = []string{
 }
 
 // cachedORTLibrary is the pinned download cmd/laya-ort fetches into the laya
-// cache (Task 6.6.1), re-verified on every call. A variable so tests do not
-// depend on what the machine running them has downloaded.
-var cachedORTLibrary = func() (string, error) {
+// cache (Task 6.6.1), re-verified on every call; dir is the cache root, ""
+// for hub.DefaultDir(). A variable so tests do not depend on what the machine
+// running them has downloaded.
+var cachedORTLibrary = func(dir string) (string, error) {
 	rel, err := ortlib.Pinned(runtime.GOOS, runtime.GOARCH)
 	if err != nil {
 		return "", err
 	}
-	return (&ortlib.Client{}).Cached(rel)
+	return (&ortlib.Client{Dir: dir}).Cached(rel)
 }
 
 // findORTLibrary resolves the ONNX Runtime shared library: LAYA_ORT_LIB, then
 // ORT_LIBRARY_PATH, then the verified download in the laya cache, then the
-// platform's install locations.
+// platform's install locations. cacheDir is that cache's root, "" for
+// hub.DefaultDir().
 //
 // A variable that is set but points nowhere is an error rather than a fallback:
 // silently ignoring it would run against a different runtime than the caller
 // asked for, and the whole point of pinning a runtime (R7) is knowing which library answered.
-func findORTLibrary() (string, error) {
+func findORTLibrary(cacheDir string) (string, error) {
 	for _, key := range ortLibraryEnv {
 		path := os.Getenv(key)
 		if path == "" {
@@ -78,7 +80,7 @@ func findORTLibrary() (string, error) {
 	// Anything else -- a copy that fails its pinned hash, a cache that cannot
 	// be read -- is an error: falling through would quietly load an unpinned
 	// system library in place of the one the cache was meant to supply.
-	switch lib, err := cachedORTLibrary(); {
+	switch lib, err := cachedORTLibrary(cacheDir); {
 	case err == nil:
 		return lib, nil
 	case !errors.Is(err, ortlib.ErrNotCached) && !errors.Is(err, ortlib.ErrUnsupportedPlatform):

@@ -23,6 +23,7 @@ import (
 type openStub struct {
 	settings  loaderSettings
 	token     string
+	hubDir    string
 	snapshots []snapshotCall
 	opens     []openCall
 	closer    *closeCounter
@@ -41,7 +42,7 @@ func stubOpen(t *testing.T, root string) (func(context.Context, string, ...Optio
 	rec := &openStub{closer: &closeCounter{}}
 	newLoader := func(s loaderSettings) *defaultLoader {
 		l := newDefaultLoader(s)
-		rec.settings, rec.token = s, l.hub.Token
+		rec.settings, rec.token, rec.hubDir = s, l.hub.Token, l.hub.Dir
 		l.snapshot = func(_ context.Context, repo, rev string, allow []string) (string, error) {
 			rec.snapshots = append(rec.snapshots, snapshotCall{repo, rev, allow})
 			return root, nil
