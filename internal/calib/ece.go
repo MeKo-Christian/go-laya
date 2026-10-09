@@ -48,7 +48,9 @@ func ECE(conf []float64, correct []bool, bins int) float64 {
 			continue
 		}
 		m := float64(len(sel))
-		e += m / n * math.Abs(pairwiseSum(sel)/m-float64(right)/m)
+		// The conversion rounds the product before the add. Without it arm64
+		// fuses the two into one FMADD and drifts from numpy in the last bit.
+		e += float64(m / n * math.Abs(pairwiseSum(sel)/m-float64(right)/m))
 	}
 	return e
 }

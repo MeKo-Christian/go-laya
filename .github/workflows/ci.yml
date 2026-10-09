@@ -112,6 +112,39 @@ jobs:
       - uses: extractions/setup-just@v2
       - run: just lint-md
 
+  config:
+    name: workflows, TOML and YAML
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install config linters
+        env:
+          # Pinned for the same reason as the formatters: a new rule in a new release
+          # turns green into red without a commit in this repo. yamllint is the one
+          # Python tool CI runs; AGENTS.md keeps Python out of the tests, not the linters.
+          ACTIONLINT_VERSION: "v1.7.12"
+          TAPLO_VERSION: "0.10.0"
+          YAMLLINT_VERSION: "1.37.1"
+        run: |
+          go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"
+          curl -sSL -o taplo.gz \
+            "https://github.com/tamasfe/taplo/releases/download/${TAPLO_VERSION}/taplo-linux-x86_64.gz"
+          gunzip taplo.gz
+          sudo install -m 0755 taplo /usr/local/bin/taplo
+          python -m pip install "yamllint==${YAMLLINT_VERSION}"
+
+      - uses: extractions/setup-just@v2
+      # ubuntu-latest ships shellcheck, so actionlint also checks every `run:` block.
+      - run: just lint-config
+
   tidy:
     name: go.mod is tidy
     runs-on: ubuntu-latest

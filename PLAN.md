@@ -41,7 +41,7 @@ box under it is ticked.
 | [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done                                  |
 | [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                                  |
 | [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | 🟡 7.1–7.5 done bar 7.2.5; 7.7 bar 7.7.7 |
-| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | ⬜ open                                  |
+| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | 🟡 B.1, B.6–B.8 done                     |
 | [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred                              |
 
 **Critical path to 1.0:** M7 (loader → `SystemOne` → answer parity → e2e parity → README). The
@@ -439,7 +439,10 @@ Done:
       through jsonx to valid JSON. Same command as 7.5.4; with `WithMaxLoaded(2)` the eviction
       assertion fails (`Loaded() = [english multilingual]`).
 
-**Task 7.6: README + examples.**
+**Task 7.6: README + examples.** (2026-10-09, user decision) Keep upstream's model results
+(accuracy, calibration, the Jev comparison), credited to upstream, because the checkpoints are
+the same. Every code example becomes Go, the latency figures come from `BENCHMARKS.md`, and the
+Python-only parts (pip, fine-tuning) are dropped or linked.
 
 - [ ] **7.6.1** Port every README example to Go as compiling `Example` functions, so CI proves
       they build (§8). The single-model examples have a target since 7.7.5 (`Open`,
@@ -538,10 +541,27 @@ Done:
 Take these in any order once M7's parity is green, except B.5, which needs `SystemOne` to produce
 the ECE/Brier inputs.
 
-- [ ] **B.1** Stream the tokenizer's 34 MB decode. `Open` on multilingual costs 0.6–1.2 s,
+- [x] **B.1** Stream the tokenizer's 34 MB decode. `Open` on multilingual costs 0.6–1.2 s,
       207 MB and 1.54 M allocations, against a < 1 s cold budget. `encoding/json` over 256 000
       vocab entries and 580 604 merges is the whole cost. This is a contained follow-up, not a
       redesign.
+      (2026-10-09) `model.vocab` and `model.merges` stay raw, and `tokenizer/decode.go` scans
+      them once, resolving every merge to ids from the bytes. encoding/json still validates the
+      document, decodes every non-plain string, and handles a repeated or case-variant key. The old
+      decode is kept only as the oracle in `decode_test.go`. `TestDecodeMatchesEncodingJSON` gives
+      identical tables on both mini fixtures and on english, multilingual and typed-decisions
+      (`LAYA_MODELS`). `TestDecodeEdgeCases` passes, and `FuzzDecodeVocabMerges` ran 60 s with no
+      failures. Three mutations each fail a test: raw bytes for escapes, later rank wins, and
+      first-wins vocab. `just diff-tokenizer` is unchanged: en has 85 lines, all in the NFC
+      normalize class (B.2), and ml has 0. Fresh-process `BenchmarkOpen` on multilingual measured
+      0.42–0.47 s, 110 MB and 295 k allocs, against 0.51–0.53 s, 207 MB and 1.54 M before. On
+      english it measured 34–63 ms and 11.6 MB, against 57 ms and 19.6 MB before. The numbers are
+      in `BENCHMARKS.md`. The time that remains is mostly encoding/json's validation pass and map
+      lookups, not allocation. (2026-10-09, Codex P1 on PR #33) The map hints count separators in
+      untrusted input, so they are capped at 1<<20. `TestDecodePresizeIsCapped` feeds a vocab key
+      and a merge side of 8 M separators each. Uncapped, the merges side allocates 320 MB, against
+      a 128 MB budget; capped, both pass. Raising the cap fails the test again. On multilingual,
+      `Open`'s bytes and allocs are unchanged.
 - [ ] **B.2** Decide on NFC combining classes, **in this file, before writing code**. The choice
       is between reproducing `tokenizers` 0.23.2's stale Rust tables (108 codepoints act as
       starters; isolating each occurrence reproduces the Rust result in ~40 lines plus a generated
@@ -568,8 +588,28 @@ the ECE/Brier inputs.
         follow-up (R4).
   - [ ] **B.5.4** **int8 is never the default.** Ship it, if at all, as an explicit opt-in whose
         documentation carries B.5.3's numbers.
-- [ ] **B.6** Lint the workflows, TOML and YAML. `actionlint` would earn its place, because
+- [x] **B.6** Lint the workflows, TOML and YAML. `actionlint` would earn its place, because
       `ci.yml` is hand-edited on every formatter pin. Add it to `just ci` deliberately.
+      (2026-10-09) `just lint-config` runs actionlint (with shellcheck over the `run:` blocks),
+      `taplo lint` and `yamllint -s` over git-tracked files only, which keeps `original/` out. It
+      is part of `just ci`, and a pinned `config` job runs it in CI. `.yamllint.yml` turns off only
+      the rules prettier already settles. yamllint is Python, which the user approved for linters;
+      AGENTS.md says so. Each tool fails its own seeded defect, and each defect was reverted: a
+      duplicate key in `.golangci.yml` fails yamllint, `${{ matrix.oss }}` in `ci.yml` fails
+      actionlint, and a broken table header in `treefmt.toml` fails taplo. The clean tree passes.
+- [x] **B.7** Keep `calib.ECE` bit-exact on arm64. Found when CI ran on PR #33: `TestECEFixture`
+      failed on `macos-latest` in the last bit (`0.59` against `0.5900000000000001`), because Go
+      fused ece.go's product and sum into one `FMADD` on arm64 and rounded once where numpy rounds
+      twice. (2026-10-09) An explicit `float64(…)` conversion forbids the fusion.
+      `GOARCH=arm64 go test -exec qemu-aarch64-static -count=1 ./internal/calib/` failed 6 ECE
+      cases before and passes after. `GOARCH=arm64 GOOS=darwin go build -a -gcflags='all=-S' ./...`
+      found one `FMADD` in module code before and none after.
+- [x] **B.8** Build and audit on a Go without reachable stdlib CVEs. With only `go 1.26.0`,
+      setup-go installed 1.26.0 and govulncheck failed with 27 reachable stdlib vulnerabilities
+      (Security on `main` had been red since 2026-09-28). On 1.26.8 there were still 9; all are
+      fixed in 1.26.9. (2026-10-09) go.mod gained `toolchain go1.26.9`, and the minimum Go for
+      callers stays 1.26.0. `go version` in the repo gives go1.26.9, and `govulncheck ./...`
+      gives "No vulnerabilities found." Bump the toolchain line by hand, like the other pins.
 
 ### M8 — Pure-Go native backend (after 1.0)
 

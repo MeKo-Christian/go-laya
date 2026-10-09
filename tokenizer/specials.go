@@ -50,7 +50,7 @@ func (t *HF) resolveSpecials(doc *tokenizerJSON, cfg *tokenizerConfigJSON) error
 				return a.ID, nil
 			}
 		}
-		if id, ok := doc.Model.Vocab[content]; ok {
+		if id, ok := t.vocab[content]; ok {
 			return int64(id), nil
 		}
 		return 0, fmt.Errorf("%w: %s %q is in %s but in neither added_tokens nor the vocabulary",

@@ -29,13 +29,14 @@ just test-race   # with the race detector
 just lint        # golangci-lint run
 just lint-fix    # golangci-lint run --fix
 just lint-md     # markdownlint (checker only)
+just lint-config # actionlint, taplo, yamllint (checkers only)
 just fmt         # treefmt: gofumpt + gci, prettier, shfmt + shellcheck
 just fmt-check   # fail if anything is unformatted
 just cover       # coverage profile + HTML report
 just check-tidy  # go mod tidy, then fail on a dirty go.mod/go.sum
 just vuln        # govulncheck ./...
 just check       # developer loop: test + lint + cover
-just ci          # what CI runs: fmt-check + lint-md + test-race + lint + check-tidy
+just ci          # what CI runs: fmt-check + lint-md + lint-py + lint-config + test-race + lint + check-tidy
 ```
 
 `just ci` is the single command that mirrors the pipeline. Run it before you claim
@@ -70,7 +71,8 @@ anything is done.
   ones where a wrong implementation returns a plausible answer rather than an error.
 - Golden vectors in `testdata/` are checked in. **CI must never need Python or model
   weights.** Anything that does is gated behind `testing.Short()` and an env var
-  (`LAYA_MODELS`).
+  (`LAYA_MODELS`). The rule covers tests and parity data; a pinned linter such as
+  yamllint (`just lint-config`) may still be a Python tool.
 - Regenerating `testdata/` is a reviewed diff, never a drive-by. `TestGoldenProvenance`
   asserts the recorded tokenizer/transformers versions still match what the Go code
   targets; a silent upstream tokenizer change is the realistic way parity regresses.

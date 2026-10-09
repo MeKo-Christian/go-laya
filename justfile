@@ -45,6 +45,15 @@ lint-py:
 lint-md:
     markdownlint '**/*.md' --ignore original --ignore models --ignore node_modules
 
+# Lint the workflows, TOML and YAML (checkers only -- prettier owns the YAML layout, see
+# .yamllint.yml). Tracked files only: git ls-files keeps the reference venvs, models/ and
+# the frozen original/ out, the way treefmt's git walker does. actionlint also runs
+# shellcheck over every `run:` block when shellcheck is installed.
+lint-config:
+    actionlint
+    git ls-files -z '*.toml' ':!:original/**' | RUST_LOG=warn xargs -0 taplo lint
+    git ls-files -z '*.yml' '*.yaml' ':!:original/**' | xargs -0 yamllint -s
+
 # Generate a coverage report
 cover:
     go test -short -coverprofile=coverage.txt -covermode=atomic ./...
@@ -118,7 +127,7 @@ vuln:
 check: test lint cover
 
 # What CI runs
-ci: fmt-check lint-md lint-py test-race lint check-tidy
+ci: fmt-check lint-md lint-py lint-config test-race lint check-tidy
 
 # lint-fix then fmt
 fix:

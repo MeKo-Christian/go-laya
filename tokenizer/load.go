@@ -97,6 +97,12 @@ func OpenFS(fsys fs.FS) (*HF, error) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return nil, fmt.Errorf("tokenizer: decode %s: %w", fileTokenizerJSON, err)
 	}
+	// Here rather than in build: a malformed id was a decode error when
+	// encoding/json filled the map, and it still is.
+	vocab, err := decodeVocab(doc.Model.Vocab)
+	if err != nil {
+		return nil, err
+	}
 
 	cfgRaw, err := fs.ReadFile(fsys, fileTokenizerConfig)
 	if err != nil {
@@ -107,19 +113,19 @@ func OpenFS(fsys fs.FS) (*HF, error) {
 		return nil, fmt.Errorf("tokenizer: decode %s: %w", fileTokenizerConfig, err)
 	}
 
-	return build(&doc, &cfg)
+	return build(&doc, vocab, &cfg)
 }
 
-func build(doc *tokenizerJSON, cfg *tokenizerConfigJSON) (*HF, error) {
+func build(doc *tokenizerJSON, vocab map[string]int32, cfg *tokenizerConfigJSON) (*HF, error) {
 	if err := validate(doc); err != nil {
 		return nil, err
 	}
-	if err := validateIDs(doc); err != nil {
+	if err := validateIDs(doc, vocab); err != nil {
 		return nil, err
 	}
 
 	t := &HF{
-		vocab:        doc.Model.Vocab,
+		vocab:        vocab,
 		byteFallback: doc.Model.ByteFallback,
 		fuseUnk:      doc.Model.FuseUnk,
 	}
@@ -130,7 +136,7 @@ func build(doc *tokenizerJSON, cfg *tokenizerConfigJSON) (*HF, error) {
 	if t.pretok, err = buildPreTokenizer(doc.PreTokenizer); err != nil {
 		return nil, err
 	}
-	if t.merges, err = buildMerges(doc.Model.Merges, t.vocab); err != nil {
+	if t.merges, err = decodeMerges(doc.Model.Merges, t.vocab); err != nil {
 		return nil, err
 	}
 	if err := t.resolveSpecials(doc, cfg); err != nil {
@@ -177,8 +183,8 @@ func isJSONNull(raw json.RawMessage) bool {
 // one. It runs before indexVocab because that is the amplifier: it turns the
 // single largest id in the file into an allocation, and a negative one into a
 // slice write at a negative index.
-func validateIDs(doc *tokenizerJSON) error {
-	for tok, id := range doc.Model.Vocab {
+func validateIDs(doc *tokenizerJSON, vocab map[string]int32) error {
+	for tok, id := range vocab {
 		if id < 0 || int64(id) > maxTokenID {
 			return fmt.Errorf("%w: vocabulary entry %q has id %d, outside [0, %d]",
 				ErrUnsupported, tok, id, maxTokenID)
@@ -239,37 +245,6 @@ func buildPreTokenizer(s *stageJSON) (preTokenizer, error) {
 	default:
 		return nil, fmt.Errorf("%w: pre_tokenizer %q", ErrUnsupported, s.Type)
 	}
-}
-
-// buildMerges resolves both sides and the result of every merge to ids up
-// front. Rank is the position in the file, which is what orders the merge loop.
-func buildMerges(pairs [][2]string, vocab map[string]int32) (map[[2]int32]merge, error) {
-	out := make(map[[2]int32]merge, len(pairs))
-	for rank, p := range pairs {
-		left, ok := vocab[p[0]]
-		if !ok {
-			return nil, fmt.Errorf("%w: merge %d has %q on the left, which is not in the vocabulary",
-				ErrUnsupported, rank, p[0])
-		}
-		right, ok := vocab[p[1]]
-		if !ok {
-			return nil, fmt.Errorf("%w: merge %d has %q on the right, which is not in the vocabulary",
-				ErrUnsupported, rank, p[1])
-		}
-		joined, ok := vocab[p[0]+p[1]]
-		if !ok {
-			// HF's MergeTokenOutOfVocabulary. Resolving it here is what lets
-			// the merge loop apply a rule without a fallible lookup.
-			return nil, fmt.Errorf("%w: merge %d produces %q, which is not in the vocabulary",
-				ErrUnsupported, rank, p[0]+p[1])
-		}
-		key := [2]int32{left, right}
-		if _, dup := out[key]; dup {
-			continue // the earlier rank wins, as it does in HF
-		}
-		out[key] = merge{rank: int32(rank), newID: joined}
-	}
-	return out, nil
 }
 
 // indexVocab builds the dense id -> token table and settles vocabSize.
