@@ -86,7 +86,7 @@ func Open(modelPath string, opts Options) (*Backend, error) {
 
 	lib := opts.Library
 	if lib == "" {
-		if lib, err = findORTLibrary(); err != nil {
+		if lib, err = findORTLibrary(opts.CacheDir); err != nil {
 			return nil, fmt.Errorf("onnx backend: %w", err)
 		}
 	}

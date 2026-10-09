@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -30,7 +32,7 @@ func withCandidates(t *testing.T, cached string, cachedErr error, paths ...strin
 	t.Helper()
 	prevPaths, prevCache := ortLibraryCandidates, cachedORTLibrary
 	ortLibraryCandidates = paths
-	cachedORTLibrary = func() (string, error) { return cached, cachedErr }
+	cachedORTLibrary = func(string) (string, error) { return cached, cachedErr }
 	t.Cleanup(func() { ortLibraryCandidates, cachedORTLibrary = prevPaths, prevCache })
 }
 
@@ -92,7 +94,7 @@ func TestFindORTLibrary(t *testing.T) {
 			}
 			withCandidates(t, tc.cached, cachedErr, tc.candidates...)
 
-			got, err := findORTLibrary()
+			got, err := findORTLibrary("")
 			switch {
 			case tc.wantIs != nil:
 				if !errors.Is(err, tc.wantIs) {
@@ -118,5 +120,43 @@ func TestFindORTLibrary(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// pinnedLibrary puts a file where cmd/laya-ort puts this platform's pinned
+// library under the cache root dir, with bytes that fail its hash. The test
+// is skipped on a platform with no pinned download.
+func pinnedLibrary(t *testing.T, dir string) {
+	t.Helper()
+	rel, err := ortlib.Pinned(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		t.Skipf("no pinned ONNX Runtime download here: %v", err)
+	}
+	lib := filepath.Join(dir, "onnxruntime", strings.TrimSuffix(rel.Archive, ".tgz"), path.Base(rel.Member))
+	if err := os.MkdirAll(filepath.Dir(lib), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, lib)
+}
+
+// Task 7.7.7 (D29): a cache directory moves the download lookup there from
+// $LAYA_CACHE. The copy there fails its pinned hash, which is an error; the
+// one $LAYA_CACHE names does not exist, so looking there would fall through
+// to the candidate instead. Runs the real cache lookup, not a stand-in.
+func TestFindORTLibraryCacheDir(t *testing.T) {
+	cache := t.TempDir()
+	pinnedLibrary(t, cache)
+	t.Setenv("LAYA_CACHE", t.TempDir())
+	t.Setenv("LAYA_ORT_LIB", "")
+	t.Setenv("ORT_LIBRARY_PATH", "")
+	prev := ortLibraryCandidates
+	ortLibraryCandidates = []string{touch(t, filepath.Join(t.TempDir(), "candidate.so"))}
+	t.Cleanup(func() { ortLibraryCandidates = prev })
+
+	if got, err := findORTLibrary(cache); !errors.Is(err, ortlib.ErrHashMismatch) {
+		t.Fatalf("findORTLibrary(%q) = %q, %v; want ortlib.ErrHashMismatch from the copy there", cache, got, err)
+	}
+	if got, err := findORTLibrary(""); err != nil || got != ortLibraryCandidates[0] {
+		t.Errorf("findORTLibrary(\"\") = %q, %v; want the candidate, $LAYA_CACHE having no download", got, err)
 	}
 }

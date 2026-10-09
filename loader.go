@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,7 +34,9 @@ type defaultLoader struct {
 	hub      *hub.Client
 	onnxDir  string // "" is onnx/ under the laya cache, resolved per load
 	device   string
-	revision string // "" is D17's pin for the bundle repo, main for any other
+	revision string       // "" is D17's pin for the bundle repo, main for any other
+	cacheDir string       // "" is hub.DefaultDir(), resolved per load
+	logger   *slog.Logger // nil is slog.Default()
 
 	// snapshot and open are the network and the runtime. They are fields so
 	// that tests can stand in for both; CI has neither.
@@ -46,8 +49,10 @@ type defaultLoader struct {
 type loaderSettings struct {
 	onnxDir  string // "" is $LAYA_ONNX_DIR, else onnx/ under the laya cache
 	device   string
-	token    string // "" is $HF_TOKEN
-	revision string // "" is D17's pin for the bundle repo, main for any other
+	token    string       // "" is $HF_TOKEN
+	revision string       // "" is D17's pin for the bundle repo, main for any other
+	cacheDir string       // "" is hub.DefaultDir()
+	logger   *slog.Logger // nil is slog.Default()
 }
 
 func newDefaultLoader(cfg loaderSettings) *defaultLoader {
@@ -56,10 +61,12 @@ func newDefaultLoader(cfg loaderSettings) *defaultLoader {
 		token = os.Getenv("HF_TOKEN")
 	}
 	l := &defaultLoader{
-		hub:      &hub.Client{Token: token, Offline: offlineFromEnv()},
+		hub:      &hub.Client{Token: token, Dir: cfg.cacheDir, Offline: offlineFromEnv()},
 		onnxDir:  cfg.onnxDir,
 		device:   cfg.device,
 		revision: cfg.revision,
+		cacheDir: cfg.cacheDir,
+		logger:   cfg.logger,
 	}
 	if l.onnxDir == "" {
 		l.onnxDir = os.Getenv("LAYA_ONNX_DIR")
@@ -128,7 +135,9 @@ func (l *defaultLoader) build(ctx context.Context, spec ModelSpec, graph func() 
 	if err != nil {
 		return nil, err
 	}
-	be, err := l.open(path, onnx.Options{Device: l.device, ActWidth: actWidth})
+	be, err := l.open(path, onnx.Options{
+		Device: l.device, ActWidth: actWidth, Logger: l.logger, CacheDir: l.cacheDir,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -218,9 +227,12 @@ func (l *defaultLoader) graphDir() (string, error) {
 	if l.onnxDir != "" {
 		return l.onnxDir, nil
 	}
-	base, err := hub.DefaultDir()
-	if err != nil {
-		return "", fmt.Errorf("laya: %w", err)
+	base := l.cacheDir
+	if base == "" {
+		var err error
+		if base, err = hub.DefaultDir(); err != nil {
+			return "", fmt.Errorf("laya: %w", err)
+		}
 	}
 	return filepath.Join(base, "onnx"), nil
 }

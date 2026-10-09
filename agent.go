@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"sync"
 
@@ -166,6 +167,29 @@ func WithHFToken(tok string) Option {
 func WithRevision(rev string) Option {
 	return func(c *agentConfig) error {
 		c.revision = rev
+		return nil
+	}
+}
+
+// WithCacheDir is the laya cache Open uses in place of $LAYA_CACHE (else the
+// user cache directory + /laya): where Hub snapshots are kept, where the
+// default export directory onnx/ is, and where the ONNX Runtime library that
+// cmd/laya-ort downloads is looked for. WithGraph, $LAYA_ONNX_DIR,
+// $LAYA_ORT_LIB and $ORT_LIBRARY_PATH still win over the last two. Empty
+// keeps the default. cmd/laya-ort downloads into $LAYA_CACHE, so run it with
+// LAYA_CACHE set to dir to put the library there.
+func WithCacheDir(dir string) Option {
+	return func(c *agentConfig) error {
+		c.cacheDir = dir
+		return nil
+	}
+}
+
+// WithLogger receives the ONNX backend's warnings, one per device that falls
+// back to the CPU. Nil keeps slog.Default().
+func WithLogger(l *slog.Logger) Option {
+	return func(c *agentConfig) error {
+		c.logger = l
 		return nil
 	}
 }

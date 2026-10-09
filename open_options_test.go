@@ -1,10 +1,13 @@
 package laya
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -113,5 +116,138 @@ func TestOpenRevisionInvalid(t *testing.T) {
 	_, err := openAgent(context.Background(), "", []Option{WithRevision("../x")}, newLoader)
 	if !errors.Is(err, hub.ErrInvalidPath) {
 		t.Fatalf("Open(WithRevision(%q)) = %v, want hub.ErrInvalidPath", "../x", err)
+	}
+}
+
+// Task 7.7.7 (D29): WithCacheDir moves all three things the laya cache holds:
+// the Hub snapshots, the default export directory <cache>/onnx, and the ORT
+// library lookup. $LAYA_CACHE, which it replaces, is set to somewhere else.
+func TestOpenCacheDir(t *testing.T) {
+	cache, root := t.TempDir(), t.TempDir()
+	t.Setenv("LAYA_CACHE", t.TempDir())
+	t.Setenv("LAYA_ONNX_DIR", "")
+	writeCheckpoint(t, root)
+	if err := os.Mkdir(filepath.Join(cache, "onnx"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	want := writeGraph(t, filepath.Join(cache, "onnx"), ModelEnglish)
+
+	open, rec := stubOpen(t, root)
+	if _, err := open(context.Background(), "", WithCacheDir(cache)); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if rec.hubDir != cache {
+		t.Errorf("hub.Client.Dir = %q, want %q", rec.hubDir, cache)
+	}
+	if len(rec.opens) != 1 || rec.opens[0].path != want {
+		t.Fatalf("opened %v, want %q", rec.opens, want)
+	}
+	if got := rec.opens[0].opts.CacheDir; got != cache {
+		t.Errorf("onnx.Options.CacheDir = %q, want %q", got, cache)
+	}
+}
+
+// Task 7.7.7: without WithCacheDir every part of the cache stays where it
+// was, hub.DefaultDir(): the clients get "" and resolve it themselves.
+func TestOpenCacheDirDefault(t *testing.T) {
+	env, root := t.TempDir(), t.TempDir()
+	t.Setenv("LAYA_CACHE", env)
+	t.Setenv("LAYA_ONNX_DIR", "")
+	writeCheckpoint(t, root)
+	if err := os.Mkdir(filepath.Join(env, "onnx"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	want := writeGraph(t, filepath.Join(env, "onnx"), ModelEnglish)
+
+	open, rec := stubOpen(t, root)
+	if _, err := open(context.Background(), ""); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if rec.hubDir != "" || len(rec.opens) != 1 || rec.opens[0].path != want || rec.opens[0].opts.CacheDir != "" {
+		t.Errorf("hub dir %q, opens %+v; want \"\", one open of %q with CacheDir \"\"", rec.hubDir, rec.opens, want)
+	}
+}
+
+// Task 7.7.7: WithONNXDir and $LAYA_ONNX_DIR still win over the cache
+// directory's onnx/, in the existing order; WithRouterCacheDir is the same
+// setting for the Router.
+func TestRouterCacheDirONNXOrder(t *testing.T) {
+	cache, env, opt := t.TempDir(), t.TempDir(), t.TempDir()
+	t.Setenv("LAYA_CACHE", t.TempDir())
+
+	t.Setenv("LAYA_ONNX_DIR", "")
+	l, _, _ := stubbedLoader(t, "", WithRouterCacheDir(cache))
+	if got, err := l.graphDir(); err != nil || got != filepath.Join(cache, "onnx") {
+		t.Errorf("graphDir = %q, %v; want %q", got, err, filepath.Join(cache, "onnx"))
+	}
+	if l.hub.Dir != cache {
+		t.Errorf("hub.Client.Dir = %q, want %q", l.hub.Dir, cache)
+	}
+	t.Setenv("LAYA_ONNX_DIR", env)
+	if got, _ := newDefaultLoader(loaderSettings{cacheDir: cache}).graphDir(); got != env {
+		t.Errorf("graphDir with LAYA_ONNX_DIR = %q, want %q", got, env)
+	}
+	if got, _ := newDefaultLoader(loaderSettings{cacheDir: cache, onnxDir: opt}).graphDir(); got != opt {
+		t.Errorf("graphDir with WithONNXDir = %q, want %q", got, opt)
+	}
+}
+
+// Task 7.7.7: the Router's cache directory reaches the ORT library lookup of
+// every backend its default loader opens.
+func TestRouterCacheDirReachesBackend(t *testing.T) {
+	ck, graphs, cache := t.TempDir(), t.TempDir(), t.TempDir()
+	writeCheckpoint(t, ck)
+	writeGraph(t, graphs, ModelEnglish)
+
+	l, calls, _ := stubbedLoader(t, graphs, WithRouterCacheDir(cache))
+	if _, err := l.load(context.Background(), ModelEnglish, ModelSpecFromString(ck)); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := (*calls)[0].opts.CacheDir; got != cache {
+		t.Errorf("onnx.Options.CacheDir = %q, want %q", got, cache)
+	}
+}
+
+// Task 7.7.7 (D29): the logger reaches onnx.Options.Logger, which receives
+// the device-fallback warnings. Emitting those needs a real ONNX Runtime
+// (device_ort_test.go), so this checks that the caller's own handler is the
+// one the backend gets. nil keeps slog.Default(), which the backend picks.
+func TestOpenLogger(t *testing.T) {
+	ck := t.TempDir()
+	writeCheckpoint(t, ck)
+	graph := writeGraph(t, t.TempDir(), "x")
+	lg := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+
+	open, rec := stubOpen(t, "")
+	if _, err := open(context.Background(), ck, WithGraph(graph), WithLogger(lg)); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if got := rec.opens[0].opts.Logger; got != lg {
+		t.Fatalf("onnx.Options.Logger = %p, want the caller's %p", got, lg)
+	}
+
+	open, rec = stubOpen(t, "")
+	if _, err := open(context.Background(), ck, WithGraph(graph), WithLogger(nil)); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if rec.opens[0].opts.Logger != nil {
+		t.Errorf("Logger with WithLogger(nil) = %p, want nil (slog.Default())", rec.opens[0].opts.Logger)
+	}
+}
+
+// Task 7.7.7: the Router's logger reaches every backend its default loader
+// opens.
+func TestRouterLogger(t *testing.T) {
+	ck, graphs := t.TempDir(), t.TempDir()
+	writeCheckpoint(t, ck)
+	writeGraph(t, graphs, ModelEnglish)
+	lg := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+
+	l, calls, _ := stubbedLoader(t, graphs, WithRouterLogger(lg))
+	if _, err := l.load(context.Background(), ModelEnglish, ModelSpecFromString(ck)); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := (*calls)[0].opts.Logger; got != lg {
+		t.Errorf("onnx.Options.Logger = %p, want the caller's %p", got, lg)
 	}
 }

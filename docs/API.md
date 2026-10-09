@@ -278,10 +278,17 @@ func WithRevision(rev string) Option
 // such as a local directory, is ErrNoGraph.
 func WithGraph(path string) Option
 
-// Planned (PLAN 7.7.7), not yet implemented:
-func WithCacheDir(dir string) Option    // default: $LAYA_CACHE or os.UserCacheDir()/laya
-func WithBackend(b backend.Backend) Option // public leaf package (PLAN D9): test doubles, alternative runtimes
+// WithCacheDir replaces the laya cache, "" being $LAYA_CACHE, else
+// os.UserCacheDir()/laya. It moves all three things the cache holds (D29): the Hub
+// snapshots, the default export directory <cache>/onnx (WithGraph and
+// $LAYA_ONNX_DIR still win), and the lookup of the ONNX Runtime library
+// cmd/laya-ort downloads ($LAYA_ORT_LIB and $ORT_LIBRARY_PATH still win).
+func WithCacheDir(dir string) Option
+// WithLogger receives the ONNX backend's device-fallback warnings; nil is slog.Default().
 func WithLogger(l *slog.Logger) Option
+
+// Planned (PLAN 7.7.7), not yet implemented:
+func WithBackend(b backend.Backend) Option // public leaf package (PLAN D9): test doubles, alternative runtimes
 
 // ---------------------------------------------------------------- router
 
@@ -402,6 +409,8 @@ func WithRouterDevice(d string) RouterOption  // "cpu", "cuda[:N]", "coreml", ""
 func WithRouterToken(tok string) RouterOption // falls back to $HF_TOKEN, read by NewRouter
 func WithONNXDir(dir string) RouterOption     // laya-<name>.onnx; else $LAYA_ONNX_DIR, else <cache>/onnx
 func WithRouterRevision(rev string) RouterOption // as WithRevision, for every checkpoint the loader downloads
+func WithRouterCacheDir(dir string) RouterOption // as WithCacheDir; WithONNXDir still wins over <cache>/onnx
+func WithRouterLogger(l *slog.Logger) RouterOption // as WithLogger, for every backend the loader opens
 // Offline comes from the environment: HF_HUB_OFFLINE (or TRANSFORMERS_OFFLINE), read as
 // huggingface_hub reads it, or LAYA_OFFLINE.
 

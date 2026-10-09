@@ -33,8 +33,8 @@ var (
 type Options struct {
 	// Library is the ONNX Runtime shared library to load. Empty resolves it
 	// through LAYA_ORT_LIB, ORT_LIBRARY_PATH, the verified download
-	// cmd/laya-ort puts in the laya cache, and the platform's default install
-	// locations, in that order.
+	// cmd/laya-ort puts in the laya cache (CacheDir), and the platform's
+	// default install locations, in that order.
 	Library string
 
 	// IntraOpThreads is ORT's intra-op thread count; 0 leaves it to ORT.
@@ -55,6 +55,12 @@ type Options struct {
 
 	// Logger receives the fallback warnings. Nil means slog.Default().
 	Logger *slog.Logger
+
+	// CacheDir is the laya cache the verified download is looked for in,
+	// when Library is empty and neither LAYA_ORT_LIB nor ORT_LIBRARY_PATH is
+	// set. Empty means hub.DefaultDir(): $LAYA_CACHE, else the user cache
+	// directory + /laya.
+	CacheDir string
 
 	// ActWidth is the act_logits width the checkpoint config derives,
 	// len(act_costs)+1 (checkpoint.Config.ActWidth). Open rejects a graph
