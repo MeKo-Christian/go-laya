@@ -41,7 +41,7 @@ box under it is ticked.
 | [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done                                  |
 | [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                                  |
 | [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | 🟡 7.1–7.5 done bar 7.2.5; 7.7 bar 7.7.7 |
-| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | 🟡 B.1, B.6 done                         |
+| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | 🟡 B.1, B.6–B.8 done                     |
 | [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred                              |
 
 **Critical path to 1.0:** M7 (loader → `SystemOne` → answer parity → e2e parity → README). The
@@ -439,7 +439,10 @@ Done:
       through jsonx to valid JSON. Same command as 7.5.4; with `WithMaxLoaded(2)` the eviction
       assertion fails (`Loaded() = [english multilingual]`).
 
-**Task 7.6: README + examples.**
+**Task 7.6: README + examples.** (2026-10-09, user decision) Keep upstream's model results
+(accuracy, calibration, the Jev comparison), credited to upstream, because the checkpoints are
+the same. Every code example becomes Go, the latency figures come from `BENCHMARKS.md`, and the
+Python-only parts (pip, fine-tuning) are dropped or linked.
 
 - [ ] **7.6.1** Port every README example to Go as compiling `Example` functions, so CI proves
       they build (§8). The single-model examples have a target since 7.7.5 (`Open`,
@@ -554,7 +557,11 @@ the ECE/Brier inputs.
       0.42–0.47 s, 110 MB and 295 k allocs, against 0.51–0.53 s, 207 MB and 1.54 M before. On
       english it measured 34–63 ms and 11.6 MB, against 57 ms and 19.6 MB before. The numbers are
       in `BENCHMARKS.md`. The time that remains is mostly encoding/json's validation pass and map
-      lookups, not allocation.
+      lookups, not allocation. (2026-10-09, Codex P1 on PR #33) The map hints count separators in
+      untrusted input, so they are capped at 1<<20. `TestDecodePresizeIsCapped` feeds a vocab key
+      and a merge side of 8 M separators each. Uncapped, the merges side allocates 320 MB, against
+      a 128 MB budget; capped, both pass. Raising the cap fails the test again. On multilingual,
+      `Open`'s bytes and allocs are unchanged.
 - [ ] **B.2** Decide on NFC combining classes, **in this file, before writing code**. The choice
       is between reproducing `tokenizers` 0.23.2's stale Rust tables (108 codepoints act as
       starters; isolating each occurrence reproduces the Rust result in ~40 lines plus a generated
@@ -590,6 +597,19 @@ the ECE/Brier inputs.
       AGENTS.md says so. Each tool fails its own seeded defect, and each defect was reverted: a
       duplicate key in `.golangci.yml` fails yamllint, `${{ matrix.oss }}` in `ci.yml` fails
       actionlint, and a broken table header in `treefmt.toml` fails taplo. The clean tree passes.
+- [x] **B.7** Keep `calib.ECE` bit-exact on arm64. Found when CI ran on PR #33: `TestECEFixture`
+      failed on `macos-latest` in the last bit (`0.59` against `0.5900000000000001`), because Go
+      fused ece.go's product and sum into one `FMADD` on arm64 and rounded once where numpy rounds
+      twice. (2026-10-09) An explicit `float64(…)` conversion forbids the fusion.
+      `GOARCH=arm64 go test -exec qemu-aarch64-static -count=1 ./internal/calib/` failed 6 ECE
+      cases before and passes after. `GOARCH=arm64 GOOS=darwin go build -a -gcflags='all=-S' ./...`
+      found one `FMADD` in module code before and none after.
+- [x] **B.8** Build and audit on a Go without reachable stdlib CVEs. With only `go 1.26.0`,
+      setup-go installed 1.26.0 and govulncheck failed with 27 reachable stdlib vulnerabilities
+      (Security on `main` had been red since 2026-09-28). On 1.26.8 there were still 9; all are
+      fixed in 1.26.9. (2026-10-09) go.mod gained `toolchain go1.26.9`, and the minimum Go for
+      callers stays 1.26.0. `go version` in the repo gives go1.26.9, and `govulncheck ./...`
+      gives "No vulnerabilities found." Bump the toolchain line by hand, like the other pins.
 
 ### M8 — Pure-Go native backend (after 1.0)
 
