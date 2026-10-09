@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/MeKo-Christian/go-laya/backend"
+	"github.com/MeKo-Christian/go-laya/internal/backend/onnx"
 	"github.com/MeKo-Christian/go-laya/question"
 )
 
@@ -43,6 +44,18 @@ var (
 	// from _verify_compatibility (agent.py:49-93). It is
 	// backend.ErrIncompatibleCheckpoint, so errors.Is matches either name.
 	ErrIncompatibleCheckpoint = backend.ErrIncompatibleCheckpoint
+
+	// ErrUnsupportedPlatform reports a platform the ONNX backend does not
+	// build for: outside D21's list, Open fails with it. Python runs wherever
+	// PyTorch does. It is the backend's own sentinel, which lives in an
+	// internal package, so errors.Is matches either name.
+	ErrUnsupportedPlatform = onnx.ErrUnsupportedPlatform
+
+	// ErrUnknownDevice reports a WithDevice or WithRouterDevice value that
+	// names no device, such as Python's "mps". It is never a fallback to the
+	// CPU, so a typo fails at load time. It is the backend's own sentinel, as
+	// ErrUnsupportedPlatform is.
+	ErrUnknownDevice = onnx.ErrUnknownDevice
 
 	// ErrEmptyQuestions reports a SystemOne call with no questions. Python
 	// fails with a TypeError when collate_items returns None (agent.py:266).

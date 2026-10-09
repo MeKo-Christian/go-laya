@@ -138,7 +138,7 @@ func WithSubfolder(sub string) Option {
 // WithDevice is the device the agent runs on: "cpu", "cuda", "cuda:N",
 // "coreml", or "" / "auto" for the best one the ONNX Runtime library offers.
 // An unusable device falls back to the CPU with a warning, and a name that is
-// no device fails Open with the backend's ErrUnknownDevice.
+// no device fails Open with ErrUnknownDevice.
 func WithDevice(d string) Option {
 	return func(c *agentConfig) error {
 		c.device = d
