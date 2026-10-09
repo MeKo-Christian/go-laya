@@ -114,23 +114,10 @@ func (l *defaultLoader) load(ctx context.Context, name string, spec ModelSpec) (
 // names. graph is asked for only once the checkpoint has been read, so a bad
 // checkpoint is reported as such rather than as a missing export.
 func (l *defaultLoader) build(ctx context.Context, spec ModelSpec, graph func() (string, error)) (*Agent, error) {
-	dir, err := l.checkpointDir(ctx, spec)
+	cfg, tok, actWidth, err := l.readCheckpoint(ctx, spec)
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := checkpoint.LoadConfig(dir)
-	if err != nil {
-		return nil, fmt.Errorf("laya: %w", err)
-	}
-	actWidth, err := cfg.ActWidth()
-	if err != nil {
-		return nil, fmt.Errorf("laya: %w", err)
-	}
-	tok, err := tokenizer.Open(filepath.Join(dir, "tokenizer"))
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrIncompatibleCheckpoint, err)
-	}
-
 	path, err := graph()
 	if err != nil {
 		return nil, err
@@ -147,6 +134,39 @@ func (l *defaultLoader) build(ctx context.Context, spec ModelSpec, graph func() 
 		return nil, err
 	}
 	return a, nil
+}
+
+// buildOn loads the checkpoint spec locates and runs it on be, the caller's
+// backend (WithBackend). Unlike build it never closes be: on failure the
+// caller still owns it.
+func (l *defaultLoader) buildOn(ctx context.Context, spec ModelSpec, be backend.Backend) (*Agent, error) {
+	cfg, tok, _, err := l.readCheckpoint(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+	return newAgent(be, cfg, tok)
+}
+
+// readCheckpoint reads the config and the tokenizer of the checkpoint spec
+// locates, downloading them first if it is on the Hub, and the act_logits
+// width the config derives.
+func (l *defaultLoader) readCheckpoint(ctx context.Context, spec ModelSpec) (
+	cfg *checkpoint.Config, tok *tokenizer.HF, actWidth int, err error,
+) {
+	dir, err := l.checkpointDir(ctx, spec)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	if cfg, err = checkpoint.LoadConfig(dir); err != nil {
+		return nil, nil, 0, fmt.Errorf("laya: %w", err)
+	}
+	if actWidth, err = cfg.ActWidth(); err != nil {
+		return nil, nil, 0, fmt.Errorf("laya: %w", err)
+	}
+	if tok, err = tokenizer.Open(filepath.Join(dir, "tokenizer")); err != nil {
+		return nil, nil, 0, fmt.Errorf("%w: %w", ErrIncompatibleCheckpoint, err)
+	}
+	return cfg, tok, actWidth, nil
 }
 
 // checkpointDir is agent.py:115-135: a directory that exists is used as it is,

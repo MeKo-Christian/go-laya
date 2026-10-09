@@ -9,8 +9,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/MeKo-Christian/go-laya/backend"
 	"github.com/MeKo-Christian/go-laya/internal/hub"
 )
 
@@ -249,5 +251,137 @@ func TestRouterLogger(t *testing.T) {
 	}
 	if got := (*calls)[0].opts.Logger; got != lg {
 		t.Errorf("onnx.Options.Logger = %p, want the caller's %p", got, lg)
+	}
+}
+
+// Task 7.7.7 (D29): WithBackend runs the checkpoint on the caller's backend.
+// The config and the tokenizer still come from the Hub, but no export is
+// looked for and no ONNX backend is opened; the agent then owns the backend,
+// and its Close closes it.
+func TestOpenWithBackend(t *testing.T) {
+	root := t.TempDir()
+	writeCheckpoint(t, root)
+	t.Setenv("LAYA_ONNX_DIR", t.TempDir()) // holds no export
+	b := &closeCounter{}
+
+	open, rec := stubOpen(t, root)
+	a, err := open(context.Background(), "", WithBackend(b))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if len(rec.snapshots) != 1 || rec.snapshots[0].repo != bundleRepo {
+		t.Errorf("snapshots %v, want the bundle repo's config and tokenizer", rec.snapshots)
+	}
+	if len(rec.opens) != 0 {
+		t.Errorf("opened %v, want no ONNX backend", rec.opens)
+	}
+	_, err = a.SystemOne(context.Background(), "hello", Questions{{ID: "q", Q: NoulQuestion{Ins: "Is it?"}}})
+	if err == nil || !strings.Contains(err.Error(), "closeCounter") {
+		t.Errorf("SystemOne = %v, want the caller's backend's forward error", err)
+	}
+	if b.n != 0 {
+		t.Fatalf("backend closed %d times before Agent.Close", b.n)
+	}
+	if err := a.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if b.n != 1 {
+		t.Errorf("backend closed %d times by Agent.Close, want 1", b.n)
+	}
+}
+
+// Task 7.7.7: a WithBackend Open that fails leaves the backend with the
+// caller, open, whether it failed before the checkpoint was read or after.
+func TestOpenWithBackendFailureLeavesBackendOpen(t *testing.T) {
+	badLimits := t.TempDir()
+	writeCheckpoint(t, badLimits)
+	if err := os.WriteFile(filepath.Join(badLimits, "rl_agent_config.json"),
+		[]byte(`{"encoder": "answerdotai/ModernBERT-large", "head_layers": 2, "max_len": 0}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		ref  string
+		want error
+	}{
+		{"missing checkpoint", filepath.Join(t.TempDir(), "nope"), ErrCheckpointNotFound},
+		{"agent rejects the config", badLimits, ErrIncompatibleCheckpoint},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := &closeCounter{}
+			open, _ := stubOpen(t, "")
+			if _, err := open(context.Background(), tc.ref, WithBackend(b)); !errors.Is(err, tc.want) {
+				t.Fatalf("Open = %v, want %v", err, tc.want)
+			}
+			if b.n != 0 {
+				t.Errorf("failed Open closed the caller's backend %d times, want 0", b.n)
+			}
+		})
+	}
+}
+
+// Task 7.7.7 (D29): WithGraph and WithDevice configure the ONNX backend that
+// WithBackend replaces, so either would be silently ignored. Open refuses the
+// pair, in either order, before anything is downloaded or closed.
+func TestOpenWithBackendConflictingOptions(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts func(backend.Backend) []Option
+	}{
+		{"graph", func(b backend.Backend) []Option { return []Option{WithBackend(b), WithGraph("x.onnx")} }},
+		{"graph first", func(b backend.Backend) []Option { return []Option{WithGraph("x.onnx"), WithBackend(b)} }},
+		{"device", func(b backend.Backend) []Option { return []Option{WithBackend(b), WithDevice("cpu")} }},
+		{"auto device", func(b backend.Backend) []Option { return []Option{WithDevice("auto"), WithBackend(b)} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := &closeCounter{}
+			open, rec := stubOpen(t, t.TempDir())
+			_, err := open(context.Background(), "", tc.opts(b)...)
+			if !errors.Is(err, ErrConflictingOptions) {
+				t.Fatalf("Open = %v, want ErrConflictingOptions", err)
+			}
+			if len(rec.snapshots) != 0 || len(rec.opens) != 0 || b.n != 0 {
+				t.Errorf("snapshots %v, opens %v, backend closed %d times; want none of them",
+					rec.snapshots, rec.opens, b.n)
+			}
+		})
+	}
+}
+
+// Task 7.7.7: WithBackend(nil) is Open without it, as a nil WithLogger and
+// an empty WithDevice, WithCacheDir or WithRevision are their defaults: the
+// ONNX backend is opened on the export.
+func TestOpenWithBackendNil(t *testing.T) {
+	ck := t.TempDir()
+	writeCheckpoint(t, ck)
+	graph := writeGraph(t, t.TempDir(), "x")
+
+	open, rec := stubOpen(t, "")
+	if _, err := open(context.Background(), ck, WithBackend(nil), WithGraph(graph), WithDevice("cpu")); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if len(rec.opens) != 1 || rec.opens[0].path != graph {
+		t.Errorf("opened %v, want the ONNX backend on %q", rec.opens, graph)
+	}
+}
+
+// Task 7.7.7: beside WithBackend, the options that shape the download and
+// the agent still apply: the revision and the cache directory reach the Hub
+// client, and WithLimits the agent built on the caller's backend.
+func TestOpenWithBackendKeepsDownloadOptions(t *testing.T) {
+	root, cache := t.TempDir(), t.TempDir()
+	writeCheckpoint(t, root)
+
+	open, rec := stubOpen(t, root)
+	a, err := open(context.Background(), "", WithBackend(&closeCounter{}),
+		WithRevision("main"), WithCacheDir(cache), WithLimits(64, 32))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if len(rec.snapshots) != 1 || rec.snapshots[0].rev != "main" || rec.hubDir != cache {
+		t.Errorf("snapshots %v in %q, want one at main in %q", rec.snapshots, rec.hubDir, cache)
+	}
+	if a.MaxLen() != 64 || a.HeadMaxLen() != 32 {
+		t.Errorf("limits = %d, %d; want 64, 32", a.MaxLen(), a.HeadMaxLen())
 	}
 }

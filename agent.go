@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/MeKo-Christian/go-laya/backend"
@@ -15,10 +16,10 @@ import (
 	"github.com/MeKo-Christian/go-laya/tokenizer"
 )
 
-// Agent is one loaded checkpoint: its ONNX Runtime session, its config and
-// its tokenizer. It is Python's laya.Agent (agent.py:99), built by Open as
-// laya.load builds that one, and it is also what the Router's default loader
-// caches, so it satisfies Predictor.
+// Agent is one loaded checkpoint: its backend (an ONNX Runtime session, unless
+// WithBackend gave another), its config and its tokenizer. It is Python's
+// laya.Agent (agent.py:99), built by Open as laya.load builds that one, and it
+// is also what the Router's default loader caches, so it satisfies Predictor.
 //
 // SystemOne, Predict and SetLimits may be called from several goroutines at
 // once.
@@ -98,7 +99,8 @@ func checkLimits(maxLen, headMaxLen int) error {
 	return nil
 }
 
-// Close releases the runtime session. A leaked one is hundreds of megabytes.
+// Close closes the backend, which releases the runtime session. A leaked one
+// is hundreds of megabytes.
 func (a *Agent) Close() error {
 	if err := a.backend.Close(); err != nil {
 		return fmt.Errorf("laya: close agent: %w", err)
@@ -123,7 +125,8 @@ type agentConfig struct {
 
 	subfolder          string
 	graph              string
-	maxLen, headMaxLen int // 0 keeps the config's
+	backend            backend.Backend // nil is the ONNX backend on the export
+	maxLen, headMaxLen int             // 0 keeps the config's
 }
 
 // WithSubfolder selects one checkpoint from a repo that bundles several, as
@@ -194,6 +197,21 @@ func WithLogger(l *slog.Logger) Option {
 	}
 }
 
+// WithBackend runs the checkpoint on b in place of the ONNX backend: a test
+// double or another runtime (D9). Open still reads the checkpoint's config and
+// tokenizer, downloading them as it would otherwise, but looks for no export
+// and opens no ONNX backend, so WithGraph or WithDevice beside it fails Open
+// with ErrConflictingOptions. Nil keeps the ONNX backend.
+//
+// If Open succeeds, the Agent owns b and its Close closes b. If Open fails,
+// b stays the caller's to close; Open does not close it.
+func WithBackend(b backend.Backend) Option {
+	return func(c *agentConfig) error {
+		c.backend = b
+		return nil
+	}
+}
+
 // WithGraph is the ONNX export to run, a file `scripts/export_onnx.py`
 // wrote. Without it, Open looks for laya-<name>.onnx in $LAYA_ONNX_DIR, else
 // in onnx/ under the laya cache, where name is the checkpoint the repo and
@@ -225,11 +243,12 @@ func WithLimits(maxLen, headMaxLen int) Option {
 // default. A Hub repo is downloaded as the Router's loader downloads it: only
 // the config and the tokenizer, the bundle repo at the revision every golden
 // vector was recorded against (D17) unless WithRevision names another, and
-// the forward pass runs on a local ONNX export (D24).
+// the forward pass runs on a local ONNX export (D24), or on WithBackend's.
 //
 // It fails with ErrCheckpointNotFound for a checkpoint that is not there,
-// ErrNoGraph for an export that is not, and ErrIncompatibleCheckpoint for one
-// this port cannot run. The caller closes the agent.
+// ErrNoGraph for an export that is not, ErrIncompatibleCheckpoint for one
+// this port cannot run, and ErrConflictingOptions for options that cannot
+// apply together. The caller closes the agent.
 func Open(ctx context.Context, ref string, opts ...Option) (*Agent, error) {
 	return openAgent(ctx, ref, opts, newDefaultLoader)
 }
@@ -243,28 +262,21 @@ func openAgent(ctx context.Context, ref string, opts []Option, newLoader func(lo
 			return nil, err
 		}
 	}
+	if err := cfg.checkConflicts(); err != nil {
+		return nil, err
+	}
 	if ref == "" {
 		ref = bundleRepo
 	}
 	spec := ModelSpec{Repo: ref, Subfolder: cfg.subfolder}
 	l := newLoader(cfg.loaderSettings)
-	a, err := l.build(ctx, spec, func() (string, error) {
-		if cfg.graph != "" {
-			if _, err := os.Stat(cfg.graph); err != nil {
-				if errors.Is(err, fs.ErrNotExist) {
-					return "", fmt.Errorf("%w: %s", ErrNoGraph, cfg.graph)
-				}
-				return "", fmt.Errorf("laya: ONNX export: %w", err)
-			}
-			return cfg.graph, nil
-		}
-		name, ok := exportName(spec)
-		if !ok {
-			return "", fmt.Errorf("%w: %s is in no model registry, so its export has no known name; "+
-				"pass WithGraph", ErrNoGraph, spec)
-		}
-		return l.graph(name)
-	})
+	var a *Agent
+	var err error
+	if cfg.backend != nil {
+		a, err = l.buildOn(ctx, spec, cfg.backend)
+	} else {
+		a, err = l.build(ctx, spec, func() (string, error) { return cfg.graphPath(l, spec) })
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -272,6 +284,46 @@ func openAgent(ctx context.Context, ref string, opts []Option, newLoader func(lo
 		a.maxLen, a.headMaxLen = cfg.maxLen, cfg.headMaxLen
 	}
 	return a, nil
+}
+
+// checkConflicts refuses WithBackend beside the options that configure the
+// ONNX backend it replaces, before anything is downloaded.
+func (c *agentConfig) checkConflicts() error {
+	if c.backend == nil {
+		return nil
+	}
+	var ignored []string
+	if c.graph != "" {
+		ignored = append(ignored, "WithGraph")
+	}
+	if c.device != "" {
+		ignored = append(ignored, "WithDevice")
+	}
+	if len(ignored) > 0 {
+		return fmt.Errorf("%w: WithBackend replaces the ONNX backend that %s configures",
+			ErrConflictingOptions, strings.Join(ignored, " and "))
+	}
+	return nil
+}
+
+// graphPath is the export Open runs: WithGraph's file, else the one l finds
+// under the name the registries give spec.
+func (c *agentConfig) graphPath(l *defaultLoader, spec ModelSpec) (string, error) {
+	if c.graph != "" {
+		if _, err := os.Stat(c.graph); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return "", fmt.Errorf("%w: %s", ErrNoGraph, c.graph)
+			}
+			return "", fmt.Errorf("laya: ONNX export: %w", err)
+		}
+		return c.graph, nil
+	}
+	name, ok := exportName(spec)
+	if !ok {
+		return "", fmt.Errorf("%w: %s is in no model registry, so its export has no known name; "+
+			"pass WithGraph", ErrNoGraph, spec)
+	}
+	return l.graph(name)
 }
 
 // exportName is the name `scripts/export_onnx.py` gives spec's export: the

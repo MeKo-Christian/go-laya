@@ -286,9 +286,12 @@ func WithGraph(path string) Option
 func WithCacheDir(dir string) Option
 // WithLogger receives the ONNX backend's device-fallback warnings; nil is slog.Default().
 func WithLogger(l *slog.Logger) Option
-
-// Planned (PLAN 7.7.7), not yet implemented:
-func WithBackend(b backend.Backend) Option // public leaf package (PLAN D9): test doubles, alternative runtimes
+// WithBackend runs the checkpoint on b, a public leaf package type (PLAN D9): test
+// doubles, alternative runtimes. The config and tokenizer are still downloaded; no
+// export is looked for and no ONNX backend opened. Beside WithGraph or WithDevice it
+// is ErrConflictingOptions; nil keeps the ONNX backend. A successful Open hands b to
+// the Agent, whose Close closes it; a failed Open leaves b open and the caller's (D29).
+func WithBackend(b backend.Backend) Option
 
 // ---------------------------------------------------------------- router
 
@@ -435,6 +438,7 @@ var (
 	ErrDuplicateQuestionID     = errors.New("laya: duplicate question id") // Python: impossible in a dict
 	ErrNoOptions               = errors.New("laya: question has no options") // Python: ValueError from an empty softmax
 	ErrInvalidLimits           = errors.New("laya: max_len and head_max_len must be positive") // SetLimits, WithLimits
+	ErrConflictingOptions      = errors.New("laya: conflicting options") // WithBackend beside WithGraph or WithDevice
 )
 
 // OptionBudgetError names the offending question, replacing Python's
