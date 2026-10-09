@@ -109,6 +109,11 @@ linters:
           - usetesting
           - wrapcheck
         path: _test\.go
+      # The README's examples need the weights and an ONNX export, so CI can
+      # compile them but not run them; an Output comment would fail every
+      # `go test` without models (PLAN.md Task 7.6.1).
+      - linters: [testableexamples]
+        path: ^example_test\.go$
       # Internal packages return their own errors; wrapping is the public API's job.
       - linters: [wrapcheck]
         path: ^internal/
