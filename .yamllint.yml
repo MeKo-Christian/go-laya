@@ -1,0 +1,22 @@
+# yamllint checks YAML for correctness; prettier owns its layout (treefmt.toml). The
+# rules below are the ones whose opinion prettier already settles differently, so
+# leaving them on would make the two tools fight. Everything else -- duplicate keys,
+# syntax, indentation, empty values -- stays at yamllint's default.
+extends: default
+
+# `just lint-config` hands yamllint the tracked files only; this keeps a bare
+# `yamllint .` off the frozen upstream as well.
+ignore: |
+  original/
+
+rules:
+  # prettier wraps prose, not values; long `run:` lines and URLs are legitimate.
+  line-length: disable
+  # prettier neither adds nor requires `---`.
+  document-start: disable
+  # prettier puts one space before an inline comment, yamllint wants two.
+  comments:
+    min-spaces-from-content: 1
+  # `on:` is a key in every GitHub workflow, not a boolean.
+  truthy:
+    check-keys: false
