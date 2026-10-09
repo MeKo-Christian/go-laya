@@ -113,7 +113,8 @@ func (a *Agent) limits() (maxLen, headMaxLen int) {
 }
 
 // Option configures Open. The options are laya.load's keyword arguments
-// (agent.py:351-352), plus WithGraph, which the local ONNX export needs (D24).
+// (agent.py:351-352), plus WithGraph, which the local ONNX export needs (D24),
+// and the port's own settings, such as WithRevision (D29).
 type Option func(*agentConfig) error
 
 type agentConfig struct {
@@ -155,6 +156,20 @@ func WithHFToken(tok string) Option {
 	}
 }
 
+// WithRevision is the Hub revision Open downloads the checkpoint at: a
+// branch such as "main", a tag or a commit sha. Empty keeps the default, the
+// revision every golden vector was recorded against for
+// convaiinnovations/laya (D17) and main for any other repo. Any other value is
+// used for every repo, the bundle repo included, so following main is this
+// explicit opt-in. A local directory ignores it. A revision that is not a
+// safe URL and cache path segment fails Open before any request is made.
+func WithRevision(rev string) Option {
+	return func(c *agentConfig) error {
+		c.revision = rev
+		return nil
+	}
+}
+
 // WithGraph is the ONNX export to run, a file `scripts/export_onnx.py`
 // wrote. Without it, Open looks for laya-<name>.onnx in $LAYA_ONNX_DIR, else
 // in onnx/ under the laya cache, where name is the checkpoint the repo and
@@ -185,8 +200,8 @@ func WithLimits(maxLen, headMaxLen int) Option {
 // Hub repo id or a local directory; "" is convaiinnovations/laya, upstream's
 // default. A Hub repo is downloaded as the Router's loader downloads it: only
 // the config and the tokenizer, the bundle repo at the revision every golden
-// vector was recorded against (D17), and the forward pass runs on a local
-// ONNX export (D24).
+// vector was recorded against (D17) unless WithRevision names another, and
+// the forward pass runs on a local ONNX export (D24).
 //
 // It fails with ErrCheckpointNotFound for a checkpoint that is not there,
 // ErrNoGraph for an export that is not, and ErrIncompatibleCheckpoint for one

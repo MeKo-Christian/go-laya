@@ -268,6 +268,10 @@ func WithDevice(d string) Option    // "cpu" | "cuda" | "cuda:0" | "coreml" | ""
 func WithHFToken(tok string) Option // default: $HF_TOKEN
 func WithSubfolder(sub string) Option
 func WithLimits(maxLen, headMaxLen int) Option
+// WithRevision is the Hub revision: "main", a tag or a commit sha. "" keeps D17's
+// pin for convaiinnovations/laya and main for any other repo; any other value is
+// used for every repo, the bundle repo included (D29). A local directory ignores it.
+func WithRevision(rev string) Option
 // WithGraph names the export. Without it, Open looks for laya-<name>.onnx in
 // $LAYA_ONNX_DIR, else <cache>/onnx, where name is the checkpoint the repo
 // and subfolder locate in DefaultModels or StandaloneModels; anything else,
@@ -393,10 +397,11 @@ func WithStandaloneRepos(on bool) RouterOption
 // tests need, which monkeypatch Router.load (test_router.py:177).
 func WithLoader(fn func(context.Context, string, ModelSpec) (Predictor, error)) RouterOption
 
-// The default loader's settings; a custom WithLoader ignores all three.
+// The default loader's settings; a custom WithLoader ignores all of them.
 func WithRouterDevice(d string) RouterOption  // "cpu", "cuda[:N]", "coreml", "" / "auto"
 func WithRouterToken(tok string) RouterOption // falls back to $HF_TOKEN, read by NewRouter
 func WithONNXDir(dir string) RouterOption     // laya-<name>.onnx; else $LAYA_ONNX_DIR, else <cache>/onnx
+func WithRouterRevision(rev string) RouterOption // as WithRevision, for every checkpoint the loader downloads
 // Offline comes from the environment: HF_HUB_OFFLINE (or TRANSFORMERS_OFFLINE), read as
 // huggingface_hub reads it, or LAYA_OFFLINE.
 

@@ -181,3 +181,15 @@ func WithONNXDir(dir string) RouterOption {
 		return nil
 	}
 }
+
+// WithRouterRevision is the Hub revision the default loader downloads every
+// checkpoint at: a branch such as "main", a tag or a commit sha. Empty keeps
+// the default, D17's pin for convaiinnovations/laya and main for any other
+// repo; any other value applies to every repo, the bundle repo included. A
+// local directory ignores it, and so does a custom WithLoader.
+func WithRouterRevision(rev string) RouterOption {
+	return func(c *routerConfig) error {
+		c.revision = rev
+		return nil
+	}
+}

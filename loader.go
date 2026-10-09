@@ -30,9 +30,10 @@ const pinnedRevision = "1c5edc17a7acd8701df6fc341c0d179f1c62c982"
 // is a local ONNX export of the same checkpoint and only the config and the
 // tokenizer are downloaded.
 type defaultLoader struct {
-	hub     *hub.Client
-	onnxDir string // "" is onnx/ under the laya cache, resolved per load
-	device  string
+	hub      *hub.Client
+	onnxDir  string // "" is onnx/ under the laya cache, resolved per load
+	device   string
+	revision string // "" is D17's pin for the bundle repo, main for any other
 
 	// snapshot and open are the network and the runtime. They are fields so
 	// that tests can stand in for both; CI has neither.
@@ -43,9 +44,10 @@ type defaultLoader struct {
 // loaderSettings configure the default loader. The Router's options set them
 // for every checkpoint it loads, Open's for the one it opens.
 type loaderSettings struct {
-	onnxDir string // "" is $LAYA_ONNX_DIR, else onnx/ under the laya cache
-	device  string
-	token   string // "" is $HF_TOKEN
+	onnxDir  string // "" is $LAYA_ONNX_DIR, else onnx/ under the laya cache
+	device   string
+	token    string // "" is $HF_TOKEN
+	revision string // "" is D17's pin for the bundle repo, main for any other
 }
 
 func newDefaultLoader(cfg loaderSettings) *defaultLoader {
@@ -54,9 +56,10 @@ func newDefaultLoader(cfg loaderSettings) *defaultLoader {
 		token = os.Getenv("HF_TOKEN")
 	}
 	l := &defaultLoader{
-		hub:     &hub.Client{Token: token, Offline: offlineFromEnv()},
-		onnxDir: cfg.onnxDir,
-		device:  cfg.device,
+		hub:      &hub.Client{Token: token, Offline: offlineFromEnv()},
+		onnxDir:  cfg.onnxDir,
+		device:   cfg.device,
+		revision: cfg.revision,
 	}
 	if l.onnxDir == "" {
 		l.onnxDir = os.Getenv("LAYA_ONNX_DIR")
@@ -170,12 +173,16 @@ func (l *defaultLoader) checkpointDir(ctx context.Context, spec ModelSpec) (stri
 	return sub, nil
 }
 
-// download snapshots the spec's config and tokenizer, the bundle repo at
-// D17's pin and any other repo at main.
+// download snapshots the spec's config and tokenizer at the loader's
+// revision, else the bundle repo at D17's pin and any other repo at main.
 func (l *defaultLoader) download(ctx context.Context, spec ModelSpec) (string, error) {
-	rev := "main"
-	if spec.Repo == bundleRepo {
+	rev := l.revision
+	switch {
+	case rev != "":
+	case spec.Repo == bundleRepo:
 		rev = pinnedRevision
+	default:
+		rev = "main"
 	}
 	dir, err := l.snapshot(ctx, spec.Repo, rev, allowPatterns(spec.Subfolder))
 	// A missing repo, and a subfolder the allow filter finds no file for, are
