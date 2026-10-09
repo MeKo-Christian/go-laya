@@ -106,7 +106,19 @@ type mergeTable struct {
 }
 
 func newMergeTable(vocab map[string]int32, hint int) *mergeTable {
-	return &mergeTable{vocab: vocab, out: make(map[[2]int32]merge, hint)}
+	return &mergeTable{vocab: vocab, out: make(map[[2]int32]merge, presize(hint))}
+}
+
+// maxPresize bounds a map's capacity hint. The real checkpoints stay below it
+// (256 000 vocab entries, 580 604 merges), so they are still presized exactly.
+const maxPresize = 1 << 20
+
+// presize caps a capacity hint at maxPresize. The scanners' hints count
+// separators in the raw value, and tokenizer.json comes from an untrusted Hub
+// repo: one token of a million commas would otherwise presize a map ~30 times
+// the size of the file before a single id is checked.
+func presize(hint int) int {
+	return min(hint, maxPresize)
 }
 
 // add records the merge at rank. The vocab[string(b)] lookups do not allocate.
@@ -148,7 +160,7 @@ func scanVocab(raw []byte) (map[string]int32, error) {
 		return nil, s.typeError("model.vocab", "an object")
 	}
 	// A hint, not a count: a comma inside a token overcounts by one.
-	vocab := make(map[string]int32, bytes.Count(raw, []byte{','})+1)
+	vocab := make(map[string]int32, presize(bytes.Count(raw, []byte{','})+1))
 	s.skipSpace()
 	if s.consume('}') {
 		return vocab, s.end("model.vocab")

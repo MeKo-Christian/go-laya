@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/MeKo-Christian/go-laya/internal/golden"
@@ -342,6 +344,46 @@ func TestDecodeEdgeCases(t *testing.T) {
 			}
 			if c.merges != nil && !reflect.DeepEqual(merges, c.merges) {
 				t.Errorf("merges = %v, want %v", merges, c.merges)
+			}
+		})
+	}
+}
+
+// TestDecodePresizeIsCapped holds the map presizing to a bound. The hint is a
+// separator count over the raw value, and tokenizer.json comes from an
+// untrusted Hub repo: one token of 8 M commas (or ']') must not presize a map
+// of 8 M entries, hundreds of MB, before a single id has been checked.
+func TestDecodePresizeIsCapped(t *testing.T) {
+	const separators = 8 << 20
+	const budget = 128 << 20
+	cases := []struct {
+		name string
+		raw  []byte
+		scan func(raw []byte) error
+	}{
+		{
+			name: "vocab",
+			raw:  []byte(`{"` + strings.Repeat(",", separators) + `":0}`),
+			scan: func(raw []byte) error { _, err := scanVocab(raw); return err },
+		},
+		{
+			// The pair fails to resolve against the empty vocab, but only
+			// after the table has been allocated.
+			name: "merges",
+			raw:  []byte(`[["` + strings.Repeat("]", separators) + `","x"]]`),
+			scan: func(raw []byte) error { _, err := scanMerges(raw, map[string]int32{}); return err },
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var before, after runtime.MemStats
+			runtime.GC()
+			runtime.ReadMemStats(&before)
+			_ = c.scan(c.raw)
+			runtime.ReadMemStats(&after)
+			if got := after.TotalAlloc - before.TotalAlloc; got > budget {
+				t.Errorf("scan of a %d-separator token allocated %d MB, want at most %d MB",
+					separators, got>>20, budget>>20)
 			}
 		})
 	}
