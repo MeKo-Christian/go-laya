@@ -2,7 +2,10 @@ package laya
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+
+	"github.com/MeKo-Christian/go-laya/internal/hub"
 )
 
 // Functional options for the Router. They mirror the keyword arguments of
@@ -189,9 +192,14 @@ func WithONNXDir(dir string) RouterOption {
 // checkpoint at: a branch such as "main", a tag or a commit sha. Empty keeps
 // the default, D17's pin for convaiinnovations/laya and main for any other
 // repo; any other value applies to every repo, the bundle repo included. A
-// local directory ignores it, and so does a custom WithLoader.
+// local directory ignores it, and so does a custom WithLoader. An unsafe
+// revision fails NewRouter with ErrInvalidRevision; offline and the export
+// behave as WithRevision says.
 func WithRouterRevision(rev string) RouterOption {
 	return func(c *routerConfig) error {
+		if rev != "" && !hub.ValidRevision(rev) {
+			return fmt.Errorf("%w: %q", ErrInvalidRevision, rev)
+		}
 		c.revision = rev
 		return nil
 	}

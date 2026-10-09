@@ -270,7 +270,8 @@ func WithSubfolder(sub string) Option
 func WithLimits(maxLen, headMaxLen int) Option
 // WithRevision is the Hub revision: "main", a tag or a commit sha. "" keeps D17's
 // pin for convaiinnovations/laya and main for any other repo; any other value is
-// used for every repo, the bundle repo included (D29). A local directory ignores it.
+// used for every repo, the bundle repo included (D29). A local directory ignores it;
+// an unsafe one ("..", an absolute path, a backslash) is ErrInvalidRevision.
 func WithRevision(rev string) Option
 // WithGraph names the export. Without it, Open looks for laya-<name>.onnx in
 // $LAYA_ONNX_DIR, else <cache>/onnx, where name is the checkpoint the repo
@@ -291,6 +292,8 @@ func WithLogger(l *slog.Logger) Option
 // export is looked for and no ONNX backend opened. Beside WithGraph or WithDevice it
 // is ErrConflictingOptions; nil keeps the ONNX backend. A successful Open hands b to
 // the Agent, whose Close closes it; a failed Open leaves b open and the caller's (D29).
+// Its outputs are held to the ONNX backend's shapes: kmax logits and the config's act
+// width per row, else ErrIncompatibleCheckpoint.
 func WithBackend(b backend.Backend) Option
 
 // ---------------------------------------------------------------- router
@@ -438,6 +441,7 @@ var (
 	ErrDuplicateQuestionID     = errors.New("laya: duplicate question id") // Python: impossible in a dict
 	ErrNoOptions               = errors.New("laya: question has no options") // Python: ValueError from an empty softmax
 	ErrInvalidLimits           = errors.New("laya: max_len and head_max_len must be positive") // SetLimits, WithLimits
+	ErrInvalidRevision         = errors.New("laya: invalid revision")    // WithRevision / WithRouterRevision not safe in a URL and a cache path
 	ErrConflictingOptions      = errors.New("laya: conflicting options") // WithBackend beside WithGraph or WithDevice
 )
 

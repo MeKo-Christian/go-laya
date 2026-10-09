@@ -389,6 +389,13 @@ func validName(s string) bool {
 
 // validPath is validSegments for a file path, which must not smuggle a
 // separator Windows would honour.
+// ValidRevision reports whether rev is safe to put into a request URL and a
+// cache path, as Fetch requires of every revision: a relative slash path
+// with no empty, "." or ".." segment and no backslash.
+func ValidRevision(rev string) bool {
+	return validPath(rev)
+}
+
 func validPath(s string) bool {
 	return validSegments(s) && !strings.Contains(s, `\`)
 }

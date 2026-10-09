@@ -13,6 +13,7 @@ import (
 	"github.com/MeKo-Christian/go-laya/backend"
 	"github.com/MeKo-Christian/go-laya/internal/calib"
 	"github.com/MeKo-Christian/go-laya/internal/checkpoint"
+	"github.com/MeKo-Christian/go-laya/internal/hub"
 	"github.com/MeKo-Christian/go-laya/tokenizer"
 )
 
@@ -165,10 +166,19 @@ func WithHFToken(tok string) Option {
 // revision every golden vector was recorded against for
 // convaiinnovations/laya (D17) and main for any other repo. Any other value is
 // used for every repo, the bundle repo included, so following main is this
-// explicit opt-in. A local directory ignores it. A revision that is not a
-// safe URL and cache path segment fails Open before any request is made.
+// explicit opt-in. A local directory ignores it. A revision that is not safe
+// in a URL and a cache path fails Open with ErrInvalidRevision as the option
+// is applied, before anything is read.
+//
+// Offline (HF_HUB_OFFLINE, LAYA_OFFLINE), a branch or a tag resolves only
+// from a cache an online load at that revision filled. The ONNX export is not
+// keyed by revision: laya-<name>.onnx is whatever was exported last, so
+// re-export it when the revision followed moves the weights.
 func WithRevision(rev string) Option {
 	return func(c *agentConfig) error {
+		if rev != "" && !hub.ValidRevision(rev) {
+			return fmt.Errorf("%w: %q", ErrInvalidRevision, rev)
+		}
 		c.revision = rev
 		return nil
 	}
@@ -201,7 +211,10 @@ func WithLogger(l *slog.Logger) Option {
 // double or another runtime (D9). Open still reads the checkpoint's config and
 // tokenizer, downloading them as it would otherwise, but looks for no export
 // and opens no ONNX backend, so WithGraph or WithDevice beside it fails Open
-// with ErrConflictingOptions. Nil keeps the ONNX backend.
+// with ErrConflictingOptions. Nil keeps the ONNX backend; a nil pointer of a
+// concrete type is not nil and fails at the first SystemOne. Open holds b's
+// outputs to the shapes the ONNX backend enforces on itself, and a mismatch
+// is ErrIncompatibleCheckpoint.
 //
 // If Open succeeds, the Agent owns b and its Close closes b. If Open fails,
 // b stays the caller's to close; Open does not close it.

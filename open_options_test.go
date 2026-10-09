@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	"github.com/MeKo-Christian/go-laya/backend"
-	"github.com/MeKo-Christian/go-laya/internal/hub"
 )
 
 // Task 7.2.5 (D29): WithRevision is the opt-in D17 promises. Unset, the
@@ -99,9 +98,10 @@ func TestRevisionIgnoredForLocalDir(t *testing.T) {
 	}
 }
 
-// Task 7.2.5: a revision is spliced into a URL and a cache path, so one that
-// climbs out of either fails with hub.ErrInvalidPath before a single request.
-// The real Hub client runs here, against a server that fails the test.
+// Task 7.2.5 (D29): a revision is spliced into a URL and a cache path, so one
+// that climbs out of either is ErrInvalidRevision as the option is applied,
+// before a single request. The real Hub client runs here, against a server
+// that fails the test.
 func TestOpenRevisionInvalid(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		t.Errorf("request to %s with an invalid revision", r.URL)
@@ -115,9 +115,28 @@ func TestOpenRevisionInvalid(t *testing.T) {
 		l.hub.Endpoint, l.hub.Offline = srv.URL, false
 		return l
 	}
-	_, err := openAgent(context.Background(), "", []Option{WithRevision("../x")}, newLoader)
-	if !errors.Is(err, hub.ErrInvalidPath) {
-		t.Fatalf("Open(WithRevision(%q)) = %v, want hub.ErrInvalidPath", "../x", err)
+	local := t.TempDir()
+	writeCheckpoint(t, local)
+	for _, rev := range []string{"../x", "a/../b", "/abs", `a\b`, "a//b"} {
+		// The Hub repo and a local directory alike: the option is refused
+		// as it is applied, before the ref is even looked at.
+		for _, ref := range []string{"", local} {
+			_, err := openAgent(context.Background(), ref, []Option{WithRevision(rev)}, newLoader)
+			if !errors.Is(err, ErrInvalidRevision) {
+				t.Errorf("Open(%q, WithRevision(%q)) = %v, want ErrInvalidRevision", ref, rev, err)
+			}
+		}
+	}
+}
+
+// Task 7.2.5 (D29): the Router refuses an unsafe revision when it is built,
+// not at the first Route that happens to download.
+func TestRouterRevisionInvalid(t *testing.T) {
+	if _, err := NewRouter(WithRouterRevision("../x")); !errors.Is(err, ErrInvalidRevision) {
+		t.Fatalf("NewRouter(WithRouterRevision(%q)) = %v, want ErrInvalidRevision", "../x", err)
+	}
+	if _, err := NewRouter(WithRouterRevision("")); err != nil {
+		t.Fatalf("NewRouter(WithRouterRevision(\"\")) = %v, want the default", err)
 	}
 }
 
