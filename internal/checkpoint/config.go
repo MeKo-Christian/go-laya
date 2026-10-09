@@ -180,8 +180,11 @@ func (c *Config) HeadMaxLen() (int, error) { return c.intField("head_max_len", 1
 // int: a float literal such as 512.0, a string, a bool (which Go cannot tell
 // apart from Python's int subclass anyway) or null fails with
 // backend.ErrIncompatibleCheckpoint. So does a non-positive integer, which
-// Python would accept and then silently truncate every sequence with; failing
-// loudly there is a deliberate deviation.
+// Python accepts. A max_len ≤ 0 leaves build_sequence no option marker
+// (common.py:86), so the first prediction raises a ValueError that blames
+// head_max_len (agent.py:262-263); a head_max_len ≤ 0 silently cuts every
+// option to 4 tokens and the question head to 8 (common.py:70-75). Failing
+// loudly at load is a deliberate deviation.
 func (c *Config) intField(key string, dflt int) (int, error) {
 	raw, ok := c.fields[key]
 	if !ok {

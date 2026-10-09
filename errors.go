@@ -76,9 +76,13 @@ var (
 	ErrNoOptions = errors.New("laya: question has no options")
 
 	// ErrInvalidLimits reports a max_len or head_max_len that is not
-	// positive, passed to SetLimits or WithLimits. Python accepts one and
-	// silently truncates every sequence with it; the config's own values are
-	// held to the same rule.
+	// positive, passed to SetLimits or WithLimits. Python accepts either.
+	// A max_len ≤ 0 then leaves build_sequence no option marker
+	// (common.py:86), so a question with options raises a ValueError that
+	// blames head_max_len (agent.py:262-263); a head_max_len ≤ 0 silently
+	// cuts every option to 4 tokens, its mask included, and the question
+	// head to 8 (common.py:70-75). The config's own values are held to the
+	// same rule.
 	ErrInvalidLimits = errors.New("laya: max_len and head_max_len must be positive")
 
 	// ErrInvalidRevision reports a WithRevision or WithRouterRevision value
