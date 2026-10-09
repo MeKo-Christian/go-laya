@@ -214,7 +214,9 @@ func WithLogger(l *slog.Logger) Option {
 // with ErrConflictingOptions. Nil keeps the ONNX backend; a nil pointer of a
 // concrete type is not nil and fails at the first SystemOne. Open holds b's
 // outputs to the shapes the ONNX backend enforces on itself, and a mismatch
-// is ErrIncompatibleCheckpoint.
+// is ErrIncompatibleCheckpoint. b must be safe for concurrent Forward calls,
+// as the backend.Backend contract requires, because the Agent does not
+// serialize them.
 //
 // If Open succeeds, the Agent owns b and its Close closes b. If Open fails,
 // b stays the caller's to close; Open does not close it.

@@ -20,6 +20,10 @@ import (
 var ErrIncompatibleCheckpoint = errors.New("laya: incompatible checkpoint")
 
 // Backend runs the decision model's forward pass.
+//
+// Forward may be called from several goroutines at once: an Agent forwards
+// concurrent SystemOne and Predict calls to its backend without serializing
+// them, so an implementation must be safe for concurrent Forward calls.
 type Backend interface {
 	// Forward returns, per row of in, the option logits (one per marker
 	// column, kmax wide) and the act logits the calibrator reads.

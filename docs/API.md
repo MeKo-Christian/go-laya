@@ -293,7 +293,8 @@ func WithLogger(l *slog.Logger) Option
 // is ErrConflictingOptions; nil keeps the ONNX backend. A successful Open hands b to
 // the Agent, whose Close closes it; a failed Open leaves b open and the caller's (D29).
 // Its outputs are held to the ONNX backend's shapes: kmax logits and the config's act
-// width per row, else ErrIncompatibleCheckpoint.
+// width per row, else ErrIncompatibleCheckpoint. b must be safe for concurrent
+// Forward calls, as backend.Backend requires: the Agent does not serialize them.
 func WithBackend(b backend.Backend) Option
 
 // ---------------------------------------------------------------- router

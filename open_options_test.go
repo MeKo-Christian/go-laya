@@ -4,12 +4,16 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/MeKo-Christian/go-laya/backend"
@@ -454,5 +458,74 @@ func TestOpenWithBackendOutputWidths(t *testing.T) {
 				t.Fatalf("SystemOne = %v, want ErrIncompatibleCheckpoint", err)
 			}
 		})
+	}
+}
+
+// concurrentBackend answers every row with fixed logits and counts its
+// Forward calls atomically: a backend safe for concurrent Forward calls, as
+// the backend.Backend contract requires.
+type concurrentBackend struct{ calls atomic.Int64 }
+
+func (b *concurrentBackend) Forward(_ context.Context, in backend.Batch) (logits, act [][]float32, err error) {
+	b.calls.Add(1)
+	for range in.QType {
+		logits = append(logits, []float32{1.5, -0.5})
+		act = append(act, []float32{0.25, -1, 0.5})
+	}
+	return logits, act, nil
+}
+
+func (*concurrentBackend) Close() error { return nil }
+
+// Task 7.7.7 (D29): the Agent forwards concurrent SystemOne calls to a
+// WithBackend runtime unserialized, as it does to the ONNX backend, so a
+// backend that is safe for concurrent Forward calls answers each of them as
+// it answers one alone. Run under -race, this also covers the agent's own
+// path, shapeChecked included.
+func TestOpenWithBackendConcurrentSystemOne(t *testing.T) {
+	root := t.TempDir()
+	writeCheckpoint(t, root) // act width 3
+	t.Setenv("LAYA_ONNX_DIR", t.TempDir())
+	qs := Questions{{ID: "q", Q: NoulQuestion{Ins: "Is it?"}}} // kmax 2
+
+	b := &concurrentBackend{}
+	open, _ := stubOpen(t, root)
+	a, err := open(context.Background(), "", WithBackend(b))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer a.Close()
+
+	want, err := a.SystemOne(context.Background(), "hello", qs)
+	if err != nil {
+		t.Fatalf("SystemOne: %v", err)
+	}
+	if n := want.Answers[0].A.Noul; n == nil || *n == 0.5 {
+		t.Fatalf("baseline noul = %v, want an answer the logits decide", n)
+	}
+
+	const goroutines, calls = 8, 4
+	var wg sync.WaitGroup
+	errs := make(chan error, goroutines*calls)
+	for range goroutines {
+		wg.Go(func() {
+			for range calls {
+				got, err := a.SystemOne(context.Background(), "hello", qs)
+				switch {
+				case err != nil:
+					errs <- err
+				case !reflect.DeepEqual(got, want):
+					errs <- fmt.Errorf("answer %+v, want %+v", got, want)
+				}
+			}
+		})
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("concurrent SystemOne: %v", err)
+	}
+	if got := b.calls.Load(); got != goroutines*calls+1 {
+		t.Errorf("backend forwarded %d times, want %d", got, goroutines*calls+1)
 	}
 }
