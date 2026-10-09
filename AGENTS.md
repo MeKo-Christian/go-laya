@@ -52,7 +52,9 @@ anything is done.
 - Markdown is formatted by **prettier only**. `markdownlint` runs as a checker and never
   with `--fix` — chaining both as formatters can fail to converge under `--fail-on-change`.
 - Tests live beside their source as `*_test.go`, in the same package. `testpackage` is
-  disabled on purpose: parity tests need the unexported internals.
+  disabled on purpose: parity tests need the unexported internals. The exception is
+  `example_test.go`, which is `package laya_test` on purpose: its Examples are the README's
+  code and must read as a caller writes them (Task 7.6.1).
 
 ## The frozen upstream: `original/`
 
