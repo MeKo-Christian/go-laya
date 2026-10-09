@@ -13,9 +13,9 @@ import (
 )
 
 // The loader's agent is what Router.Predict runs (Task 7.7.1).
-var _ Agent = (*onnxAgent)(nil)
+var _ Predictor = (*Agent)(nil)
 
-// funcAgent is an Agent whose SystemOne is a closure, for the cases stubAgent's
+// funcAgent is a Predictor whose SystemOne is a closure, for the cases stubAgent's
 // fixed payload cannot express: errors, a nil result, what reached it.
 type funcAgent func(ctx context.Context, state any, qs Questions) (*Result, error)
 
@@ -29,9 +29,9 @@ func (funcAgent) Close() error { return nil }
 // so routing falls through to the language of the state.
 var predictQs = Questions{{ID: "urgent", Q: NoulQuestion{Ins: "Is `message` urgent?"}}}
 
-// Task 7.7.1: SystemOne is part of the Agent interface.
+// Task 7.7.1: SystemOne is part of the Predictor interface.
 func TestAgentInterface(t *testing.T) {
-	var a Agent = &stubAgent{name: "english"}
+	var a Predictor = &stubAgent{name: "english"}
 	res, err := a.SystemOne(context.Background(), "state", predictQs)
 	if err != nil {
 		t.Fatalf("SystemOne: %v", err)
@@ -183,7 +183,7 @@ func TestRouterPredictErrors(t *testing.T) {
 	}
 
 	errLoad := errors.New("load failed")
-	failing, err := NewRouter(WithLoader(func(context.Context, string, ModelSpec) (Agent, error) {
+	failing, err := NewRouter(WithLoader(func(context.Context, string, ModelSpec) (Predictor, error) {
 		return nil, errLoad
 	}))
 	if err != nil {

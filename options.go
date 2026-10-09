@@ -13,13 +13,12 @@ import "context"
 type RouterOption func(*routerConfig) error
 
 type routerConfig struct {
+	loaderSettings // the default loader's; a custom WithLoader ignores them
+
 	standaloneRepos   bool
 	maxLoaded         int
-	loader            func(context.Context, string, ModelSpec) (Agent, error)
+	loader            func(context.Context, string, ModelSpec) (Predictor, error)
 	loaderSet         bool
-	onnxDir           string
-	device            string
-	token             string
 	overrides         map[string]ModelSpec
 	defaultModel      string
 	autoTaskDetection bool
@@ -140,7 +139,7 @@ func WithMaxLoaded(n int) RouterOption {
 // monkeypatch Router.load to avoid building a real checkpoint
 // (test_router.py:177), and an injected loader is how that ports without
 // reflection.
-func WithLoader(fn func(context.Context, string, ModelSpec) (Agent, error)) RouterOption {
+func WithLoader(fn func(context.Context, string, ModelSpec) (Predictor, error)) RouterOption {
 	return func(c *routerConfig) error {
 		c.loader = fn
 		c.loaderSet = true

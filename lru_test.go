@@ -42,7 +42,7 @@ func newStubLoader() *stubLoader {
 	return &stubLoader{made: map[string]*stubAgent{}}
 }
 
-func (l *stubLoader) fn(_ context.Context, name string, _ ModelSpec) (Agent, error) {
+func (l *stubLoader) fn(_ context.Context, name string, _ ModelSpec) (Predictor, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.built = append(l.built, name)
@@ -68,7 +68,7 @@ func stubbedRouter(t *testing.T, maxLoaded int, extra ...RouterOption) (*Router,
 	return r, l
 }
 
-func mustLoad(t *testing.T, r *Router, name string) Agent {
+func mustLoad(t *testing.T, r *Router, name string) Predictor {
 	t.Helper()
 	a, err := r.Load(context.Background(), name)
 	if err != nil {
@@ -173,7 +173,7 @@ func TestRouterAttach(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got != Agent(sentinel) {
+	if got != Predictor(sentinel) {
 		t.Error("the attached agent was replaced")
 	}
 }
@@ -404,7 +404,7 @@ func TestRouterSurvivesAPanickingLoader(t *testing.T) {
 	for name, call := range entries {
 		t.Run(name, func(t *testing.T) {
 			var panicked atomic.Bool
-			r, err := NewRouter(WithLoader(func(context.Context, string, ModelSpec) (Agent, error) {
+			r, err := NewRouter(WithLoader(func(context.Context, string, ModelSpec) (Predictor, error) {
 				if panicked.CompareAndSwap(false, true) {
 					panic("loader failed")
 				}

@@ -40,7 +40,7 @@ func (b *recordingBackend) Forward(_ context.Context, in backend.Batch) (logits,
 func (*recordingBackend) Close() error { return nil }
 
 // testAgent builds an agent over the mini_en tokenizer and the given config.
-func testAgent(t *testing.T, config string, be backend.Backend) *onnxAgent {
+func testAgent(t *testing.T, config string, be backend.Backend) *Agent {
 	t.Helper()
 	dir := t.TempDir()
 	writeCheckpoint(t, dir)
@@ -57,7 +57,7 @@ func testAgent(t *testing.T, config string, be backend.Backend) *onnxAgent {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := newONNXAgent(be, cfg, tok)
+	a, err := newAgent(be, cfg, tok)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +274,7 @@ func TestSystemOneReplay(t *testing.T) {
 		InputTokens int             `json:"input_tokens"`
 		ResultJSON  string          `json:"result_json"`
 	}
-	agents := map[string]*onnxAgent{}
+	agents := map[string]*Agent{}
 	for _, rec := range golden.Load(t, "logits") {
 		var c logitsCase
 		rec.Unmarshal(t, &c)
@@ -289,7 +289,7 @@ func TestSystemOneReplay(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if a, err = newONNXAgent(fake.New(t, c.Checkpoint), cfg, tok); err != nil {
+			if a, err = newAgent(fake.New(t, c.Checkpoint), cfg, tok); err != nil {
 				t.Fatal(err)
 			}
 			agents[c.Checkpoint] = a

@@ -61,6 +61,12 @@ var (
 	// choice question with an empty option list. Python gets as far as the
 	// softmax and fails on an empty array (agent.py:306).
 	ErrNoOptions = errors.New("laya: question has no options")
+
+	// ErrInvalidLimits reports a max_len or head_max_len that is not
+	// positive, passed to SetLimits or WithLimits. Python accepts one and
+	// silently truncates every sequence with it; the config's own values are
+	// held to the same rule.
+	ErrInvalidLimits = errors.New("laya: max_len and head_max_len must be positive")
 )
 
 // OptionBudgetError names the question whose options lost their markers,

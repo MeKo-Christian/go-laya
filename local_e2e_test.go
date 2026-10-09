@@ -290,7 +290,7 @@ func localRouterE2E(t *testing.T, models string) {
 }
 
 // localAgent loads name through the Router, as laya.load does upstream.
-func localAgent(t *testing.T, r *Router, name string) Agent {
+func localAgent(t *testing.T, r *Router, name string) Predictor {
 	t.Helper()
 	a, err := r.Load(context.Background(), name)
 	if err != nil {
@@ -299,7 +299,7 @@ func localAgent(t *testing.T, r *Router, name string) Agent {
 	return a
 }
 
-func localPredict(t *testing.T, a Agent, state any, qs Questions) *Result {
+func localPredict(t *testing.T, a Predictor, state any, qs Questions) *Result {
 	t.Helper()
 	res, err := a.SystemOne(context.Background(), state, qs)
 	if err != nil {

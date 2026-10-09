@@ -19,7 +19,7 @@ byte-identical prompts and numerically equivalent decisions from the same Huggin
 **Where things live.** This file holds **open work** and a short record of what is done.
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) holds what the system is: checkpoints, tokenizer
 semantics, export recipe, trust model and numerics rules. [`docs/DECISIONS.md`](docs/DECISIONS.md)
-holds why, as D1–D26. The dated history of every finished task (evidence, mutation runs,
+holds why, as D1–D28. The dated history of every finished task (evidence, mutation runs,
 re-measurements) was condensed out on 2026-09-27 and is in git: `git show 8125f40:PLAN.md`. Ids of
 finished tasks cited in code comments refer to that history.
 
@@ -40,7 +40,7 @@ box under it is ticked.
 | [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done                                  |
 | [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done                                  |
 | [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                                  |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | 🟡 7.1–7.5 done bar 7.2.5; 7.7 bar 7.7.5 |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | 🟡 7.1–7.5 done bar 7.2.5; 7.7 bar 7.7.7 |
 | [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | ⬜ open                                  |
 | [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred                              |
 
@@ -81,6 +81,8 @@ Full rationale is in [`docs/DECISIONS.md`](docs/DECISIONS.md). Index:
 | D24 | Forward pass is a local ONNX export; only config + tokenizer download |
 | D25 | `state` stays `any`; no `State` interface                             |
 | D26 | `act_probability` uses a port of ATen's softmax                       |
+| D27 | `Predict` leases its agent; a dropped agent closes after its lease    |
+| D28 | The exported struct is `Agent`; the Router's interface is `Predictor` |
 
 ## 1. What we are porting — verified facts
 
@@ -440,7 +442,8 @@ Done:
 **Task 7.6: README + examples.**
 
 - [ ] **7.6.1** Port every README example to Go as compiling `Example` functions, so CI proves
-      they build (§8).
+      they build (§8). The single-model examples have a target since 7.7.5 (`Open`,
+      `Agent.Predict`).
 - [ ] **7.6.2** Fix the image URLs. Upstream's point at
       `raw.githubusercontent.com/NandhaKishorM/laya/main/...`, so a fork's README renders
       upstream's assets.
@@ -448,7 +451,8 @@ Done:
       `instructions` is `string` only; the pinned default revision (D17); the graph is a local
       export and only the config and tokenizer are downloaded (D24); no ONNX backend off D21's platform list
       (`ErrUnsupportedPlatform`); `cuda` falls back to CPU (D22); no `mps` device; a config with `max_len`/`head_max_len` ≤ 0 or a
-      `temperature` list that is not 3 long is rejected; an empty choice question is
+      `temperature` list that is not 3 long is rejected, and so is a `SetLimits`/`WithLimits`
+      value ≤ 0 (`ErrInvalidLimits`, 7.7.5); an empty choice question is
       `ErrNoOptions` before the forward pass; `$LAYA_CACHE`
       instead of the huggingface_hub cache; and every dropped or renamed export: `proper_reward`,
       `td_lambda_targets` (D3), `ece_score` (internal `calib.ECE`), `load` (→ `Open`), `RLAgent`
@@ -488,11 +492,28 @@ Done:
       is the bare result's bytes with a `"routing"` key holding `jsonx.Marshal(decision.Map())`
       appended last, in Python's separators, detection block included; `json.Marshal(res)` stays valid, routing after
       usage.
-- [ ] **7.7.5** A public entry point to a single agent. `docs/API.md` proposes an exported `*Agent`
+- [x] **7.7.5** A public entry point to a single agent. `docs/API.md` proposes an exported `*Agent`
       with `Open`, `SystemOne`, `Predict`, `MaxLen`/`HeadMaxLen`/`SetLimits`. Today `SystemOne`
       lives on the loader's unexported `onnxAgent`, reachable only through the Router, and no
       task owns the exported surface. `Agent` is already the Router's interface name, so the
-      exported type needs another name or the interface does.
+      exported type needs another name or the interface does. (2026-10-09) The user chose to
+      keep `Agent` for the struct and rename the interface to `Predictor` (D28). `agent.go`:
+      `Open(ctx, ref, opts...)` is `laya.load` and builds through the Router's default loader,
+      so D17's pin, D24's download and the `$HF_TOKEN` fallback are shared; `ref` `""` is the
+      bundle repo. Options mirror `laya.load` (user decision): `WithSubfolder`, `WithDevice`,
+      `WithHFToken`, `WithLimits`, plus `WithGraph`. Without `WithGraph`, the export name is the
+      checkpoint the spec locates in either registry, and anything else, a local directory
+      included, is `ErrNoGraph`. The Router's `WithONNXDir` name was taken, so `Open` reads only
+      `$LAYA_ONNX_DIR` and the cache. `SetLimits` replaces `agent.cfg[...]`; `SystemOne` reads
+      both limits once under an `RWMutex`, and a value ≤ 0 is `ErrInvalidLimits`.
+      `go test -race -count=1 -run 'TestOpen|TestAgent|TestRouter|TestUpstreamLRU|TestDefaultLoader|TestSystemOne' -v .`
+      passes 46 tests (the two real-weight ones skipped). Locally,
+      `LAYA_MODELS=$PWD/models LAYA_ONNX_DIR=$PWD/build/onnx go test -count=1 -run 'TestOpenReal|TestE2EParity|TestLocalE2E' -v .`
+      passes: `TestOpenReal` opens all three checkpoints with `Open` and matches the first
+      `logits.jsonl` case's `result_json`. Each of these mutations fails a test:
+      dropping `WithSubfolder`, matching the registry by repo alone, running every checkpoint on
+      one export, an unlocked limits read (a `-race` report), a no-op `SetLimits`, and an
+      ignored `WithLimits`.
 - [x] **7.7.6** Eviction during `Predict`. Two goroutines on one Router can evict each other's
       agent between `Load` and `SystemOne` (at `max_loaded=1`, requests in two languages). The
       backend's `Close` waits for a pass already running, so nothing is freed under it, but a pass
@@ -508,6 +529,9 @@ Done:
       `TestRouterPredictSurvives{Eviction,Unload,Close}` hold a pass open while its agent is
       dropped, and `…ReportsDeferredCloseError` and `…Concurrent` (8×25 requests) also pass.
       Each of these mutations fails them: dropping the lease, not waiting, never releasing.
+- [ ] **7.7.7** The rest of `docs/API.md`'s `Open` options, left out of 7.7.5 (user decision):
+      `WithCacheDir` (today only `$LAYA_CACHE`), `WithBackend` (a caller's `backend.Backend`,
+      D9) and `WithLogger` (the ONNX device-fallback warning goes to `slog`'s default today).
 
 ### Backlog — open work that does not gate 1.0
 

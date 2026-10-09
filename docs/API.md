@@ -240,33 +240,42 @@ type Result struct {
 
 // ---------------------------------------------------------------- agent
 
-// Implemented (Task 7.3) on the loader's unexported onnxAgent; the Router's
-// Agent interface exposes SystemOne since Task 7.7.1. The exported *Agent and
-// Open below are planned (PLAN 7.7.5), and the name collides with that
-// interface, which 7.7.5 has to settle.
+// Task 7.7.5 (agent.go): the exported struct keeps Python's name, laya.Agent,
+// and the Router's interface is Predictor (D28). Open is laya.load: it shares
+// the Router's default loader, so a Hub repo downloads only its config and
+// tokenizer, the bundle repo at D17's pin, and the graph is a local ONNX
+// export (D24). *Agent satisfies Predictor.
 type Agent struct {
-	// unexported: cfg, tokenizer, backend, temperature tables
-	mu sync.RWMutex
+	// unexported: backend, cfg, tokenizer, temperatures
+	mu sync.RWMutex // guards maxLen and headMaxLen
 }
 
-func Open(ctx context.Context, ref string, opts ...Option) (*Agent, error)
+func Open(ctx context.Context, ref string, opts ...Option) (*Agent, error) // ref "" is convaiinnovations/laya
 
 func (a *Agent) SystemOne(ctx context.Context, state any, qs Questions) (*Result, error)
 func (a *Agent) Predict(ctx context.Context, state any, qs Questions) (*Result, error) // alias
 func (a *Agent) MaxLen() int
 func (a *Agent) HeadMaxLen() int
-func (a *Agent) SetLimits(maxLen, headMaxLen int) error // replaces agent.cfg[...] mutation
+func (a *Agent) SetLimits(maxLen, headMaxLen int) error // replaces agent.cfg[...] mutation; <= 0 is ErrInvalidLimits
 func (a *Agent) Close() error
 
 // ---------------------------------------------------------------- options
 
 type Option func(*agentConfig) error
 
-func WithDevice(d string) Option        // "cpu" | "cuda" | "cuda:0" | "coreml" | "auto"
-func WithHFToken(tok string) Option     // default: $HF_TOKEN
+// laya.load's keyword arguments (agent.py:351-352), plus the graph D24 needs.
+func WithDevice(d string) Option    // "cpu" | "cuda" | "cuda:0" | "coreml" | "" / "auto"
+func WithHFToken(tok string) Option // default: $HF_TOKEN
 func WithSubfolder(sub string) Option
-func WithCacheDir(dir string) Option    // default: $LAYA_CACHE or os.UserCacheDir()/laya
 func WithLimits(maxLen, headMaxLen int) Option
+// WithGraph names the export. Without it, Open looks for laya-<name>.onnx in
+// $LAYA_ONNX_DIR, else <cache>/onnx, where name is the checkpoint the repo
+// and subfolder locate in DefaultModels or StandaloneModels; anything else,
+// such as a local directory, is ErrNoGraph.
+func WithGraph(path string) Option
+
+// Planned (PLAN 7.7.7), not yet implemented:
+func WithCacheDir(dir string) Option    // default: $LAYA_CACHE or os.UserCacheDir()/laya
 func WithBackend(b backend.Backend) Option // public leaf package (PLAN D9): test doubles, alternative runtimes
 func WithLogger(l *slog.Logger) Option
 
@@ -337,15 +346,21 @@ func NewRouter(opts ...RouterOption) (*Router, error)
 // and needs no context.
 func (r *Router) Route(state any, qs Questions, ro ...RouteOption) (RouteDecision, error)
 
-// Agent is an interface, not a struct: SystemOne and Close. The Router runs
+// Predictor is an interface, not a struct: SystemOne and Close. The Router runs
 // what it routes to and must release what it evicts; that is the whole of
-// what it asks of one. Task 7.7.1 widened it with SystemOne (PLAN D13).
+// what it asks of one. Task 7.7.1 widened it with SystemOne (PLAN D13). It was
+// called Agent until Task 7.7.5 gave that name to the exported struct (D28).
 // Corrected 2026-09-20 (M3): this block used to say *Agent, which M3 could
 // not build against because the concrete agent arrives in M6/M7.
-func (r *Router) Load(ctx context.Context, name string) (Agent, error)
+type Predictor interface {
+	SystemOne(ctx context.Context, state any, qs Questions) (*Result, error)
+	Close() error
+}
+
+func (r *Router) Load(ctx context.Context, name string) (Predictor, error)
 func (r *Router) MaxLoaded() int
 func (r *Router) SetMaxLoaded(n int) // clamped to >= 1; the upstream tests mutate it after construction
-func (r *Router) Attach(name string, a Agent) error
+func (r *Router) Attach(name string, a Predictor) error
 func (r *Router) Preload(ctx context.Context, names ...string) error
 func (r *Router) Loaded() []string // LRU order, least-recent first
 
@@ -376,7 +391,7 @@ func WithStandaloneRepos(on bool) RouterOption
 // and tokenizer and runs a local ONNX export of it (D24). WithLoader(nil) leaves
 // no loader, and Load returns ErrNoLoader. It is also the seam the upstream LRU
 // tests need, which monkeypatch Router.load (test_router.py:177).
-func WithLoader(fn func(context.Context, string, ModelSpec) (Agent, error)) RouterOption
+func WithLoader(fn func(context.Context, string, ModelSpec) (Predictor, error)) RouterOption
 
 // The default loader's settings; a custom WithLoader ignores all three.
 func WithRouterDevice(d string) RouterOption  // "cpu", "cuda[:N]", "coreml", "" / "auto"
@@ -403,6 +418,7 @@ var (
 	ErrEmptyQuestions          = errors.New("laya: no questions")          // Python: TypeError from collate_items returning None
 	ErrDuplicateQuestionID     = errors.New("laya: duplicate question id") // Python: impossible in a dict
 	ErrNoOptions               = errors.New("laya: question has no options") // Python: ValueError from an empty softmax
+	ErrInvalidLimits           = errors.New("laya: max_len and head_max_len must be positive") // SetLimits, WithLimits
 )
 
 // OptionBudgetError names the offending question, replacing Python's
