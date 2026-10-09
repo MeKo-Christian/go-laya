@@ -246,6 +246,25 @@ every language switch. Building an ORT session from an already-downloaded ONNX f
 that — but at 1.4 GB resident apiece, holding all three costs about 3.3 GB, which is the real
 constraint on raising `max_loaded`.
 
+### Loading the tokenizer
+
+`tokenizer.Open` alone, which every checkpoint load pays before the session is built. One fresh
+process per run at `-test.benchtime=1x`, plus `5x` runs: five before, ten after across two sessions;
+go1.26.8, same laptop. Reproduce with `go test -c` and
+`-test.bench 'BenchmarkOpen/<checkpoint>' -test.benchmem`.
+
+| checkpoint     | before (`encoding/json`)             | after (streaming vocab and merges)  |
+| -------------- | ------------------------------------ | ----------------------------------- |
+| `english`      | 57 ms · 19.6 MB · 187 k allocs       | 34–63 ms · 11.6 MB · 57 k allocs    |
+| `multilingual` | 0.51–0.53 s · 207 MB · 1.54 M allocs | 0.42–0.47 s · 110 MB · 295 k allocs |
+
+Multilingual's `tokenizer.json` is 34 MB: 256 000 vocabulary entries and 580 604 merges. Decoding the
+merges into `[][2]string` allocated two strings per merge only to look them up and drop them, so
+scanning the two values directly (PLAN.md Task B.1) roughly halves the bytes and cuts allocations by 81%.
+Time moves less, because most of what remains is not allocation: about a third is `encoding/json`
+still validating the whole document, and most of the rest is the 2.3 million map lookups that resolve
+every merge to ids.
+
 ### Go or Python, ORT 1.23 or 1.30 — no difference beyond the noise
 
 An early cross-check recorded `english` at 1901 ms from Go on ORT 1.23.0 against 5064 ms from Python

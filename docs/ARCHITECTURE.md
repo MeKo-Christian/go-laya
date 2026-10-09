@@ -165,8 +165,9 @@ so the oracle is the outlier. No natural text, vocabulary entry or UI string in 
 it, and multilingual (no NFC) cannot. `scripts/probe_ccc.py` enumerates the set. Whether to
 reproduce the Rust tables is PLAN Task B.2.
 
-**Cost.** `Open`: english 68 ms / 19.6 MB, multilingual 0.6–1.2 s / 207 MB (the 34 MB JSON
-decode, PLAN Task B.1). `Encode`: 191–456 µs.
+**Cost.** `Open`: english 34–63 ms / 11.6 MB, multilingual 0.42–0.47 s / 110 MB, after Task B.1
+stopped decoding the vocabulary and merges through `encoding/json` (before: 0.51–0.53 s / 207 MB).
+`Encode`: 191–456 µs.
 
 ## 4. Prompt assembly
 
