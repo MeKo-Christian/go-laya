@@ -30,6 +30,9 @@ func (a *Agent) SystemOne(ctx context.Context, state any, qs Questions) (*Result
 		return nil, ErrEmptyQuestions
 	}
 
+	// One read for the whole call, so a concurrent SetLimits cannot give two
+	// rows of one batch different budgets.
+	maxLen, headMaxLen := a.limits()
 	items := make([]prompt.Item, len(qs))
 	for i, nq := range qs {
 		q := question.ToInternal(nq.Q)
@@ -40,7 +43,7 @@ func (a *Agent) SystemOne(ctx context.Context, state any, qs Questions) (*Result
 		if want == 0 {
 			return nil, fmt.Errorf("%w: %q", ErrNoOptions, nq.ID)
 		}
-		ids, markers, err := prompt.BuildSequence(a.tok, state, q, a.maxLen, a.headMaxLen, nil, false)
+		ids, markers, err := prompt.BuildSequence(a.tok, state, q, maxLen, headMaxLen, nil, false)
 		if err != nil {
 			return nil, fmt.Errorf("laya: state: %w", err)
 		}
@@ -48,7 +51,7 @@ func (a *Agent) SystemOne(ctx context.Context, state any, qs Questions) (*Result
 		// model never scores.
 		if len(markers) != want {
 			return nil, &OptionBudgetError{
-				QuestionID: nq.ID, HeadMaxLen: a.headMaxLen,
+				QuestionID: nq.ID, HeadMaxLen: headMaxLen,
 				WantMarkers: want, GotMarkers: len(markers),
 			}
 		}

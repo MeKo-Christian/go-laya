@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"sync"
 
 	"github.com/MeKo-Christian/go-laya/backend"
 	"github.com/MeKo-Christian/go-laya/internal/calib"
@@ -18,14 +19,16 @@ import (
 // laya.load builds that one, and it is also what the Router's default loader
 // caches, so it satisfies Predictor.
 //
-// SystemOne and Predict may be called from several goroutines at once.
+// SystemOne, Predict and SetLimits may be called from several goroutines at
+// once.
 type Agent struct {
 	backend backend.Backend
 	cfg     *checkpoint.Config
 	tok     *tokenizer.HF
+	temps   calib.Temperatures
 
+	mu                 sync.RWMutex // guards the limits, which SetLimits changes
 	maxLen, headMaxLen int
-	temps              calib.Temperatures
 }
 
 // newAgent reads what SystemOne needs from the checkpoint's config once:
@@ -54,12 +57,59 @@ func newAgent(be backend.Backend, cfg *checkpoint.Config, tok *tokenizer.HF) (*A
 	}, nil
 }
 
+// MaxLen is the token budget of a whole sequence, the config's max_len
+// unless SetLimits or WithLimits changed it.
+func (a *Agent) MaxLen() int {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.maxLen
+}
+
+// HeadMaxLen is the token budget of the instructions and options, the
+// config's head_max_len unless SetLimits or WithLimits changed it.
+func (a *Agent) HeadMaxLen() int {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.headMaxLen
+}
+
+// SetLimits replaces both budgets for every later SystemOne call. It is how
+// Python's agent.cfg["max_len"] = ... and agent.cfg["head_max_len"] = ...
+// are written here; a pass already running keeps the limits it started with.
+// A value that is not positive is ErrInvalidLimits and changes nothing,
+// where Python would silently truncate every sequence.
+func (a *Agent) SetLimits(maxLen, headMaxLen int) error {
+	if err := checkLimits(maxLen, headMaxLen); err != nil {
+		return err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.maxLen, a.headMaxLen = maxLen, headMaxLen
+	return nil
+}
+
+// checkLimits applies the rule the config's own max_len and head_max_len
+// are held to.
+func checkLimits(maxLen, headMaxLen int) error {
+	if maxLen <= 0 || headMaxLen <= 0 {
+		return fmt.Errorf("%w: max_len %d, head_max_len %d", ErrInvalidLimits, maxLen, headMaxLen)
+	}
+	return nil
+}
+
 // Close releases the runtime session. A leaked one is hundreds of megabytes.
 func (a *Agent) Close() error {
 	if err := a.backend.Close(); err != nil {
 		return fmt.Errorf("laya: close agent: %w", err)
 	}
 	return nil
+}
+
+// limits reads both budgets at once, for one SystemOne call.
+func (a *Agent) limits() (maxLen, headMaxLen int) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.maxLen, a.headMaxLen
 }
 
 // Option configures Open. The options are laya.load's keyword arguments
@@ -69,8 +119,9 @@ type Option func(*agentConfig) error
 type agentConfig struct {
 	loaderSettings
 
-	subfolder string
-	graph     string
+	subfolder          string
+	graph              string
+	maxLen, headMaxLen int // 0 keeps the config's
 }
 
 // WithSubfolder selects one checkpoint from a repo that bundles several, as
@@ -116,6 +167,20 @@ func WithGraph(path string) Option {
 	}
 }
 
+// WithLimits sets the token budgets SetLimits sets, in place of the config's
+// max_len and head_max_len. Python changes them by writing agent.cfg; the
+// README raises head_max_len for questions with many options. A value that is
+// not positive is ErrInvalidLimits.
+func WithLimits(maxLen, headMaxLen int) Option {
+	return func(c *agentConfig) error {
+		if err := checkLimits(maxLen, headMaxLen); err != nil {
+			return err
+		}
+		c.maxLen, c.headMaxLen = maxLen, headMaxLen
+		return nil
+	}
+}
+
 // Open loads one checkpoint, as laya.load does (agent.py:351-360). ref is a
 // Hub repo id or a local directory; "" is convaiinnovations/laya, upstream's
 // default. A Hub repo is downloaded as the Router's loader downloads it: only
@@ -144,7 +209,7 @@ func openAgent(ctx context.Context, ref string, opts []Option, newLoader func(lo
 	}
 	spec := ModelSpec{Repo: ref, Subfolder: cfg.subfolder}
 	l := newLoader(cfg.loaderSettings)
-	return l.build(ctx, spec, func() (string, error) {
+	a, err := l.build(ctx, spec, func() (string, error) {
 		if cfg.graph != "" {
 			if _, err := os.Stat(cfg.graph); err != nil {
 				if errors.Is(err, fs.ErrNotExist) {
@@ -161,6 +226,13 @@ func openAgent(ctx context.Context, ref string, opts []Option, newLoader func(lo
 		}
 		return l.graph(name)
 	})
+	if err != nil {
+		return nil, err
+	}
+	if cfg.maxLen > 0 {
+		a.maxLen, a.headMaxLen = cfg.maxLen, cfg.headMaxLen
+	}
+	return a, nil
 }
 
 // exportName is the name `scripts/export_onnx.py` gives spec's export: the

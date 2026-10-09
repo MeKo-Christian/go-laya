@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/MeKo-Christian/go-laya/backend"
@@ -309,5 +311,119 @@ func TestOpenReal(t *testing.T) {
 				compareFormatted(t, name+" "+na.ID, na.A, pa)
 			}
 		})
+	}
+}
+
+// fixedBackend answers every row with the same logits and keeps nothing, so
+// concurrent passes share no state of the test's own.
+type fixedBackend struct{}
+
+func (fixedBackend) Forward(_ context.Context, in backend.Batch) (logits, act [][]float32, err error) {
+	for range in.InputIDs {
+		logits = append(logits, []float32{0.5, -0.5, 0.25, 1, 0, 0, 0, 0, 0, 0})
+		act = append(act, []float32{1, 0})
+	}
+	return logits, act, nil
+}
+
+func (fixedBackend) Close() error { return nil }
+
+// Task 7.7.5: SetLimits replaces Python's agent.cfg["max_len"] and
+// agent.cfg["head_max_len"] mutation (agent.py:256-257 reads them per call),
+// so a change reaches the next SystemOne. head_max_len bounds the
+// instructions (common.py:74), max_len the whole sequence (common.py:86).
+func TestAgentSetLimits(t *testing.T) {
+	be := &recordingBackend{logits: [][]float32{{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}}, act: [][]float32{{0, 0}}}
+	a := testAgent(t, "", be)
+	if a.MaxLen() != 512 || a.HeadMaxLen() != 192 {
+		t.Fatalf("limits = %d, %d; want the config defaults 512, 192", a.MaxLen(), a.HeadMaxLen())
+	}
+	long := Questions{{ID: "q", Q: NoulQuestion{Ins: strings.Repeat("is this a long instruction ", 20)}}}
+	rowLen := func() int {
+		t.Helper()
+		if _, err := a.SystemOne(context.Background(), "s", long); err != nil {
+			t.Fatalf("SystemOne: %v", err)
+		}
+		return len(be.calls[len(be.calls)-1].InputIDs[0])
+	}
+	before := rowLen()
+
+	if err := a.SetLimits(512, 24); err != nil {
+		t.Fatalf("SetLimits: %v", err)
+	}
+	if a.MaxLen() != 512 || a.HeadMaxLen() != 24 {
+		t.Errorf("limits = %d, %d; want 512, 24", a.MaxLen(), a.HeadMaxLen())
+	}
+	if after := rowLen(); after >= before {
+		t.Errorf("row is %d tokens at head_max_len 24, %d at 192; want it shorter", after, before)
+	}
+
+	if err := a.SetLimits(16, 192); err != nil {
+		t.Fatalf("SetLimits: %v", err)
+	}
+	_, err := a.SystemOne(context.Background(), "s", Questions{{ID: "many", Q: ChoiceQuestion{
+		Ins: "pick", Opts: Labels("a", "b", "c", "d", "e", "f", "g", "h", "i", "j"),
+	}}})
+	if !errors.Is(err, ErrOptionsExceedHeadBudget) {
+		t.Errorf("err at max_len 16 = %v, want ErrOptionsExceedHeadBudget", err)
+	}
+
+	for _, bad := range [][2]int{{0, 192}, {512, 0}, {-1, -1}} {
+		if err := a.SetLimits(bad[0], bad[1]); !errors.Is(err, ErrInvalidLimits) {
+			t.Errorf("SetLimits(%d, %d) = %v, want ErrInvalidLimits", bad[0], bad[1], err)
+		}
+		if a.MaxLen() != 16 || a.HeadMaxLen() != 192 {
+			t.Errorf("after SetLimits(%d, %d) limits = %d, %d; want 16, 192 kept",
+				bad[0], bad[1], a.MaxLen(), a.HeadMaxLen())
+		}
+	}
+}
+
+// Task 7.7.5: SetLimits may run while passes are in flight. Under -race this
+// is the check that SystemOne reads the limits under the lock.
+func TestAgentSetLimitsConcurrent(t *testing.T) {
+	a := testAgent(t, "", fixedBackend{})
+	qs := threeQuestions()
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Go(func() {
+			for j := range 20 {
+				if i%2 == 0 {
+					if err := a.SetLimits(256+j, 64+j); err != nil {
+						t.Errorf("SetLimits: %v", err)
+					}
+					continue
+				}
+				if _, err := a.SystemOne(context.Background(), "s", qs); err != nil {
+					t.Errorf("SystemOne: %v", err)
+				}
+			}
+		})
+	}
+	wg.Wait()
+}
+
+// Task 7.7.5: WithLimits sets both limits at Open, and a bad pair is refused
+// before anything is downloaded or opened.
+func TestOpenWithLimits(t *testing.T) {
+	ck := t.TempDir()
+	writeCheckpoint(t, ck)
+	graph := writeGraph(t, t.TempDir(), "x")
+
+	open, _ := stubOpen(t, "")
+	a, err := open(context.Background(), ck, WithGraph(graph), WithLimits(1024, 256))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if a.MaxLen() != 1024 || a.HeadMaxLen() != 256 {
+		t.Errorf("limits = %d, %d; want 1024, 256", a.MaxLen(), a.HeadMaxLen())
+	}
+
+	open, rec := stubOpen(t, "")
+	if _, err := open(context.Background(), ck, WithGraph(graph), WithLimits(1024, 0)); !errors.Is(err, ErrInvalidLimits) {
+		t.Errorf("err = %v, want ErrInvalidLimits", err)
+	}
+	if len(rec.opens) != 0 {
+		t.Errorf("opened %v, want nothing", rec.opens)
 	}
 }
