@@ -1,6 +1,7 @@
 package laya_test
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,8 +12,16 @@ import (
 	"github.com/MeKo-Christian/go-laya"
 )
 
-// exampleEnv names the Example a child process of TestREADMEExamples runs.
-const exampleEnv = "LAYA_README_EXAMPLE"
+const (
+	// exampleEnv names the Example a child process of TestREADMEExamples runs.
+	exampleEnv = "LAYA_README_EXAMPLE"
+	// exampleDone, followed by the Example's name, is what a child prints
+	// once the Example has returned.
+	exampleDone = "README example done: "
+	// childTimeoutMargin is how much earlier than the parent a child times
+	// out, so that the child's goroutine dump is the one that is reported.
+	childTimeoutMargin = 30 * time.Second
+)
 
 // readmeExamples are the seven README Examples that need weights, so `go test`
 // compiles them but never runs them (they carry no Output comment). want lists
@@ -69,12 +78,17 @@ func TestREADMEExamples(t *testing.T) {
 
 	for _, ex := range readmeExamples {
 		t.Run(ex.name, func(t *testing.T) {
-			args := []string{"-test.run=^TestREADMEExamples$"}
-			// The child gets the parent's deadline: a parent that times out
-			// panics without cancelling t.Context(), which would leave a child
-			// holding a checkpoint running.
+			args := []string{"-test.run=^TestREADMEExamples$", "-test.paniconexit0"}
+			// The child gets the parent's deadline less a margin: a parent
+			// that times out panics without cancelling t.Context(), which
+			// would leave a child holding a checkpoint running, and a child
+			// that times out first dumps the goroutines of the hung Example.
 			if d, ok := t.Deadline(); ok {
-				args = append(args, "-test.timeout="+time.Until(d).String())
+				left := time.Until(d) - childTimeoutMargin
+				if left <= 0 {
+					t.Fatalf("%s: less than %v left before the test deadline", ex.name, childTimeoutMargin)
+				}
+				args = append(args, "-test.timeout="+left.String())
 			}
 			// #nosec G204 -- re-runs this test binary with its own arguments.
 			cmd := exec.CommandContext(t.Context(), os.Args[0], args...)
@@ -83,6 +97,11 @@ func TestREADMEExamples(t *testing.T) {
 			t.Logf("%s:\n%s", ex.name, out)
 			if err != nil {
 				t.Fatalf("%s failed: %v", ex.name, err)
+			}
+			// Only a child that returned from the Example prints this, so
+			// an early exit, a skip or a run that matched no test fails here.
+			if !strings.Contains(string(out), exampleDone+ex.name) {
+				t.Fatalf("%s did not run to its end", ex.name)
 			}
 			rest := string(out)
 			for _, w := range ex.want {
@@ -104,6 +123,7 @@ func runExampleChild(t *testing.T, name string) {
 	for _, ex := range readmeExamples {
 		if ex.name == name {
 			ex.run()
+			fmt.Fprintln(os.Stdout, exampleDone+name)
 			return
 		}
 	}
@@ -112,12 +132,12 @@ func runExampleChild(t *testing.T, name string) {
 
 // stageExports returns a directory holding laya-<name>.onnx for all three
 // checkpoints, the name Open looks for. That is dir itself when it already
-// does. Otherwise each name is hard-linked into a temporary directory from its
-// canonical export, else its -dynamo one, together with the external data
-// under the name the graph refers to; nothing in dir is written. A symlink
-// would not do: the header check requires the external data to be a regular
-// file. Like linkExports, it skips without an export or without hard links
-// ($TMPDIR on another filesystem than dir).
+// does. Otherwise each name is hard-linked into a temporary directory inside
+// dir, removed again by the cleanup, from its canonical export, else its
+// -dynamo one, together with the external data under the name the graph
+// refers to; no existing file in dir is written. A symlink would not do: the
+// header check requires the external data to be a regular file. Like
+// linkExports, it skips without an export or without hard links.
 func stageExports(t *testing.T, dir string) string {
 	t.Helper()
 	names := []string{laya.ModelEnglish, laya.ModelMultilingual, laya.ModelTypedDecisions}
@@ -131,7 +151,13 @@ func stageExports(t *testing.T, dir string) string {
 		return dir
 	}
 
-	staged := t.TempDir()
+	// Beside the exports, as linkExports does: a hard link cannot cross
+	// filesystems, and $TMPDIR is often on another one.
+	staged, err := os.MkdirTemp(dir, "readme-examples-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(staged) })
 	for _, name := range names {
 		src := filepath.Join(dir, "laya-"+name+".onnx")
 		if _, err := os.Stat(src); err != nil {
