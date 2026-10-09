@@ -13,13 +13,12 @@ import "context"
 type RouterOption func(*routerConfig) error
 
 type routerConfig struct {
+	loaderSettings // the default loader's; a custom WithLoader ignores them
+
 	standaloneRepos   bool
 	maxLoaded         int
 	loader            func(context.Context, string, ModelSpec) (Predictor, error)
 	loaderSet         bool
-	onnxDir           string
-	device            string
-	token             string
 	overrides         map[string]ModelSpec
 	defaultModel      string
 	autoTaskDetection bool

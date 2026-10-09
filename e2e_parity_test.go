@@ -194,7 +194,7 @@ func TestE2EParity(t *testing.T) {
 
 // e2eAgent builds the checkpoint's agent over the export at graph, as the
 // default loader does, with the backend wrapped so the test sees its output.
-func e2eAgent(t *testing.T, dir, graph string) (*teeBackend, *onnxAgent) {
+func e2eAgent(t *testing.T, dir, graph string) (*teeBackend, *Agent) {
 	t.Helper()
 	cfg, err := checkpoint.LoadConfig(dir)
 	if err != nil {
@@ -218,7 +218,7 @@ func e2eAgent(t *testing.T, dir, graph string) (*teeBackend, *onnxAgent) {
 		}
 	})
 	tee := &teeBackend{Backend: be}
-	a, err := newONNXAgent(tee, cfg, tok)
+	a, err := newAgent(tee, cfg, tok)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -325,7 +325,7 @@ func NewRouter(opts ...RouterOption) (*Router, error) {
 
 	loader := cfg.loader
 	if !cfg.loaderSet {
-		loader = newDefaultLoader(cfg).load
+		loader = newDefaultLoader(cfg.loaderSettings).load
 	}
 
 	return &Router{

@@ -4,42 +4,12 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/MeKo-Christian/go-laya/backend"
-	"github.com/MeKo-Christian/go-laya/internal/calib"
-	"github.com/MeKo-Christian/go-laya/internal/checkpoint"
 	"github.com/MeKo-Christian/go-laya/internal/prompt"
 	"github.com/MeKo-Christian/go-laya/question"
-	"github.com/MeKo-Christian/go-laya/tokenizer"
 )
 
 // modelName is the constant "model" of every result (agent.py:340).
 const modelName = "laya-rl-agent"
-
-// newONNXAgent reads what SystemOne needs from the checkpoint's config once:
-// the sequence budgets (agent.py:256-257) and the temperatures
-// (agent.py:194-195).
-func newONNXAgent(be backend.Backend, cfg *checkpoint.Config, tok *tokenizer.HF) (*onnxAgent, error) {
-	maxLen, err := cfg.MaxLen()
-	if err != nil {
-		return nil, fmt.Errorf("laya: %w", err)
-	}
-	headMaxLen, err := cfg.HeadMaxLen()
-	if err != nil {
-		return nil, fmt.Errorf("laya: %w", err)
-	}
-	byQType, byOptions, err := cfg.Temperatures()
-	if err != nil {
-		return nil, fmt.Errorf("laya: %w", err)
-	}
-	return &onnxAgent{
-		backend:    be,
-		cfg:        cfg,
-		tok:        tok,
-		maxLen:     maxLen,
-		headMaxLen: headMaxLen,
-		temps:      calib.Temperatures{ByQType: byQType, ByOptions: byOptions},
-	}, nil
-}
 
 // SystemOne answers every question about state in one forward pass: Python's
 // Agent.system_one (agent.py:240-343).
@@ -51,7 +21,7 @@ func newONNXAgent(be backend.Backend, cfg *checkpoint.Config, tok *tokenizer.HF)
 // It fails before running the model on an empty or invalid question set, a
 // state that cannot be serialized, a question with no options, or options
 // that do not all fit into max_len (*OptionBudgetError).
-func (a *onnxAgent) SystemOne(ctx context.Context, state any, qs Questions) (*Result, error) {
+func (a *Agent) SystemOne(ctx context.Context, state any, qs Questions) (*Result, error) {
 	if err := qs.Validate(); err != nil {
 		// Validate's errors already carry the "laya:" prefix.
 		return nil, fmt.Errorf("%w", err)
@@ -116,6 +86,6 @@ func (a *onnxAgent) SystemOne(ctx context.Context, state any, qs Questions) (*Re
 }
 
 // Predict is SystemOne under upstream's other name (agent.py:345).
-func (a *onnxAgent) Predict(ctx context.Context, state any, qs Questions) (*Result, error) {
+func (a *Agent) Predict(ctx context.Context, state any, qs Questions) (*Result, error) {
 	return a.SystemOne(ctx, state, qs)
 }

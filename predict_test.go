@@ -13,7 +13,7 @@ import (
 )
 
 // The loader's agent is what Router.Predict runs (Task 7.7.1).
-var _ Predictor = (*onnxAgent)(nil)
+var _ Predictor = (*Agent)(nil)
 
 // funcAgent is a Predictor whose SystemOne is a closure, for the cases stubAgent's
 // fixed payload cannot express: errors, a nil result, what reached it.

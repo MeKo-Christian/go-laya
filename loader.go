@@ -11,7 +11,6 @@ import (
 
 	"github.com/MeKo-Christian/go-laya/backend"
 	"github.com/MeKo-Christian/go-laya/internal/backend/onnx"
-	"github.com/MeKo-Christian/go-laya/internal/calib"
 	"github.com/MeKo-Christian/go-laya/internal/checkpoint"
 	"github.com/MeKo-Christian/go-laya/internal/hub"
 	"github.com/MeKo-Christian/go-laya/tokenizer"
@@ -41,7 +40,15 @@ type defaultLoader struct {
 	open     func(path string, opts onnx.Options) (backend.Backend, error)
 }
 
-func newDefaultLoader(cfg routerConfig) *defaultLoader {
+// loaderSettings configure the default loader. The Router's options set them
+// for every checkpoint it loads, Open's for the one it opens.
+type loaderSettings struct {
+	onnxDir string // "" is $LAYA_ONNX_DIR, else onnx/ under the laya cache
+	device  string
+	token   string // "" is $HF_TOKEN
+}
+
+func newDefaultLoader(cfg loaderSettings) *defaultLoader {
 	token := cfg.token
 	if token == "" {
 		token = os.Getenv("HF_TOKEN")
@@ -85,6 +92,18 @@ func envTrue(v string) bool {
 
 // load builds the agent for the checkpoint the router calls name.
 func (l *defaultLoader) load(ctx context.Context, name string, spec ModelSpec) (Predictor, error) {
+	a, err := l.build(ctx, spec, func() (string, error) { return l.graph(name) })
+	if err != nil {
+		// Not a typed nil: the Router stores whatever comes back.
+		return nil, err
+	}
+	return a, nil
+}
+
+// build loads the checkpoint spec locates and runs it on the export graph
+// names. graph is asked for only once the checkpoint has been read, so a bad
+// checkpoint is reported as such rather than as a missing export.
+func (l *defaultLoader) build(ctx context.Context, spec ModelSpec, graph func() (string, error)) (*Agent, error) {
 	dir, err := l.checkpointDir(ctx, spec)
 	if err != nil {
 		return nil, err
@@ -102,15 +121,15 @@ func (l *defaultLoader) load(ctx context.Context, name string, spec ModelSpec) (
 		return nil, fmt.Errorf("%w: %w", ErrIncompatibleCheckpoint, err)
 	}
 
-	graph, err := l.graph(name)
+	path, err := graph()
 	if err != nil {
 		return nil, err
 	}
-	be, err := l.open(graph, onnx.Options{Device: l.device, ActWidth: actWidth})
+	be, err := l.open(path, onnx.Options{Device: l.device, ActWidth: actWidth})
 	if err != nil {
 		return nil, err
 	}
-	a, err := newONNXAgent(be, cfg, tok)
+	a, err := newAgent(be, cfg, tok)
 	if err != nil {
 		_ = be.Close()
 		return nil, err
@@ -218,23 +237,4 @@ func (l *defaultLoader) graph(name string) (string, error) {
 			"LAYA_ONNX_DIR at an existing export)", ErrNoGraph, path, name, dir)
 	}
 	return path, nil
-}
-
-// onnxAgent is a loaded checkpoint: its runtime session, its config and its
-// tokenizer, plus the budgets and temperatures SystemOne reads from the config.
-type onnxAgent struct {
-	backend backend.Backend
-	cfg     *checkpoint.Config
-	tok     *tokenizer.HF
-
-	maxLen, headMaxLen int
-	temps              calib.Temperatures
-}
-
-// Close releases the runtime session.
-func (a *onnxAgent) Close() error {
-	if err := a.backend.Close(); err != nil {
-		return fmt.Errorf("laya: close agent: %w", err)
-	}
-	return nil
 }

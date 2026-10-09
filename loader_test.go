@@ -76,13 +76,13 @@ type openCall struct {
 // stubs: snapshot fails the test unless a case replaces it.
 func stubbedLoader(t *testing.T, onnxDir string, opts ...RouterOption) (*defaultLoader, *[]openCall, *closeCounter) {
 	t.Helper()
-	cfg := routerConfig{onnxDir: onnxDir}
+	cfg := routerConfig{loaderSettings: loaderSettings{onnxDir: onnxDir}}
 	for _, o := range opts {
 		if err := o(&cfg); err != nil {
 			t.Fatal(err)
 		}
 	}
-	l := newDefaultLoader(cfg)
+	l := newDefaultLoader(cfg.loaderSettings)
 	var calls []openCall
 	closer := &closeCounter{}
 	l.open = func(path string, o onnx.Options) (backend.Backend, error) {
@@ -306,18 +306,18 @@ func TestDefaultLoaderONNXDir(t *testing.T) {
 	t.Setenv("LAYA_CACHE", cache)
 
 	t.Setenv("LAYA_ONNX_DIR", "")
-	if got, err := newDefaultLoader(routerConfig{}).graphDir(); err != nil || got != filepath.Join(cache, "onnx") {
+	if got, err := newDefaultLoader(loaderSettings{}).graphDir(); err != nil || got != filepath.Join(cache, "onnx") {
 		t.Errorf("default graphDir = %q, %v; want %q", got, err, filepath.Join(cache, "onnx"))
 	}
 	t.Setenv("LAYA_ONNX_DIR", env)
-	if got, _ := newDefaultLoader(routerConfig{}).graphDir(); got != env {
+	if got, _ := newDefaultLoader(loaderSettings{}).graphDir(); got != env {
 		t.Errorf("graphDir with LAYA_ONNX_DIR = %q, want %q", got, env)
 	}
 	cfg := routerConfig{}
 	if err := WithONNXDir(opt)(&cfg); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := newDefaultLoader(cfg).graphDir(); got != opt {
+	if got, _ := newDefaultLoader(cfg.loaderSettings).graphDir(); got != opt {
 		t.Errorf("graphDir with WithONNXDir = %q, want %q", got, opt)
 	}
 }
@@ -359,9 +359,9 @@ func TestDefaultLoaderReal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	oa, ok := a.(*onnxAgent)
+	oa, ok := a.(*Agent)
 	if !ok {
-		t.Fatalf("Load returned %T, want *onnxAgent", a)
+		t.Fatalf("Load returned %T, want *Agent", a)
 	}
 	if w, _ := oa.cfg.ActWidth(); w < 1 {
 		t.Errorf("ActWidth = %d", w)
