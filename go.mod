@@ -2,6 +2,8 @@ module github.com/MeKo-Christian/go-laya
 
 go 1.26.0
 
+toolchain go1.26.9
+
 require github.com/shota3506/onnxruntime-purego v0.0.0-20260315223538-8db8bd7424b2
 
 require google.golang.org/protobuf v1.36.12
