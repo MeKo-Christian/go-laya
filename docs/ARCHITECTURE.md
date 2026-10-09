@@ -231,10 +231,13 @@ version `1.M.P` with M ≥ 23 (D20).
 
 ## 6. Downloads and trust
 
-The default loader downloads a checkpoint's config and tokenizer, and the planned
-`laya.Open("someone/their-model")` (PLAN Task 7.3) will do the same for any repo, so the download
-layer verifies everything before use (R7). The graph itself is never downloaded: it is a local
-export, `laya-<name>.onnx` in `WithONNXDir`, `$LAYA_ONNX_DIR` or `<cache>/onnx` (D24).
+The default loader downloads a checkpoint's config and tokenizer, and
+`laya.Open(ctx, "someone/their-model")` (Task 7.7.5) runs the same loader for any repo, so the
+download layer verifies everything before use (R7). The graph itself is never downloaded: it is a
+local export (D24). The Router looks for `laya-<name>.onnx` in `WithONNXDir`, `$LAYA_ONNX_DIR` or
+`<cache>/onnx`. `Open` has no `WithONNXDir`: it takes the file from `WithGraph`, or looks for the
+same name in `$LAYA_ONNX_DIR` or `<cache>/onnx` when the repo and subfolder locate a registered
+checkpoint, and is `ErrNoGraph` otherwise.
 
 - **`internal/hub`**: HEAD then GET on `/{repo}/resolve/{rev}/{path}`. Redirects are followed by
   hand, so the token goes only to the Hub's host. The first hop's `X-Linked-Etag` is the git blob
