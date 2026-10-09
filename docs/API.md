@@ -414,6 +414,8 @@ var (
 	ErrNoGraph                 = errors.New("laya: no ONNX export for the checkpoint") // D24; the message names the export command
 	ErrNoLoader                = errors.New("laya: no agent loader configured")    // only after WithLoader(nil)
 	ErrIncompatibleCheckpoint  = backend.ErrIncompatibleCheckpoint // defined in the leaf so a Backend can wrap it
+	ErrUnsupportedPlatform     = onnx.ErrUnsupportedPlatform // off D21's platform list; re-exported from internal/backend/onnx
+	ErrUnknownDevice           = onnx.ErrUnknownDevice       // e.g. "mps"; re-exported from internal/backend/onnx
 	ErrOptionsExceedHeadBudget = errors.New("laya: question options exceed head_max_len")
 	ErrEmptyQuestions          = errors.New("laya: no questions")          // Python: TypeError from collate_items returning None
 	ErrDuplicateQuestionID     = errors.New("laya: duplicate question id") // Python: impossible in a dict

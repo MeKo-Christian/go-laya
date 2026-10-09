@@ -151,7 +151,7 @@ func WithLoader(fn func(context.Context, string, ModelSpec) (Predictor, error)) 
 // on: "cpu", "cuda", "cuda:N", "coreml", or "" / "auto" for the best one the
 // ONNX Runtime library offers (router.py:158). An unusable device falls back
 // to the CPU with a warning, and a name that is no device fails the load with
-// the backend's ErrUnknownDevice. A custom WithLoader ignores it.
+// ErrUnknownDevice. A custom WithLoader ignores it.
 func WithRouterDevice(d string) RouterOption {
 	return func(c *routerConfig) error {
 		c.device = d
