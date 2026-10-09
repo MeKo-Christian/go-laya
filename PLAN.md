@@ -41,7 +41,7 @@ box under it is ticked.
 | [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done                                  |
 | [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                                  |
 | [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | 🟡 7.1–7.5 done bar 7.2.5; 7.7 bar 7.7.7 |
-| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | ⬜ open                                  |
+| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | 🟡 B.1, B.6 done                         |
 | [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred                              |
 
 **Critical path to 1.0:** M7 (loader → `SystemOne` → answer parity → e2e parity → README). The
@@ -538,10 +538,23 @@ Done:
 Take these in any order once M7's parity is green, except B.5, which needs `SystemOne` to produce
 the ECE/Brier inputs.
 
-- [ ] **B.1** Stream the tokenizer's 34 MB decode. `Open` on multilingual costs 0.6–1.2 s,
+- [x] **B.1** Stream the tokenizer's 34 MB decode. `Open` on multilingual costs 0.6–1.2 s,
       207 MB and 1.54 M allocations, against a < 1 s cold budget. `encoding/json` over 256 000
       vocab entries and 580 604 merges is the whole cost. This is a contained follow-up, not a
       redesign.
+      (2026-10-09) `model.vocab` and `model.merges` stay raw, and `tokenizer/decode.go` scans
+      them once, resolving every merge to ids from the bytes. encoding/json still validates the
+      document, decodes every non-plain string, and handles a repeated or case-variant key. The old
+      decode is kept only as the oracle in `decode_test.go`. `TestDecodeMatchesEncodingJSON` gives
+      identical tables on both mini fixtures and on english, multilingual and typed-decisions
+      (`LAYA_MODELS`). `TestDecodeEdgeCases` passes, and `FuzzDecodeVocabMerges` ran 60 s with no
+      failures. Three mutations each fail a test: raw bytes for escapes, later rank wins, and
+      first-wins vocab. `just diff-tokenizer` is unchanged: en has 85 lines, all in the NFC
+      normalize class (B.2), and ml has 0. Fresh-process `BenchmarkOpen` on multilingual measured
+      0.42–0.47 s, 110 MB and 295 k allocs, against 0.51–0.53 s, 207 MB and 1.54 M before. On
+      english it measured 34–63 ms and 11.6 MB, against 57 ms and 19.6 MB before. The numbers are
+      in `BENCHMARKS.md`. The time that remains is mostly encoding/json's validation pass and map
+      lookups, not allocation.
 - [ ] **B.2** Decide on NFC combining classes, **in this file, before writing code**. The choice
       is between reproducing `tokenizers` 0.23.2's stale Rust tables (108 codepoints act as
       starters; isolating each occurrence reproduces the Rust result in ~40 lines plus a generated
@@ -568,8 +581,15 @@ the ECE/Brier inputs.
         follow-up (R4).
   - [ ] **B.5.4** **int8 is never the default.** Ship it, if at all, as an explicit opt-in whose
         documentation carries B.5.3's numbers.
-- [ ] **B.6** Lint the workflows, TOML and YAML. `actionlint` would earn its place, because
+- [x] **B.6** Lint the workflows, TOML and YAML. `actionlint` would earn its place, because
       `ci.yml` is hand-edited on every formatter pin. Add it to `just ci` deliberately.
+      (2026-10-09) `just lint-config` runs actionlint (with shellcheck over the `run:` blocks),
+      `taplo lint` and `yamllint -s` over git-tracked files only, which keeps `original/` out. It
+      is part of `just ci`, and a pinned `config` job runs it in CI. `.yamllint.yml` turns off only
+      the rules prettier already settles. yamllint is Python, which the user approved for linters;
+      AGENTS.md says so. Each tool fails its own seeded defect, and each defect was reverted: a
+      duplicate key in `.golangci.yml` fails yamllint, `${{ matrix.oss }}` in `ci.yml` fails
+      actionlint, and a broken table header in `treefmt.toml` fails taplo. The clean tree passes.
 
 ### M8 — Pure-Go native backend (after 1.0)
 
