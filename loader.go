@@ -140,11 +140,42 @@ func (l *defaultLoader) build(ctx context.Context, spec ModelSpec, graph func() 
 // backend (WithBackend). Unlike build it never closes be: on failure the
 // caller still owns it.
 func (l *defaultLoader) buildOn(ctx context.Context, spec ModelSpec, be backend.Backend) (*Agent, error) {
-	cfg, tok, _, err := l.readCheckpoint(ctx, spec)
+	cfg, tok, actWidth, err := l.readCheckpoint(ctx, spec)
 	if err != nil {
 		return nil, err
 	}
-	return newAgent(be, cfg, tok)
+	return newAgent(shapeChecked{be, actWidth}, cfg, tok)
+}
+
+// shapeChecked holds a caller's backend to the output shapes the ONNX backend
+// enforces on itself: per row, one logit per marker column and the config's
+// act width. A wrong width would otherwise answer plausibly, an act
+// probability of 1 from a row one wide, where it should fail.
+type shapeChecked struct {
+	backend.Backend
+	actWidth int
+}
+
+func (b shapeChecked) Forward(ctx context.Context, in backend.Batch) (logits, act [][]float32, err error) {
+	logits, act, err = b.Backend.Forward(ctx, in)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(logits) != len(in.MarkerPos) || len(act) != len(in.MarkerPos) {
+		return nil, nil, fmt.Errorf("%w: %d logit rows and %d act rows for %d in the batch",
+			ErrIncompatibleCheckpoint, len(logits), len(act), len(in.MarkerPos))
+	}
+	for r := range logits {
+		if kmax := len(in.MarkerPos[r]); len(logits[r]) != kmax {
+			return nil, nil, fmt.Errorf("%w: row %d has %d logits, %d marker columns",
+				ErrIncompatibleCheckpoint, r, len(logits[r]), kmax)
+		}
+		if len(act[r]) != b.actWidth {
+			return nil, nil, fmt.Errorf("%w: row %d has %d act logits, the config's act head %d",
+				ErrIncompatibleCheckpoint, r, len(act[r]), b.actWidth)
+		}
+	}
+	return logits, act, nil
 }
 
 // readCheckpoint reads the config and the tokenizer of the checkpoint spec

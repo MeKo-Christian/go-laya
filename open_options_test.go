@@ -385,3 +385,55 @@ func TestOpenWithBackendKeepsDownloadOptions(t *testing.T) {
 		t.Errorf("limits = %d, %d; want 64, 32", a.MaxLen(), a.HeadMaxLen())
 	}
 }
+
+// shapedBackend answers every row with logits and act rows of fixed widths,
+// as a caller's runtime might get them wrong.
+type shapedBackend struct{ logits, act int }
+
+func (b shapedBackend) Forward(_ context.Context, in backend.Batch) (logits, act [][]float32, err error) {
+	for range in.QType {
+		logits = append(logits, make([]float32, b.logits))
+		act = append(act, make([]float32, b.act))
+	}
+	return logits, act, nil
+}
+
+func (shapedBackend) Close() error { return nil }
+
+// Task 7.7.7: the ONNX backend holds its outputs to kmax and the config's act
+// width, so Open holds a WithBackend runtime to the same contract. A wrong act
+// width would otherwise give a plausible ActProbability, 1.0 for a row one
+// wide.
+func TestOpenWithBackendOutputWidths(t *testing.T) {
+	root := t.TempDir()
+	writeCheckpoint(t, root) // act_costs has two entries: act width 3
+	t.Setenv("LAYA_ONNX_DIR", t.TempDir())
+	qs := Questions{{ID: "q", Q: NoulQuestion{Ins: "Is it?"}}} // two markers: kmax 2
+
+	for _, c := range []struct {
+		name        string
+		logits, act int
+		ok          bool
+	}{
+		{"matching", 2, 3, true},
+		{"act one wide", 2, 1, false},
+		{"act too wide", 2, 4, false},
+		{"logits wider than kmax", 3, 3, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			open, _ := stubOpen(t, root)
+			a, err := open(context.Background(), "", WithBackend(shapedBackend{c.logits, c.act}))
+			if err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+			defer a.Close()
+			_, err = a.SystemOne(context.Background(), "hello", qs)
+			switch {
+			case c.ok && err != nil:
+				t.Fatalf("SystemOne = %v, want an answer", err)
+			case !c.ok && !errors.Is(err, ErrIncompatibleCheckpoint):
+				t.Fatalf("SystemOne = %v, want ErrIncompatibleCheckpoint", err)
+			}
+		})
+	}
+}
