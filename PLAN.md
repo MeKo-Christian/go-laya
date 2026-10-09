@@ -30,19 +30,19 @@ finished tasks cited in code comments refer to that history.
 Tick a box only when the work is committed and `just ci` is green. A milestone is done when every
 box under it is ticked.
 
-| Milestone                                                       | Delivers                                                | Status                                   |
-| --------------------------------------------------------------- | ------------------------------------------------------- | ---------------------------------------- |
-| [M0 — Scaffolding](#m0--scaffolding)                            | Go module, tooling, CI, frozen Python, `Version`        | ✅ done                                  |
-| [Spikes S1–S3](#3-spikes)                                       | ONNX export, binding choice, latency floor              | ✅ done                                  |
-| [M1 — Reference harness](#m1--the-python-reference-harness)     | `testdata/*.jsonl` golden vectors                       | ✅ done                                  |
-| [M2 — Tier-1 core](#m2--tier-1-core)                            | `jsonx`, `lang`, `mailtext`, `presets`, render          | ✅ done                                  |
-| [M3 — Router](#m3--router)                                      | `Route`, model registry, LRU                            | ✅ done                                  |
-| [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done                                  |
-| [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done                                  |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                                  |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | 🟡 7.1–7.5 done bar 7.2.5; 7.7 bar 7.7.7 |
-| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | 🟡 B.1, B.6–B.8 done                     |
-| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred                              |
+| Milestone                                                       | Delivers                                                | Status                                                         |
+| --------------------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------- |
+| [M0 — Scaffolding](#m0--scaffolding)                            | Go module, tooling, CI, frozen Python, `Version`        | ✅ done                                                        |
+| [Spikes S1–S3](#3-spikes)                                       | ONNX export, binding choice, latency floor              | ✅ done                                                        |
+| [M1 — Reference harness](#m1--the-python-reference-harness)     | `testdata/*.jsonl` golden vectors                       | ✅ done                                                        |
+| [M2 — Tier-1 core](#m2--tier-1-core)                            | `jsonx`, `lang`, `mailtext`, `presets`, render          | ✅ done                                                        |
+| [M3 — Router](#m3--router)                                      | `Route`, model registry, LRU                            | ✅ done                                                        |
+| [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done                                                        |
+| [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done                                                        |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                                                        |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | 🟡 7.1–7.5 done bar 7.2.5; 7.6 bar 7.6.3, 7.6.5; 7.7 bar 7.7.7 |
+| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | 🟡 B.1, B.6–B.8 done                                           |
+| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred                                                    |
 
 **Critical path to 1.0:** M7 (loader → `SystemOne` → answer parity → e2e parity → README). The
 Backlog and M8 do not gate 1.0.
@@ -444,12 +444,25 @@ Done:
 the same. Every code example becomes Go, the latency figures come from `BENCHMARKS.md`, and the
 Python-only parts (pip, fine-tuning) are dropped or linked.
 
-- [ ] **7.6.1** Port every README example to Go as compiling `Example` functions, so CI proves
+- [x] **7.6.1** Port every README example to Go as compiling `Example` functions, so CI proves
       they build (§8). The single-model examples have a target since 7.7.5 (`Open`,
-      `Agent.Predict`).
-- [ ] **7.6.2** Fix the image URLs. Upstream's point at
+      `Agent.Predict`). (2026-10-09) `example_test.go` (package `laya_test`) holds eight
+      Examples, one per README block: `Router`, `Router_Route`, `Router_Preload`,
+      `Router_Attach`, `Open`, `Answer_confidence`, `Agent_presets`, `Agent_SetLimits`. Every
+      Go line in the README occurs in that file. Only `ExampleRouter_Route` has an `Output`,
+      because it routes without weights; `testableexamples` is off for this file alone.
+      `go vet . && go test -count=1 -run '^Example' -v .` passes `ExampleRouter_Route`;
+      renaming `SetLimits` to `SetLimit` in an example fails `go vet` (`agent.SetLimit
+    undefined`). A temporary, uncommitted test ran all seven weight-bound Examples against the
+      local exports (`LAYA_ONNX_DIR`, hardlinked) and the pinned Hub config. They passed in
+      43.9 s, with `billing` on both routes, `english` then `multilingual`, and upstream's
+      devanagari reason. §8's "compiles and runs" stays open: CI only compiles them.
+- [x] **7.6.2** Fix the image URLs. Upstream's point at
       `raw.githubusercontent.com/NandhaKishorM/laya/main/...`, so a fork's README renders
-      upstream's assets.
+      upstream's assets. (2026-10-09) All four images are relative `assets/` paths.
+      `grep -c 'raw.githubusercontent.com/NandhaKishorM' README.md` gives 0, and each of
+      `logo-lockup.png`, `logo-lockup-dark.png`, `laya_vs_jev_full.png` and
+      `laya_benchmark.png` exists under `assets/`.
 - [ ] **7.6.3** Document the deliberate deviations: `repo` is always a string (3.1.4);
       `instructions` is `string` only; the pinned default revision (D17); the graph is a local
       export and only the config and tokenizer are downloaded (D24); no ONNX backend off D21's platform list
@@ -461,14 +474,26 @@ Python-only parts (pip, fine-tuning) are dropped or linked.
       `td_lambda_targets` (D3), `ece_score` (internal `calib.ECE`), `load` (→ `Open`), `RLAgent`
       (no alias), `QTYPES`/`QTYPE_NAMES` (→ `QType`), `detect_language` (→ `lang.Analyse`), and
       `confidence_from_probs` and `render_options` (internal).
-- [ ] **7.6.4** Replace the README's T4 latency claims ("33 ms", seven times) with the S3 numbers
-      already in `BENCHMARKS.md`.
+- [x] **7.6.4** Replace the README's T4 latency claims ("33 ms", seven times) with the S3 numbers
+      already in `BENCHMARKS.md`. (2026-10-09) The T4 speed table is now "Speed, CPU, measured
+      here", with the one-question and batching tables copied row for row from `BENCHMARKS.md`
+      (each row diffed against it). The preload table and the Jev latency row use the CPU
+      figures. `grep -nE '33 ?ms|35 ?ms|39\.5|32\.8' README.md` leaves two lines, both
+      labelled as upstream's T4 run and not measured here.
 - [ ] **7.6.5** State the tokenizer and checkpoint revisions the port is verified against.
-- [ ] **7.6.6** State the **measured** CPU latency and that batching does not amortise it. Never
-      describe the port as "CPU-first".
-- [ ] **7.6.7** Document the runtime: `go run ./cmd/laya-ort` downloads the pinned ORT 1.23.0,
+- [x] **7.6.6** State the **measured** CPU latency and that batching does not amortise it. Never
+      describe the port as "CPU-first". (2026-10-09) The intro gives 160 ms (`laya-multilingual`,
+      128 tokens) to 1.7 s (`laya`, 512). "Speed" states that batching does not amortise on CPU,
+      that this is a batch and background workload, and that `cuda` falls back to CPU.
+      "Honest limits" adds that latency is seconds on both ModernBERT-large checkpoints.
+      `grep -ci 'cpu-first' README.md` gives 0.
+- [x] **7.6.7** Document the runtime: `go run ./cmd/laya-ort` downloads the pinned ORT 1.23.0,
       `LAYA_ORT_LIB` brings your own, and `Open` accepts any 1.x from 1.23 (D20), though
-      everything was measured on 1.23.0.
+      everything was measured on 1.23.0. (2026-10-09) README "Installation" covers each of
+      those, checked against `cmd/laya-ort/main.go`, `internal/ortlib.Version` and
+      `internal/backend/onnx/resolve.go`. It adds `ORT_LIBRARY_PATH`, `ErrRuntimeVersion` and
+      the local export (`scripts/export_onnx.py`, whose default `--suffix ""` writes
+      `laya-<name>.onnx`) with its lookup order. The full deviation list stays 7.6.3's.
 
 **Task 7.7: `Router.Predict` / `Router.SystemOne`.** `router.py:293-311`: route, load, run
 `system_one`, then add the decision under a `routing` key.
