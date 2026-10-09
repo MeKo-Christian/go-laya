@@ -777,9 +777,9 @@ The dynamic-typing decisions:
 
 - [x] `just check` green; `go test ./... -race` green on linux/amd64 and darwin/arm64.
       (2026-10-10) `just check` on `main` (`3f66ab0`) passes, with golangci-lint at "0 issues.".
-      CI's `tests` matrix runs `go test -race -count=1 ./...` on both. On `3f66ab0`, `tests
-  (macos-latest)` ran on the image `macos-26-arm64` and `tests (ubuntu-latest)` on
-      `ubuntu-24.04` with the `linux-x64` Go. Both succeeded, each with 17 `ok` packages.
+      CI's `tests` matrix runs `go test -race -count=1 ./...` on both. On `3f66ab0`, the macOS
+      job ran on the image `macos-26-arm64` and the Ubuntu job on `ubuntu-24.04` with the
+      `linux-x64` Go. Both succeeded, each with 17 `ok` packages.
 - [x] Both tokenizer golden corpora 100 % id- and token-identical to Python: 206 subtests
       (103 cases × 2 checkpoints, bare and with a leading space). This is a local gate
       (`LAYA_MODELS`). CI covers the stages via `testdata/pretok_{en,ml}.jsonl`.
