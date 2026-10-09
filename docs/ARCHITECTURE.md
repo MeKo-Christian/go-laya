@@ -79,7 +79,8 @@ is always looser than `logits` in every parity measurement.
 
 ```
 go-laya/
-  laya.go        Predictor interface (SystemOne, Close; D13, D28), Version; planned: a public Open (7.7.5)
+  laya.go        Predictor interface (SystemOne, Close; D13, D28), Version
+  agent.go       Agent (D28), Open and its options, SetLimits
   answer.go      Result, Answer, Probs, AnswerSet and their Python-byte JSON; formatAnswer
   systemone.go   SystemOne: validate, BuildSequence, Collate, one Forward, formatAnswer
   question.go    type aliases re-exporting question/ (D11)
