@@ -52,11 +52,14 @@ var readmeExamples = []struct {
 // 8, "Every README example compiles and runs"). CI only compiles them, so this
 // is a local gate, like the tokenizer corpora.
 //
-// Gated: it skips under -short and without $LAYA_ONNX_DIR, a directory holding
-// the exports of all three checkpoints (laya-<name>.onnx, or the -dynamo ones
-// scripts/export_onnx.py --dynamo writes). It also needs ONNX Runtime and
-// network: the Examples open the Hub repo by name, so the config and the
-// tokenizer come from the Hub at the pinned revision, or from the laya cache.
+// Gated: it skips under -short, without $LAYA_MODELS and without
+// $LAYA_ONNX_DIR, a directory holding the exports of all three checkpoints
+// (laya-<name>.onnx, or the -dynamo ones scripts/export_onnx.py --dynamo
+// writes). $LAYA_MODELS is the opt-in AGENTS.md names for weight-bound tests;
+// the Examples do not read it, but $LAYA_ONNX_DIR alone is a library setting a
+// shell may export for other reasons. It also needs ONNX Runtime and network:
+// the Examples open the Hub repo by name, so the config and the tokenizer come
+// from the Hub at the pinned revision, or from the laya cache.
 //
 // Each Example runs in a child process of this test binary. The Examples end
 // on log.Fatal and log.Panic as the README does, and an os.Exit cannot be
@@ -69,6 +72,9 @@ func TestREADMEExamples(t *testing.T) {
 	if name := os.Getenv(exampleEnv); name != "" {
 		runExampleChild(t, name)
 		return
+	}
+	if os.Getenv("LAYA_MODELS") == "" {
+		t.Skip("weight-bound tests are not opted in (set LAYA_MODELS)")
 	}
 	exports := os.Getenv("LAYA_ONNX_DIR")
 	if exports == "" {
