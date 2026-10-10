@@ -2,6 +2,7 @@ package modernbert
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -202,33 +203,93 @@ func goRejects(t *testing.T, c configCase) string {
 // goRejects says so, an error. The records cover the derivation from
 // global_attn_every_n_layers, explicit layer_types, each theta fallback, null
 // against a missing key, case-folded keys and the RoPE settings Go refuses.
+//
+// The case list is fixed, and so is each case's outcome: a regenerated
+// fixture that dropped cfg_case_folded_key or a theta fallback, or in which
+// transformers began to accept a config it raised on, would otherwise still
+// pass as long as each outcome kept one case.
 func TestConfigMatchesTransformers(t *testing.T) {
+	const (
+		same    = "same plan"
+		raises  = "transformers raises"
+		refuses = "go refuses"
+	)
+	wantOutcome := map[string]string{
+		"cfg_empty":                    same,
+		"cfg_every_third":              same,
+		"cfg_every_second":             same,
+		"cfg_every_layer":              same,
+		"cfg_every_zero":               raises,
+		"cfg_every_null":               raises,
+		"cfg_explicit":                 same,
+		"cfg_explicit_empty":           raises,
+		"cfg_count":                    raises,
+		"cfg_unknown_type":             raises,
+		"cfg_zero_layers":              raises,
+		"cfg_negative_layers":          raises,
+		"cfg_legacy_thetas":            same,
+		"cfg_partial_rope_parameters":  same,
+		"cfg_theta_missing_from_entry": same,
+		"cfg_no_rope_type":             same,
+		"cfg_rope_theta_ignored":       same,
+		"cfg_nulls":                    same,
+		"cfg_unused_nulls":             same,
+		"cfg_null_legacy_theta":        refuses,
+		"cfg_null_theta":               refuses,
+		"cfg_null_entry":               raises,
+		"cfg_null_layers":              raises,
+		"cfg_null_heads":               raises,
+		"cfg_null_hidden":              raises,
+		"cfg_null_window":              raises,
+		"cfg_theta_zero":               refuses,
+		"cfg_negative_window":          refuses,
+		"cfg_yarn":                     raises,
+		"cfg_linear":                   refuses,
+		"cfg_legacy_type":              refuses,
+		"cfg_legacy_type_default":      same,
+		"cfg_empty_rope_type":          refuses,
+		"cfg_rope_scaling":             refuses,
+		"cfg_rope_scaling_null":        same,
+		"cfg_head_dim_other":           refuses,
+		"cfg_head_dim_same":            same,
+		"cfg_head_dim_null":            same,
+		"cfg_case_folded_key":          same,
+	}
+
 	raws := casesOf(t, loadOps(t), "config")
 	outcomes := map[string]int{}
+	names := make([]string, 0, len(raws))
 	for _, raw := range raws {
 		var c configCase
 		if err := json.Unmarshal(raw, &c); err != nil {
 			t.Fatalf("decode a config case: %v", err)
 		}
+		names = append(names, c.Name)
 		t.Run(c.Name, func(t *testing.T) {
 			cfg, err := ParseConfig(c.Config)
 			var got []LayerType
 			if err == nil {
 				got, err = cfg.Layers()
 			}
-			if reason := goRejects(t, c); reason != "" {
-				if c.Error != nil {
-					outcomes["transformers raises"]++
-				} else {
-					outcomes["go refuses"]++
-				}
+			reason := goRejects(t, c)
+			outcome := same
+			switch {
+			case reason != "" && c.Error != nil:
+				outcome = raises
+			case reason != "":
+				outcome = refuses
+			}
+			outcomes[outcome]++
+			if want := wantOutcome[c.Name]; outcome != want {
+				t.Errorf("outcome %q, want %q", outcome, want)
+			}
+			if reason != "" {
 				if err == nil {
 					t.Fatalf("%s: want an error (%s), got %+v", c.Config, reason, got)
 				}
 				t.Logf("%s: %v", reason, err)
 				return
 			}
-			outcomes["same plan"]++
 			if err != nil {
 				t.Fatalf("%s: %v; transformers resolves %v", c.Config, err, c.LayerTypes)
 			}
@@ -251,10 +312,18 @@ func TestConfigMatchesTransformers(t *testing.T) {
 			}
 		})
 	}
-	for _, o := range []string{"same plan", "transformers raises", "go refuses"} {
-		if outcomes[o] == 0 {
-			t.Errorf("no config case where %s; the records must cover all three outcomes", o)
+	for _, name := range slices.Sorted(maps.Keys(wantOutcome)) {
+		if !slices.Contains(names, name) {
+			t.Errorf("config case %s is missing from the fixture", name)
 		}
+	}
+	for _, name := range names {
+		if _, ok := wantOutcome[name]; !ok {
+			t.Errorf("config case %s is not pinned in wantOutcome", name)
+		}
+	}
+	if len(names) != len(wantOutcome) {
+		t.Errorf("%d config cases, want %d", len(names), len(wantOutcome))
 	}
 	t.Logf("%d config cases: %v", len(raws), outcomes)
 }
