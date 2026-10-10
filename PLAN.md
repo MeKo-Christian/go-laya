@@ -697,9 +697,19 @@ safetensors, lifting `tensor`, `ops` and `safetensors` from `../go-pocket-tts`. 
 zero-shared-library backend, not a speed play (D8). The facts it needs are in
 `docs/ARCHITECTURE.md` §1.
 
-- [ ] **8.1** Lift `internal/runtime/tensor` and `internal/runtime/ops` from `../go-pocket-tts`, and
+- [x] **8.1** Lift `internal/runtime/tensor` and `internal/runtime/ops` from `../go-pocket-tts`, and
       reconcile with the existing `internal/safetensors` header validator. go-pocket-tts has no
       `LICENSE`, so record the provenance in `NOTICE`.
+      (2026-10-10) Lifted from go-pocket-tts `fa68a5fc` with the amd64/arm64 assembly. The 1-D
+      convolutions are dropped; `conv_runtime.go`'s worker loop and scratch pool stay as
+      `ops/runtime.go`, because attention uses them. Beyond import paths, the conv removal and
+      lint changes, the lift carries the review's robustness fixes: shape products are checked for
+      overflow, `Linear` and `RoPE` accept zero-sized operands instead of dividing by zero,
+      `Narrow` bounds its range without overflowing, and the approximate test helpers reject NaN.
+      All 62 tests (53 lifted, 9 in the new `robustness_test.go` files) pass on amd64, on arm64
+      under `qemu-aarch64-static` and on 386 (the pure-Go fallback). `ReadHeader` stays the only
+      header parser, and F16/BF16 decoding builds on it in 8.7 (`tensor/doc.go`). `NOTICE`
+      records the provenance and the fixes.
 - [ ] **8.2** Bias-free LayerNorm (eps 1e-5; layer 0 has no `attn_norm`).
 - [ ] **8.3** GeGLU with the fused `mlp.Wi [5248,1024]` gate+up split, no MLP bias.
 - [ ] **8.4** Fused QKV unpacking (`attn.Wqkv [3072,1024]`, no attention bias).

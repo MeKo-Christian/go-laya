@@ -42,6 +42,50 @@ Statement of modification
    not reproduced. Both sets are enumerated in `docs/INVARIANTS.md` and
    `PLAN.md`.
 
+Code lifted from go-pocket-tts
+------------------------------
+
+The native backend's tensor runtime under `internal/runtime/` is lifted from:
+
+    go-pocket-tts - pure-Go PocketTTS inference
+    module github.com/cwbudde/go-pocket-tts
+    commit fa68a5fc6cb02e0a9fc0fd62c573419b3ae0b449
+
+go-pocket-tts is the copyright holder's own repository. It has no LICENSE
+file, so this section is the record of where the code came from.
+
+1. `internal/runtime/tensor` is lifted whole into `internal/runtime/tensor`:
+   the tensor type, the shape and NN operations, the dot, axpy and GEMM
+   kernels -- with Plan 9 assembly for dot and axpy on amd64 and for all
+   three on arm64 -- the pure-Go fallbacks and the tests.
+
+2. `internal/runtime/ops` is lifted into `internal/runtime/ops`: attention,
+   MLP, RoPE, the kernel tolerance table and their tests and benchmarks.
+
+3. Dropped: the 1-D convolutions -- `conv1d.go`, `convtranspose1d.go` and
+   their tests; the `conv1d` and `convtranspose1d` tolerance entries and
+   their keys in `TestKernelTolerance`; the conv benchmarks and
+   `BenchmarkFrameDecodeThroughput`, which runs a transposed conv -- and,
+   from `conv_runtime.go`, the conv worker setting (`SetConvWorkers`,
+   `convWorkers`, `getConvWorkers`) and its test. `PERFORMANCE.md` is left
+   out, because it is about the TTS model's kernels.
+
+4. Modified: the import paths. `conv_runtime.go` is renamed `runtime.go`
+   and keeps only the worker loop and scratch-buffer pool the attention
+   kernels use; the pool's comment no longer names the conv paths. The
+   test helper `randDataT` moves from `conv1d_test.go` to
+   `test_helpers_test.go`. A package comment is added in `doc.go`. Lint
+   fixes for this repository's configuration: `nolint` directives for
+   `gocognit` on four kernels and for `cyclop` on two of them,
+   `slices.Backward` in `computeStrides`, and an unused `nolint:funlen`
+   removed from `Concat`. Robustness fixes from review: `shapeElemCount`
+   checks for overflow before each multiplication; `Linear` takes its row
+   count from the shape and `RoPE` returns an empty input unchanged, so
+   zero-sized operands no longer divide by zero; `Narrow` bounds `start`
+   before comparing `length` with what is left; and the approximate
+   comparison test helpers reject NaN. Their tests are in the new
+   `robustness_test.go` in each package.
+
 Model weights
 -------------
 
