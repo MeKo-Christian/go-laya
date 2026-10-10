@@ -14,14 +14,13 @@ func shapeElemCount(shape []int64) (int, error) {
 			return 0, fmt.Errorf("tensor: shape %v has negative dimension at %d", shape, i)
 		}
 
-		total *= d
-		if total > math.MaxInt32 && total > math.MaxInt64/2 {
-			return 0, fmt.Errorf("tensor: shape %v too large", shape)
+		// Check before multiplying: a wrapped product can be 0 or negative,
+		// and would pass any check made afterwards.
+		if d != 0 && total > math.MaxInt/d {
+			return 0, fmt.Errorf("tensor: shape %v exceeds platform int size", shape)
 		}
-	}
 
-	if total > int64(^uint(0)>>1) {
-		return 0, fmt.Errorf("tensor: shape %v exceeds platform int size", shape)
+		total *= d
 	}
 
 	return int(total), nil
