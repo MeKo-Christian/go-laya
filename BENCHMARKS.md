@@ -1,25 +1,29 @@
 # Laya benchmarks
 
-Every checkpoint answered **byte-identical questions** in each run (fixed seed). Jev figures are **third-party published, never measured here** — no TypeSafe API access — so sample sizes and prompts differ; treat them as indicative.
+Two kinds of numbers live here, and they have different standing.
 
-| run          | what                                                                                                                       | where                                         |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| T4 Colab     | typed-decisions, MASSIVE (14 langs), XNLI (15 langs), English suites, latency, option-order robustness, calibration repair | `research/results/t4_colab_benchmark.json`    |
-| CPU sweep    | MASSIVE intent across **all 51 languages**, typed-decisions on all three checkpoints                                       | `research/results/cpu_51_language_sweep.json` |
-| Applications | the six workflow themes + the datasets where Jev numbers exist, all three checkpoints                                      | `research/results/app_benchmark.json`         |
+- **Latency and load costs are measured here**, on CPU, by this port, with their hardware, method
+  and raw transcripts: [Speed — CPU, measured here](#speed--cpu-measured-here).
+- **Accuracy, calibration and option-order figures are upstream's**, copied from upstream's
+  `BENCHMARKS.md` at 0.3.4 and not re-measured. That is commit `d113dca`, the one `NOTICE` pins
+  (`git show d113dca:BENCHMARKS.md`). Upstream ran them with the Python package and never published
+  the raw results, so they cannot be reproduced from either repository. In those runs every
+  checkpoint answered **byte-identical questions** (fixed seed).
+
+Jev figures are **third-party published, measured neither here nor by upstream** (no TypeSafe API
+access), so sample sizes and prompts differ; treat them as indicative.
 
 ---
 
 ## Headline
 
-|                                                              | Laya        | Jev (published) |
-| ------------------------------------------------------------ | ----------- | --------------- |
-| typed-decisions (2,000 decisions)                            | **0.766**   | 0.727           |
-| AG News (4 labels)                                           | **0.953**   | 0.910           |
-| DAIR Emotion (6 labels)                                      | **0.600**   | 0.480           |
-| ECE after temperature fitting                                | **0.081**   | 0.246           |
-| p50 latency, 1 question — T4 _(upstream, not measured here)_ | **32.8 ms** | 236-276 ms      |
-| p50 latency, 1 question — CPU _(measured here, 512 tokens)_  | 0.63–1.9 s  | —               |
+|                                                             | Laya       | Jev (published) |
+| ----------------------------------------------------------- | ---------- | --------------- |
+| typed-decisions (2,000 decisions) _(upstream)_              | **0.766**  | 0.727           |
+| AG News (4 labels) _(upstream)_                             | **0.953**  | 0.910           |
+| DAIR Emotion (6 labels) _(upstream)_                        | **0.600**  | 0.480           |
+| ECE after temperature fitting _(upstream)_                  | **0.081**  | 0.246           |
+| p50 latency, 1 question — CPU _(measured here, 512 tokens)_ | 0.63–1.9 s | —               |
 
 ---
 
@@ -161,8 +165,11 @@ banking77 is the one clear loss, and it is architectural: a choice question's op
 
 ## Speed — CPU, measured here
 
-The T4 table below is upstream's. This one is ours, and it is the number that matters for a Go port
-whose whole premise (D2) is a dependency-free binary you can drop on a server.
+These numbers are ours, and they are the ones that matter for a Go port whose whole premise (D2) is a
+dependency-free binary you can drop on a server.
+
+**GPU latency is not measured here**, and stays unmeasured until CUDA support (PLAN.md Backlog B.3)
+lands.
 
 **Hardware.** 12th Gen Intel Core i7-1255U — 2 P-cores + 8 E-cores, 12 hardware threads, 15 W
 nominal, `powersave` governor, 31 GB RAM, Linux 6.8. This is a laptop, and a thermally limited one:
@@ -180,12 +187,12 @@ better than about ±20%.
 
 **Raw transcripts.** The `go test -bench` output behind these tables is checked in under
 `docs/benchmarks/raw/`, so the numbers are reproducible from the repository rather than from one
-laptop's `build/` directory (PLAN.md §8 forbids inheriting upstream's unreproducible
-`research/results/*.json`). `bench-onnx-sweep-a.txt` and `bench-onnx-sweep-b.txt` are two full sweeps
-with the shape axis at 8 threads; `bench-onnx-threads12.txt` is an earlier sweep with the shape axis at
-12 threads, which is where the "all hardware threads is the wrong setting" finding first showed. The
-third 8-thread sweep's transcript was overwritten by the recipe's default output path before it was
-copied, so only its p50s survive, in the tables.
+laptop's `build/` directory (PLAN.md §8 forbids inheriting upstream's unpublished result files).
+`bench-onnx-sweep-a.txt` and `bench-onnx-sweep-b.txt` are two full sweeps with the shape axis at
+8 threads; `bench-onnx-threads12.txt` is an earlier sweep with the shape axis at 12 threads, which is
+where the "all hardware threads is the wrong setting" finding first showed. The third 8-thread
+sweep's transcript was overwritten by the recipe's default output path before it was copied, so only
+its p50s survive, in the tables.
 
 ### One question — batch 1, 4 options, 8 threads
 
@@ -224,10 +231,9 @@ out of cores, so throwing a bigger core count at it will not close the gap to a 
 | 1 × 512                    | 1691 ms (1691/q)  | 645 ms (645/q)      | 1856 ms (1856/q)       |
 | 8 × 512                    | 14846 ms (1856/q) | 4988 ms (624/q)     | 15689 ms (1961/q)      |
 
-On a T4, going from 1 question to 10 takes `laya-multilingual` from 32.8 ms to 7.2 ms per question —
-a 4.6× win from filling the device. **On CPU that win does not exist**: per-question cost is flat to
-within noise, because one question at 512 tokens already saturates the cores. Batch for throughput
-accounting if you like; do not batch expecting latency per answer to improve.
+Batching helps when one question leaves the hardware underused. **On CPU it does not**: per-question
+cost is flat to within noise, because one question at 512 tokens already saturates the cores. Batch
+for throughput accounting if you like; do not batch expecting latency per answer to improve.
 
 The option count is a non-factor: at `k=20` instead of `k=4`, 512 tokens, the three checkpoints
 measured 1718 / 583 / 1649 ms — inside the run-to-run noise of the `k=4` cells. The encoder runs over
@@ -293,10 +299,8 @@ transcripts are `docs/benchmarks/raw/ort-version-gap-balanced.txt` (the evidence
 
 ### What this means
 
-**CPU inference is 9–43× slower than the T4 figure, and that range is honest rather than evasive:**
-upstream never states the sequence length behind its 33 ms, so the multiple depends on which row you
-compare. At 128 tokens `laya-multilingual` is 160 ms against 32.8 ms (4.9×); at its default 512-token
-`max_len`, `laya` is 1691 ms against 39.5 ms (43×).
+**Sequence length and checkpoint decide the cost:** at 128 tokens `laya-multilingual` answers in
+160 ms, while at the default 512-token `max_len` `laya` takes 1691 ms.
 
 So, plainly:
 
@@ -311,17 +315,6 @@ So, plainly:
   effect on ECE and Brier is measured: calibrated probabilities are the product.
 
 ---
-
-## Speed (Tesla T4) — upstream's published figures, not measured here
-
-| questions per call | laya     | laya-multilingual |
-| ------------------ | -------- | ----------------- |
-| 1                  | 39.5 ms  | **32.8 ms**       |
-| 5                  | 84.5 ms  | **40.1 ms**       |
-| 10                 | 158.6 ms | **72.3 ms**       |
-| 50                 | 771.3 ms | **337.4 ms**      |
-
-103–332 questions/sec batched. Jev independently measured at 236-276 ms p50, so Laya answers one question roughly **6–7× faster**.
 
 ## Calibration
 
@@ -348,7 +341,7 @@ At 20 options both are less order-stable than Jev — worth fixing with more agg
 
 ## Limits, stated plainly
 
-- **CPU is 9–43× slower than the headline 33 ms** — 0.6–1.9 s per question at the default 512-token `max_len`, measured on a 15 W laptop. Batching does not amortise it.
+- **CPU takes 0.6–1.9 s per question** at the default 512-token `max_len`, measured here on a 15 W laptop. Batching does not amortise it.
 - **Near chance on typed-decisions zero-shot** — the 0.766 belongs to the fine-tuned checkpoint, on that benchmark's own training split.
 - **Moderation does not hold up on held-out data** (0.530, macro-F1 0.400).
 - **Keep `choice` questions under ~20 options.**

@@ -162,8 +162,9 @@ Semantics the implementation gets right from config, not by convention:
 all in NFC on English/typed-decisions. `tokenizers` 0.23.2's Rust tables lack the canonical
 combining class of 108 codepoints assigned in Unicode 11–15. Go and CPython agree with each other,
 so the oracle is the outlier. No natural text, vocabulary entry or UI string in the corpus reaches
-it, and multilingual (no NFC) cannot. `scripts/probe_ccc.py` enumerates the set. Whether to
-reproduce the Rust tables is PLAN Task B.2.
+it, and multilingual (no NFC) cannot. `scripts/probe_ccc.py` enumerates the set. PLAN Task B.2
+decided (2026-10-10) to stay Unicode-conformant rather than reproduce the Rust tables, so the
+divergence is a documented deviation (README, "Differences from Python laya").
 
 **Cost.** `Open`: english 34–63 ms / 11.6 MB, multilingual 0.42–0.47 s / 110 MB, after Task B.1
 stopped decoding the vocabulary and merges through `encoding/json` (before: 0.51–0.53 s / 207 MB).

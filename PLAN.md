@@ -30,19 +30,19 @@ finished tasks cited in code comments refer to that history.
 Tick a box only when the work is committed and `just ci` is green. A milestone is done when every
 box under it is ticked.
 
-| Milestone                                                       | Delivers                                                | Status                |
-| --------------------------------------------------------------- | ------------------------------------------------------- | --------------------- |
-| [M0 — Scaffolding](#m0--scaffolding)                            | Go module, tooling, CI, frozen Python, `Version`        | ✅ done               |
-| [Spikes S1–S3](#3-spikes)                                       | ONNX export, binding choice, latency floor              | ✅ done               |
-| [M1 — Reference harness](#m1--the-python-reference-harness)     | `testdata/*.jsonl` golden vectors                       | ✅ done               |
-| [M2 — Tier-1 core](#m2--tier-1-core)                            | `jsonx`, `lang`, `mailtext`, `presets`, render          | ✅ done               |
-| [M3 — Router](#m3--router)                                      | `Route`, model registry, LRU                            | ✅ done               |
-| [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done               |
-| [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done               |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done               |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | ✅ done               |
-| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | 🟡 B.1, B.6–B.10 done |
-| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred           |
+| Milestone                                                       | Delivers                                                | Status                     |
+| --------------------------------------------------------------- | ------------------------------------------------------- | -------------------------- |
+| [M0 — Scaffolding](#m0--scaffolding)                            | Go module, tooling, CI, frozen Python, `Version`        | ✅ done                    |
+| [Spikes S1–S3](#3-spikes)                                       | ONNX export, binding choice, latency floor              | ✅ done                    |
+| [M1 — Reference harness](#m1--the-python-reference-harness)     | `testdata/*.jsonl` golden vectors                       | ✅ done                    |
+| [M2 — Tier-1 core](#m2--tier-1-core)                            | `jsonx`, `lang`, `mailtext`, `presets`, render          | ✅ done                    |
+| [M3 — Router](#m3--router)                                      | `Route`, model registry, LRU                            | ✅ done                    |
+| [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done                    |
+| [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done                    |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                    |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | ✅ done                    |
+| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | 🟡 B.1, B.2, B.6–B.10 done |
+| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | 🟡 8.1–8.3 done            |
 
 **Critical path to 1.0:** M7 (loader → `SystemOne` → answer parity → e2e parity → README). The
 Backlog and M8 do not gate 1.0.
@@ -623,13 +623,22 @@ the ECE/Brier inputs.
       and a merge side of 8 M separators each. Uncapped, the merges side allocates 320 MB, against
       a 128 MB budget; capped, both pass. Raising the cap fails the test again. On multilingual,
       `Open`'s bytes and allocs are unchanged.
-- [ ] **B.2** Decide on NFC combining classes, **in this file, before writing code**. The choice
+- [x] **B.2** Decide on NFC combining classes, **in this file, before writing code**. The choice
       is between reproducing `tokenizers` 0.23.2's stale Rust tables (108 codepoints act as
       starters; isolating each occurrence reproduces the Rust result in ~40 lines plus a generated
       table) and staying Unicode-conformant. The first makes go-laya deliberately non-conformant
       and ties it to one crate's data, so `scripts/probe_ccc.py` would have to run on every pin
       bump. The second leaves an 85-line divergence that no natural text in 139 611 lines
       reaches and that cannot touch multilingual.
+      (2026-10-10, user decision: stay Unicode-conformant) No code changes: go-laya keeps
+      `golang.org/x/text`'s NFC, which agrees with CPython's `unicodedata`. Reproducing the stale
+      tables would buy agreement with one crate's data at the cost of conformance and a
+      `probe_ccc.py` run on every pin bump, and the divergence it would close is small.
+      `LAYA_MODELS=… LAYA_CORPUS=… just diff-tokenizer`, with both pointing at the main
+      checkout's `models` and `build/corpus`, reports en "compared: 157281, mismatching: 85", all
+      85 in the `normalize` class, and ml "mismatching: 0". The divergence stays, now as a
+      documented deviation: README "Differences from Python laya", `docs/ARCHITECTURE.md` §3 and
+      R1 say so. The recipe still exits 1 on en; B.11 is the follow-up.
 - [ ] **B.3** Enable CUDA. Device selection works for `cpu`/`auto`/`coreml`, while `cuda` falls
       back (D22). ORT's generic `SessionOptionsAppendExecutionProvider` rejects `CUDA`, and the
       binding at D5's pin neither registers `SessionOptionsAppendExecutionProvider_CUDA_V2` nor
@@ -689,6 +698,11 @@ the ECE/Brier inputs.
       (common.py:70-75).
       I checked both against `original/laya/common.py:60-86` and `agent.py:255-265`.
       `git show --stat 732ee92` touches only comments; `just ci` passes.
+- [ ] **B.11** Let `TestDifferentialCorpus` accept B.2's decided NFC class and nothing else. The
+      85 en lines are a documented deviation since B.2, yet `just diff-tokenizer` still fails on
+      them, so a new divergence would show only as a different count inside an expected failure.
+      The 108 codepoints from `scripts/probe_ccc.py` are the natural allowlist. Found while
+      settling B.2 (2026-10-10).
 
 ### M8 — Pure-Go native backend (after 1.0)
 
@@ -709,11 +723,47 @@ zero-shared-library backend, not a speed play (D8). The facts it needs are in
       All 62 tests (53 lifted, 9 in the new `robustness_test.go` files) pass on amd64, on arm64
       under `qemu-aarch64-static` and on 386 (the pure-Go fallback). `ReadHeader` stays the only
       header parser, and F16/BF16 decoding builds on it in 8.7 (`tensor/doc.go`). `NOTICE`
-      records the provenance and the fixes.
-- [ ] **8.2** Bias-free LayerNorm (eps 1e-5; layer 0 has no `attn_norm`).
-- [ ] **8.3** GeGLU with the fused `mlp.Wi [5248,1024]` gate+up split, no MLP bias.
+      records the provenance and the fixes. Rerun on `500b614`:
+      `go test -count=1 -v ./internal/runtime/...` gives 62 `--- PASS` and no failure; both
+      packages also pass under `GOARCH=arm64 go test -exec qemu-aarch64-static` and
+      `GOARCH=386 go test`, and `GOARCH=arm64` and `GOARCH=386` `go vet ./internal/runtime/...`
+      pass. Mutation (PR #40): passing `len(a)-1` to the AVX2 dot kernel fails `TestDotProduct`,
+      `TestDotProductEveryLength`, two `MatMulTransB` tests and two attention tests.
+- [x] **8.2** Bias-free LayerNorm (eps 1e-5; layer 0 has no `attn_norm`).
+      (2026-10-10) `internal/modernbert.Norm` wraps `tensor.LayerNorm` with no bias and
+      `NormEps = 1e-5`, from both encoder configs. `IdentityNorm()` models layer 0's
+      `nn.Identity` `attn_norm`; a nil weight and the zero `Norm` are errors, not the identity.
+      The oracle is `scripts/dump_modernbert_ops.py`, which takes the norms from the real modules
+      of a tiny `ModernBertModel` with seeded random weights and refuses versions other than
+      `requirements-ref.txt`'s. A review fix made it accept `nn.Identity` only at
+      `layers.0.attn_norm`, so an upstream drift that dropped another norm stops generation
+      instead of being recorded as a null-weight oracle.
+      `TestNormMatchesTorch` pins the six case names and each case's module class: embeddings,
+      attn, mlp and final norm, the layer-0 identity, a +1000 offset, a variance below eps and a
+      rank-3 input, all within a κ-scaled float32 bound (worst case 13 % of it).
+      `go test -count=1 -v ./internal/modernbert/` passes, and a rerun of the dumper leaves
+      `internal/modernbert/testdata/ops.json` byte-identical (`git diff --exit-code`). Mutations
+      (PR #41): eps 1e-6, the identity as a ones-weight norm and a bias of 0.1 each fail
+      `TestNormMatchesTorch` and `TestIdentityIsNotOnesNorm`.
+- [x] **8.3** GeGLU with the fused `mlp.Wi [5248,1024]` gate+up split, no MLP bias.
+      (2026-10-10) `internal/modernbert.MLP` applies one `Linear` over the fused `Wi [2I,H]`,
+      puts the first `I` of each row through the exact erf GELU (`GELUActivation`), multiplies by
+      the last `I`, then applies `Wo [H,I]`; there is no bias, and dropout is not modelled.
+      `NewMLP` rejects an odd, empty or zero-sized `Wi` and a `Wo` given as `[I,H]` (the
+      zero-sized `Wi` was a review fix: it panicked in `Forward`). The dumper appends three `mlp`
+      cases from the real `ModernBertMLP` to `ops.json`, leaving every layernorm record unchanged.
+      `go test -count=1 -v ./internal/modernbert/` passes: `TestMLPMatchesTorch` also asserts
+      that the tanh GELU, `erf(x)`, the swapped halves and `Wo` read as `[I,H]` each miss torch
+      by at least 10× the tolerance (61×, 27 300×, 734 888× and 988 660×), and
+      `TestMLPRealDimensions` checks values at ModernBERT-large's `[5248,1024]`/`[1024,2624]` and
+      mmBERT-base's 768/1152. Mutations (PR #42): each of those four readings, put into `mlp.go`,
+      fails `TestMLPMatchesTorch` on all three cases.
 - [ ] **8.4** Fused QKV unpacking (`attn.Wqkv [3072,1024]`, no attention bias).
 - [ ] **8.5** Sliding-window attention masks (window 128, ±64) and per-layer-type RoPE theta.
+- [ ] **8.5.1** Assemble the encoder: `tok_embeddings`, then the embeddings norm, then the layers in
+      `layer_types` order (full or sliding attention per layer), then `final_norm`. Check it
+      against the real `ModernBertModel` on a tiny config. Found while planning batch 2
+      (2026-10-10): no task covered the assembly, and 8.6 is the decision head's own loop.
 - [ ] **8.6** The decision head with a **ReLU** FFN and the manual layer loop.
 - [ ] **8.7** fp16 weight loading. The loader tolerates the per-checkpoint `temperature` dtype,
       which is never read.
@@ -754,16 +804,16 @@ These four cause silent wrong answers rather than loud failures:
 
 ## 6. Risks
 
-| #   | Risk                                                                                                     | Status and mitigation                                                                                                                                                                                                                                                   |
-| --- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| R1  | **Pure-Go tokenizer drift.** Marker positions are token indices; one off-by-one corrupts every decision. | Mitigated. Both corpora are 100 % green, a fuzz target runs, and a 157 281-line differential found one class (NFC tables, 85 lines, no natural text): Backlog B.2. The `Tokenizer` interface keeps `daulet/tokenizers` (CGO) as a one-day swap, which is not indicated. |
-| R2  | **ONNX export fails on ModernBERT-large** (transformers#35545).                                          | Retired by S1: all three export and validate.                                                                                                                                                                                                                           |
-| R3  | **CPU latency ≫ upstream's 33 ms on a T4.**                                                              | Confirmed: 0.6–1.9 s at 512 tokens (D6). Published in `BENCHMARKS.md`. The levers left are int8 (B.5, gated on calibration), a GPU provider (B.3) and the correct thread count (done).                                                                                  |
-| R4  | **int8 wrecks calibration.**                                                                             | B.5 measures ECE and Brier, not accuracy. int8 is never the default.                                                                                                                                                                                                    |
-| R5  | **`onnxruntime-purego` instability**: an untagged 31-star HEAD with a finalizer data race.               | Every `*Value` is closed (D5), and the reproduction stays behind `LAYA_ORT_FINALIZER=1`. `yalue/onnxruntime_go` is the fallback behind the `Backend` seam. CUDA needs a binding change (B.3), which is the likeliest reason the pin moves.                              |
-| R6  | **Upstream tokenizer/transformers drift** silently changes golden vectors.                               | Real: 4.57.6 moves multilingual by 6.96 (D7). `TestGoldenProvenance` checks every header, requirements are pinned, regeneration is byte-identical and reviewed, and `scripts/crosscheck_transformers.py` checks the next bump.                                          |
-| R7  | **Supply chain**: `laya.Open("someone/their-model")` must not be RCE.                                    | Mitigated in M6: hash-verified downloads that fail closed, ONNX and safetensors headers validated before the runtime sees them, pinned and verified ORT, no `os/exec`/`encoding/gob` (CI grep). See `docs/ARCHITECTURE.md` §6.                                          |
-| R8  | **Licensing**: derivative of an Apache-2.0 work.                                                         | `LICENSE` is kept and `NOTICE` records the derivation. Weights are Apache-2.0 and ungated. M8's lift from go-pocket-tts gets a `NOTICE` line.                                                                                                                           |
+| #   | Risk                                                                                                     | Status and mitigation                                                                                                                                                                                                                                                                                    |
+| --- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R1  | **Pure-Go tokenizer drift.** Marker positions are token indices; one off-by-one corrupts every decision. | Mitigated. Both corpora are 100 % green, a fuzz target runs, and a 157 281-line differential found one class (NFC tables, 85 lines, no natural text), kept as a documented deviation (Backlog B.2). The `Tokenizer` interface keeps `daulet/tokenizers` (CGO) as a one-day swap, which is not indicated. |
+| R2  | **ONNX export fails on ModernBERT-large** (transformers#35545).                                          | Retired by S1: all three export and validate.                                                                                                                                                                                                                                                            |
+| R3  | **CPU latency ≫ upstream's 33 ms on a T4.**                                                              | Confirmed: 0.6–1.9 s at 512 tokens (D6). Published in `BENCHMARKS.md`. The levers left are int8 (B.5, gated on calibration), a GPU provider (B.3) and the correct thread count (done).                                                                                                                   |
+| R4  | **int8 wrecks calibration.**                                                                             | B.5 measures ECE and Brier, not accuracy. int8 is never the default.                                                                                                                                                                                                                                     |
+| R5  | **`onnxruntime-purego` instability**: an untagged 31-star HEAD with a finalizer data race.               | Every `*Value` is closed (D5), and the reproduction stays behind `LAYA_ORT_FINALIZER=1`. `yalue/onnxruntime_go` is the fallback behind the `Backend` seam. CUDA needs a binding change (B.3), which is the likeliest reason the pin moves.                                                               |
+| R6  | **Upstream tokenizer/transformers drift** silently changes golden vectors.                               | Real: 4.57.6 moves multilingual by 6.96 (D7). `TestGoldenProvenance` checks every header, requirements are pinned, regeneration is byte-identical and reviewed, and `scripts/crosscheck_transformers.py` checks the next bump.                                                                           |
+| R7  | **Supply chain**: `laya.Open("someone/their-model")` must not be RCE.                                    | Mitigated in M6: hash-verified downloads that fail closed, ONNX and safetensors headers validated before the runtime sees them, pinned and verified ORT, no `os/exec`/`encoding/gob` (CI grep). See `docs/ARCHITECTURE.md` §6.                                                                           |
+| R8  | **Licensing**: derivative of an Apache-2.0 work.                                                         | `LICENSE` is kept and `NOTICE` records the derivation. Weights are Apache-2.0 and ungated. M8's lift from go-pocket-tts gets a `NOTICE` line.                                                                                                                                                            |
 
 ---
 
@@ -820,12 +870,19 @@ The dynamic-typing decisions:
       `WithSubfolder("multilingul")` in `ExampleAgent_SetLimits`, only that subtest fails; with
       the sentinel no longer printed, all seven fail with "did not run to its end". With neither
       `-short` nor `LAYA_MODELS` set, it reports SKIP.
-- [ ] Measured latency published in `BENCHMARKS.md` for the hardware actually tested, replacing
+- [x] Measured latency published in `BENCHMARKS.md` for the hardware actually tested, replacing
       upstream's T4 numbers rather than repeating them. Upstream cites a `research/results/`
-      directory that does not exist; do not inherit that. (2026-10-10) — partial: the CPU
-      latency is measured and published with its hardware ("Speed — CPU, measured here"), and the
-      raw transcripts are in `docs/benchmarks/raw/`. Still not met: - the "Speed (Tesla T4)" section repeats upstream's table, labelled "not measured here"; - the headline's T4 row repeats it too; - the header table cites `research/results/*.json` as the source of the T4, CPU-sweep and
-      Applications runs.
+      directory that does not exist; do not inherit that. (2026-10-10, user decision: CPU only)
+      "Speed — CPU, measured here" is the only latency in `BENCHMARKS.md`, with its hardware, and
+      the raw transcripts are in `docs/benchmarks/raw/`. Upstream's "Speed (Tesla T4)" table, the
+      headline's T4 row, the sentences that leaned on the T4 figure and every
+      `research/results/*.json` citation are gone. The accuracy, calibration and option-order
+      figures that stay are attributed to upstream's `BENCHMARKS.md` at 0.3.4 (`d113dca`, which
+      `NOTICE` pins). One line says GPU latency stays unmeasured until B.3.
+      `grep -rn 'T4\|research/results' --include='*.md' . | grep -v '^./original/'` has no hit in
+      `BENCHMARKS.md`. The README keeps four, all in its labelled upstream comparison (the figure
+      caption, the shared benchmark's hardware, the Jev table's T4 row) or a notebook's file name;
+      the rest are this file's history (7.6.4, R3, this box).
 - [x] `TestGoldenProvenance` green, **and** it asserts the checkpoint revision the vectors came
       from. (2026-10-10) Until now it checked library versions and `compute`, not the Hub sha.
       `checkProvenance` requires each header's `checkpoint_sha` to equal `pinnedRevision`

@@ -60,6 +60,6 @@ another task.
 | S2.3            | The finalizer panic does not reproduce at D5's pin, so there was no switch to `yalue/onnxruntime_go`.                                             |
 | S3.4, S3.5      | int8 plus calibration moved to PLAN Task B.5. The cheaper-checkpoint lever moved to Task 3.4 (D14).                                               |
 | 4.x R1 fallback | Tokenizer parity was reached (206 golden subtests, a 157 281-line differential), so there was no swap to `daulet/tokenizers`.                     |
-| M4 gate         | M5 shipped. The only remainder is the NFC combining-class decision, now PLAN Task B.2.                                                            |
+| M4 gate         | M5 shipped. The only remainder, the NFC combining-class decision, was PLAN Task B.2: it stays Unicode-conformant (2026-10-10).                    |
 | 6.5.2           | Superseded by D19.                                                                                                                                |
 | 0.4 deferred    | Header verification, ORT pinning and ETag checks were done by Tasks 6.2, 6.4.4 and 6.6.                                                           |
