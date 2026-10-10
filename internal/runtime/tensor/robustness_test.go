@@ -133,3 +133,31 @@ func TestMatMulZeroInnerDim(t *testing.T) {
 		t.Fatalf("data = %v, want zeros", data)
 	}
 }
+
+// Narrow must bound start before it adds length: start+length can wrap
+// negative and pass a combined check.
+func TestNarrowRejectsOverflowingRange(t *testing.T) {
+	x, err := New([]float32{1}, []int64{1})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct{ start, length int64 }{
+		{math.MaxInt64, 2},
+		{1, math.MaxInt64},
+		{2, 0},
+	}
+
+	for _, tc := range cases {
+		if _, err := x.Narrow(0, tc.start, tc.length); err == nil {
+			t.Errorf("Narrow(0, %d, %d) on size 1 succeeded; want an error", tc.start, tc.length)
+		}
+	}
+
+	// The full and the empty range at the end stay valid.
+	for _, tc := range []struct{ start, length int64 }{{0, 1}, {1, 0}} {
+		if _, err := x.Narrow(0, tc.start, tc.length); err != nil {
+			t.Errorf("Narrow(0, %d, %d) on size 1: %v", tc.start, tc.length, err)
+		}
+	}
+}

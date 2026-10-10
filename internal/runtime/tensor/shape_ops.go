@@ -16,8 +16,11 @@ func (t *Tensor) Narrow(dim int, start, length int64) (*Tensor, error) {
 		return nil, fmt.Errorf("tensor: narrow: %w", err)
 	}
 
-	if start < 0 || length < 0 || start+length > t.shape[dim] {
-		return nil, fmt.Errorf("tensor: narrow: range [%d:%d] out of bounds for dim %d size %d", start, start+length, dim, t.shape[dim])
+	// Bound start first, then compare length with what is left: start+length
+	// can overflow and pass a combined check.
+	size := t.shape[dim]
+	if start < 0 || start > size || length < 0 || length > size-start {
+		return nil, fmt.Errorf("tensor: narrow: start %d length %d out of bounds for dim %d size %d", start, length, dim, size)
 	}
 
 	outShape := append([]int64(nil), t.shape...)
