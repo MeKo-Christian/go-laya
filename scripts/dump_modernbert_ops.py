@@ -178,6 +178,10 @@ NORM_CASES: list[tuple[str, str, Input]] = [
 ]
 
 
+# The one norm upstream leaves out (modeling_modernbert.py:309-310).
+IDENTITY_PATH = "layers.0.attn_norm"
+
+
 def norm_case(model: ModernBertModel, name: str, path: str, make_input: Input) -> dict[str, Any]:
     hidden = model.config.hidden_size
     # A copy, so that the weights written below do not leak into later cases: a case that
@@ -194,7 +198,12 @@ def norm_case(model: ModernBertModel, name: str, path: str, make_input: Input) -
         weight = 0.5 + torch.rand(hidden, generator=g, dtype=torch.float32)
         with torch.no_grad():
             mod.weight.copy_(weight)
-    elif not isinstance(mod, nn.Identity):
+    elif isinstance(mod, nn.Identity):
+        # Only layer 0 lacks its attn_norm upstream. Anywhere else an Identity is a drift
+        # that removed a norm, and recording it would make a null weight the oracle.
+        if path != IDENTITY_PATH:
+            raise AssertionError(f"{path} is Identity; only {IDENTITY_PATH} may be")
+    else:
         raise AssertionError(f"{path} is {type(mod).__name__}, want LayerNorm or Identity")
 
     x = make_input(g, hidden)
