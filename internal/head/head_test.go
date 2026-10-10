@@ -464,10 +464,12 @@ func TestHeadRealDimensions(t *testing.T) {
 				}
 			}
 
-			// Padding stays out at full width too.
+			// Padding stays out at full width too. tensor.New copied data,
+			// so the padded rows are written through x's own storage.
+			raw := x.RawData()
 			for s := 7; s < seq; s++ {
 				for j := range tc.d {
-					data[(seq+s)*tc.d+j] = 100
+					raw[(seq+s)*tc.d+j] = 100
 				}
 			}
 			logits2, act2, err := h.Forward(x, b)
