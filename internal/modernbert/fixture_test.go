@@ -15,7 +15,7 @@ import (
 
 // opsFixture is testdata/ops.json, written by scripts/dump_modernbert_ops.py from
 // the real transformers modules of a tiny ModernBertModel. Cases stay raw because
-// each op has its own fields: Task 8.3 appends MLP cases to the same file.
+// each op has its own fields: "layernorm" (Task 8.2) and "mlp" (Task 8.3).
 type opsFixture struct {
 	Header opsHeader         `json:"header"`
 	Cases  []json.RawMessage `json:"cases"`
@@ -27,9 +27,10 @@ type opsHeader struct {
 	Seed     *int64            `json:"seed"`
 	Threads  *int              `json:"torch_threads"`
 	Config   struct {
-		HiddenSize int64    `json:"hidden_size"`
-		NormEps    *float64 `json:"norm_eps"`
-		NormBias   *bool    `json:"norm_bias"`
+		HiddenSize       int64    `json:"hidden_size"`
+		IntermediateSize int64    `json:"intermediate_size"`
+		NormEps          *float64 `json:"norm_eps"`
+		NormBias         *bool    `json:"norm_bias"`
 	} `json:"config"`
 }
 
