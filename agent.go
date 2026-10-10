@@ -79,8 +79,11 @@ func (a *Agent) HeadMaxLen() int {
 // SetLimits replaces both budgets for every later SystemOne call. It is how
 // Python's agent.cfg["max_len"] = ... and agent.cfg["head_max_len"] = ...
 // are written here; a pass already running keeps the limits it started with.
-// A value that is not positive is ErrInvalidLimits and changes nothing,
-// where Python would silently truncate every sequence.
+// A value that is not positive is ErrInvalidLimits and changes nothing.
+// Python takes it: a max_len ≤ 0 then makes the next prediction raise a
+// ValueError that blames head_max_len (common.py:86, agent.py:262-263),
+// and a head_max_len ≤ 0 silently cuts every option to 4 tokens and the
+// question head to 8 (common.py:70-75).
 func (a *Agent) SetLimits(maxLen, headMaxLen int) error {
 	if err := checkLimits(maxLen, headMaxLen); err != nil {
 		return err

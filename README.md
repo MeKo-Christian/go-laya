@@ -360,7 +360,8 @@ The port is checked against these versions. Each value is copied from the file n
 | onnxruntime, which `scripts/export_onnx.py` checks with | 1.30.0                                                  | [`scripts/requirements-ref.txt`](scripts/requirements-ref.txt)                                                                            |
 
 `TestGoldenProvenance` fails if any golden header records another `tokenizers` or `transformers`
-version or another `compute` block. It does not check the checkpoint revision yet.
+version or another `compute` block. It also fails if a header's `checkpoint_sha` is not
+`pinnedRevision`.
 
 [core]: docs/DECISIONS.md#core-decisions
 [later]: docs/DECISIONS.md#later-decisions

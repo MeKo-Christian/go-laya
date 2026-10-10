@@ -294,8 +294,10 @@ func TestConfigTemperatures(t *testing.T) {
 // TestConfigMaxLen pins the two sequence budgets agent.py:256-257 reads,
 // cfg.get("max_len", 512) and cfg.get("head_max_len", 192). Python needs an
 // int (common.py:82-86 slices with them), so a float literal or any other
-// type fails; a non-positive int, which Python would accept and then truncate
-// every sequence with, fails too (a deliberate loud failure, D23).
+// type fails; a non-positive int fails too (a deliberate loud failure, D23).
+// Python accepts one: a max_len ≤ 0 makes the first prediction raise
+// (common.py:86, agent.py:262-263), and a head_max_len ≤ 0 silently cuts
+// every option to 4 tokens (common.py:70-73).
 func TestConfigMaxLen(t *testing.T) {
 	type accessor struct {
 		key  string

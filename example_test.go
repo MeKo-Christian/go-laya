@@ -12,6 +12,7 @@ import (
 // These are the README's examples (PLAN.md Task 7.6.1). Every one but
 // ExampleRouter_Route needs the weights and an ONNX export, so they carry no
 // Output comment: CI proves they compile, not what they print.
+// TestREADMEExamples runs them against local exports.
 
 // state is the README's support e-mail. An Obj keeps its key order, which is
 // the order the model reads the fields in.

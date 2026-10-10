@@ -30,19 +30,19 @@ finished tasks cited in code comments refer to that history.
 Tick a box only when the work is committed and `just ci` is green. A milestone is done when every
 box under it is ticked.
 
-| Milestone                                                       | Delivers                                                | Status               |
-| --------------------------------------------------------------- | ------------------------------------------------------- | -------------------- |
-| [M0 — Scaffolding](#m0--scaffolding)                            | Go module, tooling, CI, frozen Python, `Version`        | ✅ done              |
-| [Spikes S1–S3](#3-spikes)                                       | ONNX export, binding choice, latency floor              | ✅ done              |
-| [M1 — Reference harness](#m1--the-python-reference-harness)     | `testdata/*.jsonl` golden vectors                       | ✅ done              |
-| [M2 — Tier-1 core](#m2--tier-1-core)                            | `jsonx`, `lang`, `mailtext`, `presets`, render          | ✅ done              |
-| [M3 — Router](#m3--router)                                      | `Route`, model registry, LRU                            | ✅ done              |
-| [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done              |
-| [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done              |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done              |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | ✅ done              |
-| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | 🟡 B.1, B.6–B.9 done |
-| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred          |
+| Milestone                                                       | Delivers                                                | Status                |
+| --------------------------------------------------------------- | ------------------------------------------------------- | --------------------- |
+| [M0 — Scaffolding](#m0--scaffolding)                            | Go module, tooling, CI, frozen Python, `Version`        | ✅ done               |
+| [Spikes S1–S3](#3-spikes)                                       | ONNX export, binding choice, latency floor              | ✅ done               |
+| [M1 — Reference harness](#m1--the-python-reference-harness)     | `testdata/*.jsonl` golden vectors                       | ✅ done               |
+| [M2 — Tier-1 core](#m2--tier-1-core)                            | `jsonx`, `lang`, `mailtext`, `presets`, render          | ✅ done               |
+| [M3 — Router](#m3--router)                                      | `Route`, model registry, LRU                            | ✅ done               |
+| [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done               |
+| [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done               |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done               |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | ✅ done               |
+| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | 🟡 B.1, B.6–B.10 done |
+| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred           |
 
 **Critical path to 1.0:** M7 (loader → `SystemOne` → answer parity → e2e parity → README). The
 Backlog and M8 do not gate 1.0.
@@ -681,10 +681,14 @@ the ECE/Brier inputs.
       real backend with `WithDevice("mps")` and matches the root name; with the root name made
       a separate `errors.New`, it and `TestBackendErrorsReexported` fail. `GOOS=windows go vet .`
       passes, so the stub platforms still build.
-- [ ] **B.10** Correct the comments that say Python silently truncates with a `max_len` ≤ 0
+- [x] **B.10** Correct the comments that say Python silently truncates with a `max_len` ≤ 0
       (errors.go:80, agent.go:80, internal/checkpoint/config.go:183). `build_sequence` then keeps
       no marker (`m < max_len`, common.py:86), so Python raises `ValueError` at agent.py:262-263.
       Only `head_max_len` ≤ 0 truncates silently, to 4 tokens per option (common.py:70-73).
+      (2026-10-10) The three comments and `TestConfigMaxLen`'s doc comment now say: - with `max_len` ≤ 0, Python raises a `ValueError` that blames `head_max_len`; - with `head_max_len` ≤ 0, it cuts every option to 4 tokens and the question head to 8
+      (common.py:70-75).
+      I checked both against `original/laya/common.py:60-86` and `agent.py:255-265`.
+      `git show --stat 732ee92` touches only comments; `just ci` passes.
 
 ### M8 — Pure-Go native backend (after 1.0)
 
@@ -771,25 +775,67 @@ The dynamic-typing decisions:
 
 ## 8. Definition of done for 1.0
 
-- [ ] `just check` green; `go test ./... -race` green on linux/amd64 and darwin/arm64.
+- [x] `just check` green; `go test ./... -race` green on linux/amd64 and darwin/arm64.
+      (2026-10-10) `just check` on `main` (`3f66ab0`) passes, with golangci-lint at "0 issues.".
+      CI's `tests` matrix runs `go test -race -count=1 ./...` on both. On `3f66ab0`, the macOS
+      job ran on the image `macos-26-arm64` and the Ubuntu job on `ubuntu-24.04` with the
+      `linux-x64` Go. Both succeeded, each with 17 `ok` packages.
 - [x] Both tokenizer golden corpora 100 % id- and token-identical to Python: 206 subtests
       (103 cases × 2 checkpoints, bare and with a leading space). This is a local gate
       (`LAYA_MODELS`). CI covers the stages via `testdata/pretok_{en,ml}.jsonl`.
 - [x] `testdata/sequence.jsonl` byte-identical. (2026-09-27)
       `LAYA_MODELS=$PWD/models go test -count=1 -run TestBuildSequenceGolden -v ./internal/prompt/`
       gives 45 of 45 subtests passing and 0 skipped. It is a local gate, like the corpora above.
-- [ ] End-to-end probabilities within 1e-4 of the fp32, CPU, single-thread, `sdpa` PyTorch run
+- [x] End-to-end probabilities within 1e-4 of the fp32, CPU, single-thread, `sdpa` PyTorch run
       recorded in the fixture headers, on all three checkpoints; **zero argmax flips**.
+      (2026-10-10) This is Task 7.5, rerun on `3f66ab0`:
+      `LAYA_MODELS=$PWD/models LAYA_ONNX_DIR=$PWD/build/onnx go test -count=1 -run TestE2EParity -v .`
+      passes english, multilingual and typed-decisions, 10 cases each. The worst per-option
+      probability diffs are 4.29e-06, 2.8e-06 and 1.4e-06. The test fails on any argmax flip
+      (e2e_parity_test.go:174). It is a local gate.
 - [x] `lang` + `mailtext` + `presets` + `backend` importable with no ML dependency. (2026-09-27)
       `go test -count=1 -run 'TestNoMLDependency|TestRuntimeImportedOnlyByBackend' -v .` passes
       both. It runs `go list -deps` over those four packages in every CI `go test`.
-- [ ] Every README example compiles and runs.
+- [x] Every README example compiles and runs. (2026-10-10) CI compiles them (Task 7.6.1).
+      `example_run_test.go` runs them: `TestREADMEExamples` re-executes the test binary once per
+      weight-bound Example, because they end on `log.Fatal`. For each one it checks the exit
+      status, a sentinel printed once the Example has returned, and the lines the README promises
+      it prints. It is a local gate: it skips under `-short`, without `LAYA_MODELS` (the opt-in
+      AGENTS.md names; Codex P2 on PR #39) and without `LAYA_ONNX_DIR`, and it needs the Hub. It
+      stages the `-dynamo` exports as hard links in a temporary directory beside them, as
+      `linkExports` does, so `$TMPDIR` may sit on another filesystem. With both variables set to
+      the main checkout's `models` and `build/onnx`, and `TMPDIR` unset,
+      `go test -count=1 -run TestREADMEExamples -v .` passes all seven in 35 s. With `ExampleRouter_Route`, which `go test` runs against its own
+      `Output`, all eight README Examples have now run. Mutations: with
+      `WithSubfolder("multilingul")` in `ExampleAgent_SetLimits`, only that subtest fails; with
+      the sentinel no longer printed, all seven fail with "did not run to its end". With neither
+      `-short` nor `LAYA_MODELS` set, it reports SKIP.
 - [ ] Measured latency published in `BENCHMARKS.md` for the hardware actually tested, replacing
       upstream's T4 numbers rather than repeating them. Upstream cites a `research/results/`
-      directory that does not exist; do not inherit that.
-- [ ] `TestGoldenProvenance` green, **and** it asserts the checkpoint revision the vectors came
-      from. Today it checks library versions and `compute`, not the Hub sha.
-- [ ] The ONNX artefacts are ones we export ourselves, not a third-party upload.
-- [ ] The ORT version is pinned and every downloaded artefact is ETag/sha-verified before use (R7).
+      directory that does not exist; do not inherit that. (2026-10-10) — partial: the CPU
+      latency is measured and published with its hardware ("Speed — CPU, measured here"), and the
+      raw transcripts are in `docs/benchmarks/raw/`. Still not met: - the "Speed (Tesla T4)" section repeats upstream's table, labelled "not measured here"; - the headline's T4 row repeats it too; - the header table cites `research/results/*.json` as the source of the T4, CPU-sweep and
+      Applications runs.
+- [x] `TestGoldenProvenance` green, **and** it asserts the checkpoint revision the vectors came
+      from. (2026-10-10) Until now it checked library versions and `compute`, not the Hub sha.
+      `checkProvenance` requires each header's `checkpoint_sha` to equal `pinnedRevision`
+      (loader.go), the constant itself rather than a copy. `TestGoldenProvenanceRejects` gains
+      "another checkpoint revision" and "`checkpoint_sha` null", and both pin the substring
+      `checkpoint_sha`. `go test -count=1 -run 'TestGoldenProvenance' -v .` passes. With
+      `pinnedRevision` changed by one character, all 13 fixtures fail. The README's
+      "Verified against" now says so.
+- [x] The ONNX artefacts are ones we export ourselves, not a third-party upload. (2026-10-10)
+      The loader downloads only the config and `tokenizer/*` (`allowPatterns`, loader.go, D24).
+      It reads the graph as `laya-<name>.onnx` from `WithONNXDir`, `$LAYA_ONNX_DIR` or
+      `<cache>/onnx`, which is the file `scripts/export_onnx.py` writes. No code path fetches an
+      ONNX file. `go test -count=1 -run 'TestDefaultLoaderHubSnapshot|TestDefaultLoaderONNXDir' -v .`
+      passes; the first test pins the patterns to `rl_agent_config.json` and `tokenizer/*`.
+- [x] The ORT version is pinned and every downloaded artefact is ETag/sha-verified before use (R7).
+      (2026-10-10) ORT is pinned to 1.23.0 by sha256 per platform (ortlib.go:36, D20). Every Hub
+      file is checked against its `X-Linked-Etag` sha256 or its git-blob ETag before it is used.
+      `go test -count=1 -run 'TestFetchVerifies|TestFetchCache$|TestSnapshotPinsCommit' -v ./internal/hub/`
+      passes, as does
+      `go test -count=1 -run 'TestDownload$|TestDownloadRejects|TestCached|TestPinned$' -v ./internal/ortlib/`.
+      `TestFetchVerifies` includes "lfs sha256 mismatch → ErrHashMismatch".
 - [x] The deliberate deviations from Python are listed in the README (Task 7.6.3). (2026-10-09)
       README "Differences from Python laya", Task 7.6.3.
