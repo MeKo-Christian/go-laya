@@ -64,16 +64,7 @@ func Open(path string) (*File, error) {
 }
 
 func openFile(path string) (*File, error) {
-	// Opening a named pipe blocks until a writer appears, so the type is
-	// checked first; readHeaderFrom then validates what was opened.
-	if fi, err := os.Stat(path); err != nil {
-		return nil, err
-	} else if !fi.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", fi.Mode().Type())
-	}
-	// #nosec G304 -- path is the weights file the caller chose to load;
-	// validating it is the point.
-	f, err := os.Open(path)
+	f, err := openRegular(path)
 	if err != nil {
 		return nil, err
 	}
@@ -92,6 +83,30 @@ func openFile(path string) (*File, error) {
 		return cmp.Or(cmp.Compare(ta.Begin, tb.Begin), cmp.Compare(ta.End, tb.End), cmp.Compare(a, b))
 	})
 	return &File{path: path, f: f, header: h, names: names}, nil
+}
+
+// openRegular opens path for reading and requires the opened descriptor to
+// be a regular file. The type is checked on the descriptor, not on the path
+// beforehand, so a path swapped for a named pipe or device between a check
+// and the open cannot slip through. openNonblock keeps the open itself from
+// waiting on a named pipe; symlinks are followed, as a checkpoint may sit in
+// a cache that links to its blobs.
+func openRegular(path string) (*os.File, error) {
+	// #nosec G304 -- path is the weights file the caller chose to load;
+	// validating it is the point.
+	f, err := os.OpenFile(path, os.O_RDONLY|openNonblock, 0)
+	if err != nil {
+		return nil, err
+	}
+	fi, err := f.Stat()
+	if err == nil && !fi.Mode().IsRegular() {
+		err = fmt.Errorf("%s is not a regular file", fi.Mode().Type())
+	}
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
 }
 
 // checkDTypes requires every tensor but temperature to be decodable, so a

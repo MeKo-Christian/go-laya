@@ -276,8 +276,8 @@ func TestOpenRejectsTamperedFile(t *testing.T) {
 	}
 }
 
-// A path that is not a regular file is refused before it is opened, so a
-// named pipe cannot block Open.
+// A path that is not a regular file is refused once it is opened; on Unix,
+// TestOpenRegularFIFO checks that a named pipe cannot block the open.
 func TestOpenNotARegularFile(t *testing.T) {
 	dir := t.TempDir()
 	_, err := Open(dir)
