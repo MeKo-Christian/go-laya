@@ -91,11 +91,21 @@ var (
 	// NewRouter refuse it as the option is applied.
 	ErrInvalidRevision = errors.New("laya: invalid revision")
 
-	// ErrConflictingOptions reports Open options that cannot apply together:
-	// WithBackend beside WithGraph or WithDevice, which choose the graph and
-	// the device of the ONNX backend WithBackend replaces, so either would be
-	// silently ignored. WithLogger beside it is accepted and has nothing to
-	// log, since only the ONNX backend warns. The message names the options.
+	// ErrUnknownRuntime reports a WithRuntime or WithRouterRuntime value that
+	// is neither RuntimeONNX nor RuntimeNative.
+	ErrUnknownRuntime = errors.New("laya: unknown runtime")
+
+	// ErrConflictingOptions reports options that cannot apply together, one
+	// of which would be silently ignored. For Open: WithBackend beside
+	// WithGraph or WithDevice, which choose the graph and the device of the
+	// ONNX backend WithBackend replaces, or beside any WithRuntime, which
+	// selects the runtime it replaces; and WithRuntime(RuntimeNative) beside
+	// WithGraph or a WithDevice other than "", "auto" and "cpu", since the
+	// native backend runs no export and only on the CPU. For NewRouter:
+	// WithRouterRuntime(RuntimeNative) beside WithONNXDir or such a
+	// WithRouterDevice. WithLogger beside WithBackend is accepted and has
+	// nothing to log, since only the ONNX backend warns. The message names
+	// the options.
 	ErrConflictingOptions = errors.New("laya: conflicting options")
 )
 

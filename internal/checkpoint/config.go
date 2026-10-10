@@ -175,6 +175,30 @@ func (c *Config) MaxLen() (int, error) { return c.intField("max_len", 512) }
 // (agent.py:257). See intField for what fails.
 func (c *Config) HeadMaxLen() (int, error) { return c.intField("head_max_len", 192) }
 
+// HeadLayers is the decision head's layer count, cfg.get("head_layers", 2)
+// (common.py:137). LoadConfig has required the key. DecisionModel tests
+// head_layers > 0 first and builds no head otherwise (common.py:98), so
+// every number that is not positive, a float such as -0.5 included, is 0.
+// Only a positive value reaches range() in nn.TransformerEncoder, so it must
+// be a JSON integer. Anything else fails with
+// backend.ErrIncompatibleCheckpoint, as it does in Python: null and a string
+// in the comparison, a positive float in range(). The one exception is a
+// bool, which Python takes as 0 or 1 and this refuses.
+func (c *Config) HeadLayers() (int, error) {
+	raw := bytes.TrimSpace(c.fields["head_layers"])
+	if n, err := strconv.Atoi(string(raw)); err == nil {
+		return max(n, 0), nil
+	}
+	f, err := decodeNumber(raw)
+	if err != nil {
+		return 0, c.fieldErr("head_layers", err)
+	}
+	if f <= 0 {
+		return 0, nil
+	}
+	return 0, c.fieldErr("head_layers", fmt.Errorf("%s is not an integer", raw))
+}
+
 // intField reads key as a positive JSON integer, or dflt when it is absent.
 // build_sequence slices with the value (common.py:82-86), so Python needs an
 // int: a float literal such as 512.0, a string, a bool (which Go cannot tell

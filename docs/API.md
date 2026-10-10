@@ -244,7 +244,8 @@ type Result struct {
 // and the Router's interface is Predictor (D28). Open is laya.load: it shares
 // the Router's default loader, so a Hub repo downloads only its config and
 // tokenizer, the bundle repo at D17's pin, and the graph is a local ONNX
-// export (D24). *Agent satisfies Predictor.
+// export (D24). With WithRuntime(RuntimeNative) it downloads the weights too
+// and runs them in pure Go (D30). *Agent satisfies Predictor.
 type Agent struct {
 	// unexported: backend, cfg, tokenizer, temperatures
 	mu sync.RWMutex // guards maxLen and headMaxLen
@@ -289,13 +290,41 @@ func WithCacheDir(dir string) Option
 func WithLogger(l *slog.Logger) Option
 // WithBackend runs the checkpoint on b, a public leaf package type (PLAN D9): test
 // doubles, alternative runtimes. The config and tokenizer are still downloaded; no
-// export is looked for and no ONNX backend opened. Beside WithGraph or WithDevice it
-// is ErrConflictingOptions; nil keeps the ONNX backend. A successful Open hands b to
+// export is looked for and no ONNX backend opened. Beside WithGraph, WithDevice or
+// any WithRuntime it is ErrConflictingOptions; nil keeps the ONNX backend. A successful Open hands b to
 // the Agent, whose Close closes it; a failed Open leaves b open and the caller's (D29).
 // Its outputs are held to the ONNX backend's shapes: kmax logits and the config's act
 // width per row, else ErrIncompatibleCheckpoint. b must be safe for concurrent
 // Forward calls, as backend.Backend requires: the Agent does not serialize them.
 func WithBackend(b backend.Backend) Option
+
+// Runtime selects the forward pass (D30). The zero value is RuntimeONNX.
+type Runtime int
+
+const (
+	RuntimeONNX   Runtime = iota // a local ONNX export on ONNX Runtime (D24): the default
+	RuntimeNative                // the checkpoint's own model.safetensors, pure Go, CPU only (D8)
+)
+
+func (r Runtime) String() string // "onnx", "native", else "Runtime(N)"
+
+// WithRuntime selects the runtime. With RuntimeNative a Hub snapshot also fetches
+// <sub>/model.safetensors and <sub>/encoder/config.json, through the same
+// hash-verified, cancellable path, and no export is looked for; a local directory
+// must hold both files. Without encoder/config.json it is ErrIncompatibleCheckpoint,
+// where upstream builds the encoder from the config's "encoder" Hub id
+// (common.py:132-135; a D30 deviation). Before a weight is decoded, the weights'
+// head layer count and act width are held to rl_agent_config.json's head_layers
+// (none when it is not positive) and len(act_costs)+1, else
+// ErrIncompatibleCheckpoint; the backend's outputs are then shape-checked as
+// WithBackend's are.
+//
+// Conflicts (ErrConflictingOptions, before anything is downloaded):
+//   - RuntimeNative beside WithGraph;
+//   - RuntimeNative beside a WithDevice other than "", "auto" and "cpu";
+//   - any WithRuntime, RuntimeONNX included, beside a non-nil WithBackend.
+// A value that is neither runtime is ErrUnknownRuntime as the option is applied.
+func WithRuntime(rt Runtime) Option
 
 // ---------------------------------------------------------------- router
 
@@ -418,6 +447,12 @@ func WithONNXDir(dir string) RouterOption     // laya-<name>.onnx; else $LAYA_ON
 func WithRouterRevision(rev string) RouterOption // as WithRevision, for every checkpoint the loader downloads
 func WithRouterCacheDir(dir string) RouterOption // as WithCacheDir; WithONNXDir still wins over <cache>/onnx
 func WithRouterLogger(l *slog.Logger) RouterOption // as WithLogger, for every backend the loader opens
+// WithRouterRuntime is WithRuntime for every checkpoint the default loader builds
+// (D30). RuntimeNative beside WithONNXDir, or beside a WithRouterDevice other than
+// "", "auto" and "cpu", fails NewRouter with ErrConflictingOptions, whether or not a
+// custom WithLoader is given; that loader ignores the runtime, as it ignores every
+// other setting here. Neither runtime is ErrUnknownRuntime.
+func WithRouterRuntime(rt Runtime) RouterOption
 // Offline comes from the environment: HF_HUB_OFFLINE (or TRANSFORMERS_OFFLINE), read as
 // huggingface_hub reads it, or LAYA_OFFLINE.
 
@@ -443,7 +478,9 @@ var (
 	ErrNoOptions               = errors.New("laya: question has no options") // Python: ValueError from an empty softmax
 	ErrInvalidLimits           = errors.New("laya: max_len and head_max_len must be positive") // SetLimits, WithLimits
 	ErrInvalidRevision         = errors.New("laya: invalid revision")    // WithRevision / WithRouterRevision not safe in a URL and a cache path
-	ErrConflictingOptions      = errors.New("laya: conflicting options") // WithBackend beside WithGraph or WithDevice
+	ErrUnknownRuntime          = errors.New("laya: unknown runtime")     // WithRuntime / WithRouterRuntime neither RuntimeONNX nor RuntimeNative
+	ErrConflictingOptions      = errors.New("laya: conflicting options") // WithBackend beside WithGraph, WithDevice or WithRuntime;
+	// RuntimeNative beside WithGraph / WithONNXDir or a device other than "", "auto", "cpu"
 )
 
 // OptionBudgetError names the offending question, replacing Python's

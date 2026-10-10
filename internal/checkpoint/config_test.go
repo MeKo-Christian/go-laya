@@ -381,3 +381,52 @@ func TestConfigBudgetsShipped(t *testing.T) {
 		})
 	}
 }
+
+// TestConfigHeadLayers pins build_model's head_layers (common.py:137, 98):
+// DecisionModel tests head_layers > 0 first, and builds no head layers for
+// any number that fails it, a float such as -0.5 or 0.0 included. Only a
+// positive value reaches range() in nn.TransformerEncoder, which refuses
+// anything but an int; null and a string fail the comparison itself.
+// Python's bool, an int subclass, is the one value Go reads differently, as
+// intField documents for max_len.
+func TestConfigHeadLayers(t *testing.T) {
+	tests := []struct {
+		value string
+		want  int // -1 means an error
+	}{
+		{`2`, 2},
+		{`1`, 1},
+		{`0`, 0},
+		{`-3`, 0},
+		{`0.0`, 0},
+		{`-0.5`, 0},
+		{`-1.0`, 0},
+		{`-99999999999999999999999`, 0},
+		{`2.0`, -1},
+		{`0.5`, -1},
+		{`false`, -1},
+		{`"2"`, -1},
+		{`null`, -1},
+		{`true`, -1},
+		{`[2]`, -1},
+		{`99999999999999999999999`, -1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.value, func(t *testing.T) {
+			cfg, err := LoadConfig(writeConfig(t, `{"encoder":"x","head_layers":`+tt.value+`}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := cfg.HeadLayers()
+			if tt.want < 0 {
+				if !errors.Is(err, backend.ErrIncompatibleCheckpoint) || !strings.Contains(err.Error(), "head_layers:") {
+					t.Fatalf("HeadLayers = %d, %v; want ErrIncompatibleCheckpoint naming head_layers", got, err)
+				}
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Fatalf("HeadLayers = %d, %v; want %d", got, err, tt.want)
+			}
+		})
+	}
+}
