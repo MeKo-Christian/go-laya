@@ -161,3 +161,15 @@ func TestNarrowRejectsOverflowingRange(t *testing.T) {
 		}
 	}
 }
+
+// A NaN delta compares false against any tolerance, so without an explicit
+// check equalF32 would accept a kernel that returns NaN.
+func TestEqualF32RejectsNaN(t *testing.T) {
+	nan := float32(math.NaN())
+
+	for _, tc := range []struct{ got, want float32 }{{nan, 1}, {1, nan}, {nan, nan}} {
+		if equalF32([]float32{tc.got}, []float32{tc.want}, 1e-3) {
+			t.Errorf("equalF32(%v, %v, 1e-3) = true; want false", tc.got, tc.want)
+		}
+	}
+}

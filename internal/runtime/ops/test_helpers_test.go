@@ -33,8 +33,9 @@ func equalApprox(got, want []float32, tol float64) bool {
 	}
 
 	for i := range got {
+		// A NaN delta compares false against tol, so reject it explicitly.
 		delta := math.Abs(float64(got[i] - want[i]))
-		if delta > tol {
+		if math.IsNaN(delta) || delta > tol {
 			return false
 		}
 	}

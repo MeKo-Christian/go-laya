@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"math"
 	"testing"
 
 	"github.com/MeKo-Christian/go-laya/internal/runtime/tensor"
@@ -53,5 +54,17 @@ func TestRoPEEmpty(t *testing.T) {
 				t.Fatalf("len(data) = %d, want 0", n)
 			}
 		})
+	}
+}
+
+// A NaN delta compares false against any tolerance, so without an explicit
+// check equalApprox would accept a kernel that returns NaN.
+func TestEqualApproxRejectsNaN(t *testing.T) {
+	nan := float32(math.NaN())
+
+	for _, tc := range []struct{ got, want float32 }{{nan, 1}, {1, nan}, {nan, nan}} {
+		if equalApprox([]float32{tc.got}, []float32{tc.want}, 1e-3) {
+			t.Errorf("equalApprox(%v, %v, 1e-3) = true; want false", tc.got, tc.want)
+		}
 	}
 }

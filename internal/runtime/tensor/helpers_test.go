@@ -30,7 +30,9 @@ func equalF32(a, b []float32, tol float64) bool {
 			continue
 		}
 
-		if math.Abs(float64(a[i]-b[i])) > tol {
+		// A NaN delta compares false against tol, so reject it explicitly.
+		delta := math.Abs(float64(a[i] - b[i]))
+		if math.IsNaN(delta) || delta > tol {
 			return false
 		}
 	}
