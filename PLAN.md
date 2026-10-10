@@ -42,7 +42,7 @@ box under it is ticked.
 | [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                    |
 | [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | ✅ done                    |
 | [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | 🟡 B.1, B.2, B.6–B.10 done |
-| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | 🟡 8.1–8.3 done            |
+| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | 🟡 8.1–8.7 done            |
 
 **Critical path to 1.0:** M7 (loader → `SystemOne` → answer parity → e2e parity → README). The
 Backlog and M8 do not gate 1.0.
@@ -703,6 +703,15 @@ the ECE/Brier inputs.
       them, so a new divergence would show only as a different count inside an expected failure.
       The 108 codepoints from `scripts/probe_ccc.py` are the natural allowlist. Found while
       settling B.2 (2026-10-10).
+- [ ] **B.12** Decide where a batch whose every choice question has a single option is refused. It
+      reaches the backend with kmax = 1, because `systemone.go` rejects only zero options. The
+      native head errors there, matching upstream's `topk(2)`, which raises
+      (`internal/head/head.go`, `checkMarkers`); the ONNX path has no check, and its failure is
+      untested. Decide whether to reject this before the backend, and test both backends. Found
+      while ticking 8.6 (2026-10-10).
+- [ ] **B.13** Route `safetensors.ReadHeader` through the same regular-file open as
+      `safetensors.Open`. It still uses a plain `os.Open`, so a FIFO path blocks it. Found while
+      ticking 8.7 against PR #46's review fix (2026-10-10).
 
 ### M8 — Pure-Go native backend (after 1.0)
 
@@ -722,7 +731,7 @@ zero-shared-library backend, not a speed play (D8). The facts it needs are in
       `Narrow` bounds its range without overflowing, and the approximate test helpers reject NaN.
       All 62 tests (53 lifted, 9 in the new `robustness_test.go` files) pass on amd64, on arm64
       under `qemu-aarch64-static` and on 386 (the pure-Go fallback). `ReadHeader` stays the only
-      header parser, and F16/BF16 decoding builds on it in 8.7 (`tensor/doc.go`). `NOTICE`
+      header parser, and F16 decoding builds on it in 8.7 (`tensor/doc.go`). `NOTICE`
       records the provenance and the fixes. Rerun on `500b614`:
       `go test -count=1 -v ./internal/runtime/...` gives 62 `--- PASS` and no failure; both
       packages also pass under `GOARCH=arm64 go test -exec qemu-aarch64-static` and
@@ -794,16 +803,72 @@ zero-shared-library backend, not a speed play (D8). The facts it needs are in
       `TestAttentionRealDimensions`; the full theta on sliding layers fails
       `TestAttentionMatchesTorch/attn_sliding_padded`; eager's average for rows without keys
       fails it too; a float64 `inv_freq` fails `TestRopeMatchesTorch`.
-- [ ] **8.5.1** Assemble the encoder: `tok_embeddings`, then the embeddings norm, then the layers in
+- [x] **8.5.1** Assemble the encoder: `tok_embeddings`, then the embeddings norm, then the layers in
       `layer_types` order (full or sliding attention per layer), then `final_norm`. Check it
       against the real `ModernBertModel` on a tiny config. Found while planning batch 2
       (2026-10-10): no task covered the assembly, and 8.6 is the decision head's own loop.
-- [ ] **8.6** The decision head with a **ReLU** FFN and the manual layer loop.
+      (2026-10-10) `internal/modernbert.Encoder` runs the token embeddings, the embeddings norm,
+      the layers in plan order and `final_norm`; each `Layer` adds both residuals to the
+      un-normed input, and layer 0's `attn_norm` is the identity, enforced both ways. `Config`
+      resolves the plan as `ModernBertConfig` does: explicit `layer_types`, else every
+      `global_attn_every_n_layers`-th (3) layer full; θ from `rope_parameters`, else
+      `global/local_rope_theta`, else 160000/10000, with null kept apart from a missing key; it
+      errors where transformers would run a RoPE it does not implement. Both checkpoint configs
+      give 28 and 22 layers with 0, 3, … full. The dumper appends the real `ModernBertModel` of a
+      4-layer tiny config (F, S, S, F; window 3; a padded row longer than the window) and 39
+      `"config"` records; every older record is byte-identical. A review fix pins the 39 case
+      names and each one's outcome, so a regenerated `ops.json` that loses a case or flips an
+      outcome fails. Rerun on `598d84c`: `go test -count=1 -v ./internal/modernbert/` passes:
+      `TestEncoderMatchesTorch` (padded positions included, worst stage 26 % of an empirical
+      float32 bound; seven wrong assemblies each miss by ≥ 85 000×),
+      `TestConfigMatchesTransformers` (17 same plan, 13 transformers raises, 9 Go refuses),
+      `TestEncoderRealDimensions` at ModernBERT-large's shapes. A dumper rerun leaves `ops.json`
+      byte-identical (`git diff --exit-code`). Mutations (PR #48): layer 0 given an `attn_norm`,
+      the plan shifted by one, `final_norm` or the embeddings norm skipped, and either residual
+      taken from the normed input each fail `TestEncoderMatchesTorch`.
+- [x] **8.6** The decision head with a **ReLU** FFN and the manual layer loop.
       (2026-10-10, user decision) Covers the whole head after the encoder: type_emb, the two
       layers, the marker gather, the scorer, the -1e4 fill, the act features and act_head, in a
       new package internal/head.
-- [ ] **8.7** fp16 weight loading. The loader tolerates the per-checkpoint `temperature` dtype,
+      (2026-10-10) `Head` adds `type_emb` at every position, runs the layers as the manual loop
+      (`norm_first`, ReLU 4d FFN, LayerNorm eps 1e-5 with bias, packed `in_proj` with bias,
+      key-padding mask `~attention_mask.bool()`, `nhead = max(1, d//64)`, no final norm),
+      gathers `marker_pos.clamp(min=0)`, scores with LayerNorm → Linear → erf GELU → Linear and
+      fills `-1e4`, then builds the float32 features (softmax via `calib.ActSoftmax`) and the act
+      head on `h[:,0]`. Any nonzero attention-mask value counts as a token, as upstream's
+      `.bool()` does (a review fix: the head had rejected values other than 0 and 1 and counted
+      tokens by summing; `TestNonzeroMaskIsRealToken`). Fewer than two marker columns is an
+      error, where upstream's `topk(2)` raises; a fill of 0 or -1 reads [CLS] and gives
+      bit-identical outputs. The oracle is `scripts/dump_head_ops.py`, which imports upstream's
+      `DecisionModel` and runs it eval/no_grad/fp32 at d=8 (one head: torch's slow path) plus a
+      two-head layer on the fast path the checkpoints' 16 and 12 heads take, recorded by
+      counting calls to the fused kernel. Two review fixes strengthened the tests: the
+      full-width padding check now writes into the input itself (`tensor.New` copies, so it
+      could not fail), and the fixture tracks every layer weight it reads, so a tensor upstream
+      adds to a layer fails the drift check. Rerun on `598d84c`:
+      `go test -count=1 -v ./internal/head/` passes, every stage within `1e-5·(1+|want|)` (worst
+      9 % of it), and a rerun of the dumper leaves `internal/head/testdata/head.json`
+      byte-identical (`git diff --exit-code`). Mutations (PR #47): type_emb at [CLS] only,
+      post-norm, GELU in the FFN, -inf for the fill, the unclamped entropy denominator, pooling
+      the first marker, no key-padding mask and q/k swapped each fail `TestHeadMatchesTorch`.
+- [x] **8.7** fp16 weight loading. The loader tolerates the per-checkpoint `temperature` dtype,
       which is never read.
+      (2026-10-10) `internal/safetensors.Open` validates through `ReadHeader`'s parser (split into
+      `readHeaderFrom` so header and data go through one descriptor), refuses non-regular files and
+      every tensor that is neither F16 nor F32 except `temperature`, which may have any dtype.
+      A review fix opens the file `O_NONBLOCK` and type-checks the opened descriptor rather than
+      the path, so a regular file swapped for a FIFO between the check and the open cannot block
+      (`TestOpenRegularFIFO`). `File.Float32` reads one tensor with `ReadAt` in 1 MiB chunks
+      inside its validated span, checks the context per chunk, and decodes F16 exactly; BF16 is
+      rejected (no checkpoint uses it), and `tensor/doc.go` now promises F16 and F32 only.
+      `TestF16ToF32Exhaustive` checks all 65536 bit patterns against a decoder written from the
+      binary16 formula. `go test -count=1 -v ./internal/safetensors/` passes on `598d84c`. Gated:
+      `LAYA_MODELS=… go test -count=1 -run TestShippedCheckpointsDecode -v ./internal/safetensors/`
+      decodes every tensor but `temperature` of all three checkpoints to finite values in 5.6 s,
+      finds §1.2/§1.3's names and shapes, element counts equal to §1.1's parameter counts, and
+      `temperature` F32/F32/F16. Mutations (PR #46): subnormals as 0 or as normals, rebias by
+      127, big-endian F16 or F32, `Begin` without `DataOffset`, an F32-only or no `temperature`
+      exemption, and a context check hoisted out of the chunk loop each fail at least one test.
 - [ ] **8.8** Gate promotion on the same golden vectors: probabilities within 1e-4 and zero argmax
       flips. Head intermediates for invariants #35–38 are generated here, as a reviewed
       regeneration.

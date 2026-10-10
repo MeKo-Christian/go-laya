@@ -208,6 +208,12 @@ func decodeKeys(keys map[string]json.RawMessage, dst map[string]any) error {
 // implemented, and an error is better than an answer that differs. The
 // thetas are resolved for the types the plan uses, as
 // ModernBertRotaryEmbedding builds only those.
+//
+// Layers allocates per configured layer and, like transformers, sets no upper
+// bound on num_hidden_layers: without layer_types, nothing in the config
+// limits the plan's length. A caller holding an untrusted config bounds
+// NumHiddenLayers first, as internal/backend/native does against the
+// checkpoint's own layer count.
 func (c Config) Layers() ([]LayerType, error) {
 	if c.NumHiddenLayers <= 0 {
 		return nil, fmt.Errorf("modernbert: config num_hidden_layers %d, want a positive value", c.NumHiddenLayers)
@@ -278,7 +284,8 @@ func (c Config) checkRope() error {
 	if c.NumAttentionHeads <= 0 {
 		return fmt.Errorf("modernbert: config num_attention_heads %d, want a positive value", c.NumAttentionHeads)
 	}
-	if c.HeadDim.Value != nil && *c.HeadDim.Value*c.NumAttentionHeads != c.HiddenSize {
+	// Compared by division: head_dim * heads can wrap around to hidden_size.
+	if c.HeadDim.Value != nil && (c.HiddenSize%c.NumAttentionHeads != 0 || *c.HeadDim.Value != c.HiddenSize/c.NumAttentionHeads) {
 		return fmt.Errorf("modernbert: config head_dim %d is not hidden_size %d / %d heads",
 			*c.HeadDim.Value, c.HiddenSize, c.NumAttentionHeads)
 	}

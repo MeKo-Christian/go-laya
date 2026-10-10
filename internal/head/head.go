@@ -5,8 +5,8 @@
 //
 // It is tested against the real DecisionModel and nn.TransformerEncoderLayer
 // of the pinned torch through testdata/head.json, which
-// scripts/dump_head_ops.py writes. It does not load weights (Task 8.7) and is
-// not a backend.Backend (Task 8.10).
+// scripts/dump_head_ops.py writes. It does not load weights and is not a
+// backend.Backend: internal/backend/native (Task 8.10) does both.
 package head
 
 import (

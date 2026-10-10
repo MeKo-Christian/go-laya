@@ -8,5 +8,6 @@
 //
 // The backend.Backend implementation is not here; it is Task 8.10's
 // internal/backend/native, built on these blocks. Nor does this package load
-// weights: Task 8.7 decides how they get in.
+// weights: internal/backend/native decodes them from model.safetensors with
+// internal/safetensors (Task 8.7) and hands them to the constructors here.
 package modernbert
