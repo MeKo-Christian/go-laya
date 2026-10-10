@@ -758,13 +758,50 @@ zero-shared-library backend, not a speed play (D8). The facts it needs are in
       `TestMLPRealDimensions` checks values at ModernBERT-large's `[5248,1024]`/`[1024,2624]` and
       mmBERT-base's 768/1152. Mutations (PR #42): each of those four readings, put into `mlp.go`,
       fails `TestMLPMatchesTorch` on all three cases.
-- [ ] **8.4** Fused QKV unpacking (`attn.Wqkv [3072,1024]`, no attention bias).
-- [ ] **8.5** Sliding-window attention masks (window 128, ±64) and per-layer-type RoPE theta.
+- [x] **8.4** Fused QKV unpacking (`attn.Wqkv [3072,1024]`, no attention bias).
+      (2026-10-10) `internal/modernbert.Attention` splits `Wqkv [3H, H]` as
+      `(3, heads, head_dim)`, q, k, v head-major, with `Wo [H, H]` and no biases, as sdpa runs
+      `ModernBertAttention`. `NewAttention` rejects Wqkv rows ≠ 3H, H not divisible by the heads,
+      an odd head_dim and a `Wo` other than `[H, H]`; `Forward` rejects a wrong input or padding
+      shape. The dumper appends two `"attention"` cases from the real module, on seeded random
+      weights, to `ops.json`. `go test -count=1 -v ./internal/modernbert/` passes:
+      `TestAttentionMatchesTorch` (worst 3.3 % of a magnitude-aware float32 tolerance) also
+      asserts that q and k swapped and the `(heads, 3, head_dim)` split each miss torch by at
+      least 10× the tolerance (226 937× and 250 605×); `TestAttentionRealDimensions` checks
+      ModernBERT-large's 1024/16 heads and mmBERT-base's 768/12 (head_dim 64) on synthetic
+      weights; `TestAttentionErrors` covers the errors. A rerun of the dumper leaves
+      `internal/modernbert/testdata/ops.json` byte-identical (`git diff --exit-code`). Mutations
+      (PR #45): q and k swapped and the `(heads, 3, head_dim)` split each fail
+      `TestAttentionMatchesTorch` on both cases and `TestAttentionRealDimensions` on both sizes.
+- [x] **8.5** Sliding-window attention masks (window 128, ±64) and per-layer-type RoPE theta.
+      (2026-10-10) The sdpa window is `|q−k| ≤ config.sliding_window = local_attention // 2`
+      (64, `masking_utils.py:142-152,1292`): `ModernBertAttention` stores `sliding_window + 1`
+      = 65 (`modeling_modernbert.py:253`), but sdpa never reads it, so the window is 64, not 65.
+      The fixture records transformers' own masks, and `TestAttentionMatchesTorch` matches them
+      bit for bit, with distance w allowed and w+1 not. A padded query with no allowed key gets
+      sdpa's zeros (eager would average every value); the sliding case has 5 such queries, and
+      Go's output there is asserted exactly 0. RoPE is rotate_half at each layer type's theta
+      (`FullAttention(θ)`, `SlidingAttention(θ, localAttention)`): `TestRopeMatchesTorch` finds
+      `inv_freq` bit-exact with `ModernBertRotaryEmbedding` at head_dim 64 for θ 160000 and
+      10000, with 32 and 26 of 640 cos/sin values one ulp off out to position 8191.
+      `go test -count=1 -v ./internal/modernbert/` passes `TestAttentionMatchesTorch`,
+      `TestLayerTypes`, `TestRopeTables` and `TestRopeMatchesTorch`; the window one wider, one
+      narrower, the dropped padding mask, interleaved RoPE, the other type's theta and a
+      1/head_dim scale each miss torch by at least 38 610× the tolerance. The dumper rerun leaves
+      `ops.json` byte-identical (see 8.4). Mutations (PR #45): the window one wider or narrower
+      fails `TestAttentionMatchesTorch/attn_sliding_padded` and `TestLayerTypes`; the dropped
+      padding mask, interleaved RoPE and a 1/head_dim scale fail `TestAttentionMatchesTorch` and
+      `TestAttentionRealDimensions`; the full theta on sliding layers fails
+      `TestAttentionMatchesTorch/attn_sliding_padded`; eager's average for rows without keys
+      fails it too; a float64 `inv_freq` fails `TestRopeMatchesTorch`.
 - [ ] **8.5.1** Assemble the encoder: `tok_embeddings`, then the embeddings norm, then the layers in
       `layer_types` order (full or sliding attention per layer), then `final_norm`. Check it
       against the real `ModernBertModel` on a tiny config. Found while planning batch 2
       (2026-10-10): no task covered the assembly, and 8.6 is the decision head's own loop.
 - [ ] **8.6** The decision head with a **ReLU** FFN and the manual layer loop.
+      (2026-10-10, user decision) Covers the whole head after the encoder: type_emb, the two
+      layers, the marker gather, the scorer, the -1e4 fill, the act features and act_head, in a
+      new package internal/head.
 - [ ] **8.7** fp16 weight loading. The loader tolerates the per-checkpoint `temperature` dtype,
       which is never read.
 - [ ] **8.8** Gate promotion on the same golden vectors: probabilities within 1e-4 and zero argmax

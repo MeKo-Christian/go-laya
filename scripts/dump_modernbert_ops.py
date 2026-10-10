@@ -34,6 +34,18 @@ records hold the real ``ModernBertRotaryEmbedding`` at the checkpoints' head_dim
 thetas, out to position 8191, where a one-ulp slip in ``inv_freq`` would have grown into the
 angle.
 
+Task 8.5.1 appends the whole encoder: an "encoder" record from the real ``ModernBertModel`` of a
+tiny config (ENC_CONFIG), four layers so that both layer types occur, every parameter drawn at
+random (every norm weight too, so an identity cannot pass as ones). It holds the config as
+passed, the layer types and thetas transformers resolved from it, the input ids and padding
+mask, every weight under its ``named_parameters`` name, the hidden states after the embeddings
+and after each layer, and ``last_hidden_state``. The summary reloads the record into a fresh
+model, requires it to reproduce the output bit for bit, and prints how far each wrong assembly
+-- layer 0 given an ``attn_norm``, the layer types shifted, a norm skipped, a residual taken from
+the normed input -- moves it, and stops unless each moves it by 1e-3 at least. The "config"
+records hold how ``ModernBertConfig`` resolves a table of configs (CONFIG_CASES) to a layer
+plan, or the exception it raises, for Go's ``Config.Layers``.
+
 The file is meant to grow. Each case draws from its own generator,
 seeded from ``SEED`` and its name, so adding, removing or reordering cases leaves every other
 record byte-identical. The header holds nothing that depends on which cases exist.
@@ -53,7 +65,15 @@ Format, one JSON object::
                {"op": "rope", "name": ..., "module_class": "ModernBertRotaryEmbedding",
                 "layer_type": ..., "rope_type": "default", "rope_theta": ..., "head_dim": 64,
                 "attention_scaling": 1.0, "positions": [...], "inv_freq": T, "cos": T,
-                "sin": T}, ...]}
+                "sin": T},
+               {"op": "encoder", "name": ..., "module_class": "ModernBertModel", "seed": ...,
+                "config": {...}, "layer_types": [...], "rope_thetas": {...},
+                "sliding_window": ..., "input_ids": [[id]], "attention_mask": [[0|1]],
+                "weights": {name: T}, "hidden_states": [T], "output": T},
+               {"op": "config", "name": ..., "config": {...}, "error": null | "Exception",
+                "num_hidden_layers": ..., "layer_types": [...], "rope": {type: {"rope_type":
+                ..., "rope_theta": ...}}, "local_attention": ..., "sliding_window": ...,
+                "hidden_size": ..., "num_attention_heads": ..., "head_dim": ...}, ...]}
 
 where ``T`` is ``{"dtype": "float32", "shape": [...], "data": [...]}``, row-major, each value
 the shortest decimal that round-trips to its float32. ``"weight": null`` means the module has
@@ -73,6 +93,7 @@ import hashlib
 import json
 import math
 import sys
+import types
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -160,6 +181,139 @@ ROPE_CONFIG = CONFIG | {
 # with the position, so 8191 shows what 12 tokens cannot.
 ROPE_POSITIONS = [0, 1, 511, 1023, 8191]
 ROPE_CASES = [("rope_full_d64", "full_attention"), ("rope_sliding_d64", "sliding_attention")]
+
+# The encoder case's model: ATTN_CONFIG's window and thetas, four layers, which
+# global_attn_every_n_layers' default 3 makes full, sliding, sliding, full (layer_types is left
+# out on purpose, so that the record shows how transformers derives it), and a vocabulary of 64.
+ENC_CONFIG = ATTN_CONFIG | {"vocab_size": 64, "num_hidden_layers": 4}
+# (name, real tokens per row). Row 1 has 5 real tokens and 7 of right padding, more than the
+# window of 3: on the sliding layers its queries 8-11 have no key left.
+ENC_CASES: list[tuple[str, list[int]]] = [("encoder_padded", [12, 5])]
+ENC_SEQ = 12
+# Wrong assemblies the summary measures; each must move the output by ENC_MIN_MOVE at least,
+# a thousand times the float32 noise (torch-f64 ~1e-6), or the dump stops.
+ENC_MIN_MOVE = 1e-3
+ENC_VARIANTS = (
+    "attn_norm0",
+    "ones_norm0",
+    "shift",
+    "no_emb_norm",
+    "no_final_norm",
+    "res_attn",
+    "res_mlp",
+)
+
+# (name, ModernBertConfig keyword arguments): how transformers resolves the layer plan, for
+# Go's Config.Layers. Each records the layer types, the RoPE type and theta of each type the
+# plan uses, the window and the heads, or the exception transformers raises. Covered: the
+# derivation from global_attn_every_n_layers, explicit layer_types, the theta fallbacks
+# (rope_parameters, global/local_rope_theta, the defaults), null against a missing key, and
+# the keys Go does not implement (rope_scaling, a non-default rope_type, its legacy "type"
+# spelling, a head_dim other than hidden / heads).
+CONFIG_CASES: list[tuple[str, dict[str, Any]]] = [
+    ("cfg_empty", {}),
+    ("cfg_every_third", {"num_hidden_layers": 7}),
+    (
+        "cfg_every_second",
+        {"num_hidden_layers": 5, "global_attn_every_n_layers": 2, "local_attention": 6},
+    ),
+    ("cfg_every_layer", {"num_hidden_layers": 2, "global_attn_every_n_layers": 1}),
+    ("cfg_every_zero", {"num_hidden_layers": 2, "global_attn_every_n_layers": 0}),
+    ("cfg_every_null", {"num_hidden_layers": 2, "global_attn_every_n_layers": None}),
+    (
+        "cfg_explicit",
+        {
+            "num_hidden_layers": 2,
+            "global_attn_every_n_layers": None,
+            "layer_types": ["sliding_attention", "full_attention"],
+        },
+    ),
+    ("cfg_explicit_empty", {"num_hidden_layers": 1, "layer_types": []}),
+    ("cfg_count", {"num_hidden_layers": 3, "layer_types": ["full_attention", "sliding_attention"]}),
+    ("cfg_unknown_type", {"num_hidden_layers": 1, "layer_types": ["bogus"]}),
+    ("cfg_zero_layers", {"num_hidden_layers": 0}),
+    ("cfg_negative_layers", {"num_hidden_layers": -1}),
+    ("cfg_legacy_thetas", {"num_hidden_layers": 2, "global_rope_theta": 5, "local_rope_theta": 7}),
+    (
+        "cfg_partial_rope_parameters",
+        {
+            "num_hidden_layers": 2,
+            "global_rope_theta": 5,
+            "rope_parameters": {"full_attention": {"rope_type": "default", "rope_theta": 1}},
+        },
+    ),
+    (
+        "cfg_theta_missing_from_entry",
+        {
+            "num_hidden_layers": 2,
+            "local_rope_theta": 3,
+            "rope_parameters": {"sliding_attention": {"rope_type": "default"}},
+        },
+    ),
+    (
+        "cfg_no_rope_type",
+        {"num_hidden_layers": 2, "rope_parameters": {"full_attention": {"rope_theta": 2}}},
+    ),
+    ("cfg_rope_theta_ignored", {"num_hidden_layers": 1, "rope_theta": 123}),
+    (
+        "cfg_nulls",
+        {"num_hidden_layers": 2, "layer_types": None, "rope_parameters": None, "rope_theta": None},
+    ),
+    (
+        "cfg_unused_nulls",
+        {
+            "num_hidden_layers": 2,
+            "layer_types": ["full_attention", "full_attention"],
+            "global_rope_theta": None,
+            "local_rope_theta": None,
+            "rope_parameters": {"full_attention": {"rope_theta": 9}},
+        },
+    ),
+    ("cfg_null_legacy_theta", {"num_hidden_layers": 1, "global_rope_theta": None}),
+    (
+        "cfg_null_theta",
+        {"num_hidden_layers": 2, "rope_parameters": {"sliding_attention": {"rope_theta": None}}},
+    ),
+    ("cfg_null_entry", {"num_hidden_layers": 1, "rope_parameters": {"full_attention": None}}),
+    ("cfg_null_layers", {"num_hidden_layers": None}),
+    ("cfg_null_heads", {"num_attention_heads": None}),
+    ("cfg_null_hidden", {"hidden_size": None}),
+    ("cfg_null_window", {"local_attention": None}),
+    ("cfg_theta_zero", {"num_hidden_layers": 1, "global_rope_theta": 0}),
+    ("cfg_negative_window", {"num_hidden_layers": 2, "local_attention": -2}),
+    (
+        "cfg_yarn",
+        {"num_hidden_layers": 1, "rope_parameters": {"full_attention": {"rope_type": "yarn"}}},
+    ),
+    (
+        "cfg_linear",
+        {
+            "num_hidden_layers": 1,
+            "rope_parameters": {"full_attention": {"rope_type": "linear", "factor": 2.0}},
+        },
+    ),
+    (
+        "cfg_legacy_type",
+        {
+            "num_hidden_layers": 1,
+            "rope_parameters": {"full_attention": {"type": "linear", "factor": 2.0}},
+        },
+    ),
+    (
+        "cfg_legacy_type_default",
+        {"num_hidden_layers": 1, "rope_parameters": {"full_attention": {"type": "default"}}},
+    ),
+    (
+        "cfg_empty_rope_type",
+        {"num_hidden_layers": 1, "rope_parameters": {"full_attention": {"rope_type": ""}}},
+    ),
+    ("cfg_rope_scaling", {"num_hidden_layers": 2, "rope_scaling": {"rope_theta": 42}}),
+    ("cfg_rope_scaling_null", {"num_hidden_layers": 2, "rope_scaling": None}),
+    ("cfg_head_dim_other", {"num_hidden_layers": 2, "head_dim": 16}),
+    ("cfg_head_dim_same", {"num_hidden_layers": 2, "head_dim": 64}),
+    ("cfg_head_dim_null", {"num_hidden_layers": 2, "head_dim": None}),
+    ("cfg_case_folded_key", {"num_hidden_layers": 2, "Num_Hidden_Layers": 5}),
+]
 
 # The versions that decide the numbers. The Go test asserts the same pins.
 PINNED = ("torch", "transformers", "numpy")
@@ -662,6 +816,214 @@ def summarize_attention(c: dict[str, Any]) -> None:
     )
 
 
+def check_encoder_model(model: ModernBertModel) -> None:
+    """The settings the Go encoder assumes: sdpa, no bias, default RoPE, inference mode."""
+    cfg = model.config
+    if cfg._attn_implementation != "sdpa" or cfg.attention_bias or cfg.mlp_bias:
+        raise AssertionError(f"encoder model: {cfg._attn_implementation!r}, biases")
+    if model.training:
+        raise AssertionError("encoder model is in training mode")
+    for layer_type in set(cfg.layer_types):
+        if cfg.rope_parameters[layer_type]["rope_type"] != "default":
+            raise AssertionError(f"{layer_type}: rope_type is not 'default'")
+        if getattr(model.rotary_emb, f"{layer_type}_attention_scaling") != 1.0:
+            raise AssertionError(f"{layer_type}: default RoPE with an attention scaling")
+
+
+def encoder_param_names(layers: int) -> list[str]:
+    """Every parameter ModernBertModel should have; anything else is an upstream drift."""
+    names = ["embeddings.tok_embeddings.weight", "embeddings.norm.weight"]
+    for i in range(layers):
+        if i > 0:  # layer 0's attn_norm is nn.Identity
+            names.append(f"layers.{i}.attn_norm.weight")
+        names += [
+            f"layers.{i}.attn.Wqkv.weight",
+            f"layers.{i}.attn.Wo.weight",
+            f"layers.{i}.mlp_norm.weight",
+            f"layers.{i}.mlp.Wi.weight",
+            f"layers.{i}.mlp.Wo.weight",
+        ]
+    return names + ["final_norm.weight"]
+
+
+def encoder_case(model: ModernBertModel, name: str, lengths: list[int]) -> dict[str, Any]:
+    cfg = model.config
+    check_encoder_model(model)
+    params = dict(model.named_parameters())
+    if sorted(params) != sorted(encoder_param_names(cfg.num_hidden_layers)):
+        raise AssertionError(f"ModernBertModel parameters moved: {sorted(params)}")
+
+    seed = case_seed(name)
+    g = torch.Generator().manual_seed(seed)
+    weights = {}
+    for path, p in params.items():
+        if p.ndim == 1:  # a norm: uniform in [0.5, 1.5], far from ones, as in norm_case
+            w = 0.5 + torch.rand(p.shape, generator=g, dtype=torch.float32)
+        elif path == "embeddings.tok_embeddings.weight":
+            w = randn(g, *p.shape)
+        else:  # a Linear [out, in]: preactivations at the spread of one input element
+            w = randn(g, *p.shape) / math.sqrt(p.shape[1])
+        with torch.no_grad():
+            p.copy_(w)
+        weights[path] = w
+
+    batch, seq = len(lengths), ENC_SEQ
+    # Real tokens anywhere but the pad id, then right padding with it, as the tokenizer pads.
+    ids = torch.randint(1, cfg.vocab_size, (batch, seq), generator=g)
+    padding = torch.tensor([[1] * n + [0] * (seq - n) for n in lengths])
+    ids = torch.where(padding.bool(), ids, cfg.pad_token_id)
+
+    # The hidden states after the embeddings and after each layer, so that a failure in Go
+    # points at a stage.
+    states: list[torch.Tensor] = []
+    hooks = [
+        mod.register_forward_hook(lambda m, i, o: states.append(o))
+        for mod in [model.embeddings, *model.layers]
+    ]
+    with torch.no_grad():
+        out = model(input_ids=ids, attention_mask=padding).last_hidden_state
+    for h in hooks:
+        h.remove()
+    if len(states) != cfg.num_hidden_layers + 1:
+        raise AssertionError(f"captured {len(states)} hidden states")
+    if torch.isnan(out).any() or any(torch.isnan(s).any() for s in states):
+        raise AssertionError(f"{name}: NaN in a hidden state")
+
+    thetas = {t: cfg.rope_parameters[t]["rope_theta"] for t in sorted(set(cfg.layer_types))}
+    return {
+        "op": "encoder",
+        "name": name,
+        "module_class": type(model).__name__,
+        "seed": seed,
+        "config": ENC_CONFIG,
+        "layer_types": list(cfg.layer_types),
+        "rope_thetas": thetas,
+        "sliding_window": cfg.sliding_window,
+        "input_ids": ids.tolist(),
+        "attention_mask": padding.tolist(),
+        "weights": {k: tensor_rec(v) for k, v in weights.items()},
+        "hidden_states": [tensor_rec(s) for s in states],
+        "output": tensor_rec(out),
+    }
+
+
+def normed_residual_forward(around_attn: bool) -> Callable[..., torch.Tensor]:
+    """ModernBertEncoderLayer.forward with one residual taken from the normed input."""
+
+    def forward(
+        self: nn.Module,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        position_embeddings: torch.Tensor | None = None,
+        **kwargs: Any,
+    ) -> torch.Tensor:
+        normed = self.attn_norm(hidden_states)
+        attn, _ = self.attn(
+            normed, position_embeddings=position_embeddings, attention_mask=attention_mask
+        )
+        h = (normed if around_attn else hidden_states) + attn
+        normed = self.mlp_norm(h)
+        return (h if around_attn else normed) + self.mlp(normed)
+
+    return forward
+
+
+def encoder_from_record(c: dict[str, Any], variant: str = "") -> ModernBertModel:
+    """A fresh ModernBertModel with the record's weights, or one wrong assembly of it."""
+    model = ModernBertModel(ModernBertConfig(**c["config"])).eval()
+    params = dict(model.named_parameters())
+    with torch.no_grad():
+        for path, rec in c["weights"].items():
+            params[path].copy_(torch.from_numpy(as_array(rec)))
+    layers = model.layers
+    if variant == "attn_norm0":  # layer 0 given the next layer's attn_norm
+        layers[0].attn_norm = copy.deepcopy(layers[1].attn_norm)
+    elif variant == "ones_norm0":  # layer 0 given an attn_norm of ones
+        layers[0].attn_norm = nn.LayerNorm(
+            c["config"]["hidden_size"], eps=NORM_EPS, bias=NORM_BIAS
+        ).eval()
+    elif variant == "shift":  # the full/sliding pattern one layer late
+        every = 3
+        for i, layer in enumerate(layers):
+            layer.attention_type = "sliding_attention" if (i + 1) % every else "full_attention"
+    elif variant == "no_emb_norm":
+        model.embeddings.norm = nn.Identity()
+    elif variant == "no_final_norm":
+        model.final_norm = nn.Identity()
+    elif variant in ("res_attn", "res_mlp"):
+        for layer in layers:
+            layer.forward = types.MethodType(normed_residual_forward(variant == "res_attn"), layer)
+    elif variant:
+        raise AssertionError(f"unknown variant {variant!r}")
+    return model
+
+
+def summarize_encoder(c: dict[str, Any]) -> None:
+    ids, mask = torch.tensor(c["input_ids"]), torch.tensor(c["attention_mask"])
+
+    def run(model: ModernBertModel) -> np.ndarray:
+        with torch.no_grad():
+            return model(input_ids=ids, attention_mask=mask).last_hidden_state.numpy()
+
+    model = encoder_from_record(c)
+    got = run(model)
+    if not np.array_equal(got, as_array(c["output"])):
+        raise AssertionError(f"{c['name']}: the record does not reproduce its output")
+    # The float32 rounding the Go side is compared against: the same model in float64.
+    f64 = run(model.double()).astype(np.float64)
+    diff = np.abs(got - f64).max()
+    moves = {v: np.abs(run(encoder_from_record(c, v)) - got).max() for v in ENC_VARIANTS}
+    if (weak := [v for v, d in moves.items() if d < ENC_MIN_MOVE]) != []:
+        raise AssertionError(f"{c['name']}: {weak} move the output by less than {ENC_MIN_MOVE}")
+    moved = " ".join(f"{v} {d:.1e}" for v, d in moves.items())
+    types_ = "".join("F" if t == "full_attention" else "S" for t in c["layer_types"])
+    print(
+        f"{c['name']:28} layers {types_:13} {str(c['output']['shape']):12} torch-f64 {diff:.2e}"
+        f"  moved by: {moved}"
+    )
+
+
+def config_case(name: str, kwargs: dict[str, Any]) -> dict[str, Any]:
+    """What ModernBertConfig(**kwargs) resolves the layer plan to, or the exception it raises."""
+    rec: dict[str, Any] = {"op": "config", "name": name, "config": kwargs}
+    try:
+        # A copy: ModernBertConfig fills the rope_parameters dicts it is given in place.
+        cfg = ModernBertConfig(**copy.deepcopy(kwargs))
+    except Exception as e:  # noqa: BLE001 -- any refusal is the answer recorded
+        return rec | {"error": type(e).__name__}
+    used = sorted(set(cfg.layer_types))
+    return rec | {
+        "error": None,
+        "num_hidden_layers": cfg.num_hidden_layers,
+        "layer_types": list(cfg.layer_types),
+        "rope": {
+            t: {
+                "rope_type": cfg.rope_parameters[t].get("rope_type"),
+                "rope_theta": cfg.rope_parameters[t].get("rope_theta"),
+            }
+            for t in used
+        },
+        "local_attention": cfg.local_attention,
+        "sliding_window": cfg.sliding_window,
+        "hidden_size": cfg.hidden_size,
+        "num_attention_heads": cfg.num_attention_heads,
+        # ModernBertConfig has no head_dim field; compute_default_rope_parameters reads it with
+        # getattr when a config sets it.
+        "head_dim": getattr(cfg, "head_dim", None),
+    }
+
+
+def summarize_config(c: dict[str, Any]) -> None:
+    if c["error"] is not None:
+        print(f"{c['name']:28} transformers raises {c['error']}")
+        return
+    types_ = "".join("F" if t == "full_attention" else "S" for t in c["layer_types"])
+    rope = " ".join(
+        f"{t[0].upper()} {r['rope_type']}/{r['rope_theta']}" for t, r in c["rope"].items()
+    )
+    print(f"{c['name']:28} layers {types_:22} {rope}  window {c['sliding_window']}")
+
+
 def build_model(config: dict[str, Any] = CONFIG) -> ModernBertModel:
     torch.manual_seed(SEED)
     model = ModernBertModel(ModernBertConfig(**config)).eval()
@@ -707,6 +1069,9 @@ def main() -> int:
     attn_model = build_model(ATTN_CONFIG)
     cases += [attention_case(attn_model, *c) for c in ATTN_CASES]
     cases += [rope_case(*c) for c in ROPE_CASES]
+    enc_model = build_model(ENC_CONFIG)
+    cases += [encoder_case(enc_model, *c) for c in ENC_CASES]
+    cases += [config_case(*c) for c in CONFIG_CASES]
     write(args.out, header(model), cases)
 
     print(json.dumps(versions()))
@@ -715,6 +1080,8 @@ def main() -> int:
         "mlp": summarize_mlp,
         "attention": summarize_attention,
         "rope": summarize_rope,
+        "encoder": summarize_encoder,
+        "config": summarize_config,
     }
     for c in cases:
         summarize[c["op"]](c)
