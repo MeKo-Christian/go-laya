@@ -293,6 +293,46 @@ func TestPaddedRowsDoNotReachOutputs(t *testing.T) {
 	}
 }
 
+// TestNonzeroMaskIsRealToken pins upstream's ~attention_mask.bool()
+// (common.py:111): any nonzero mask value marks a real token, so a mask with
+// 2 or -1 in place of 1 gives the same outputs, bit for bit, and a row whose
+// nonzero values sum to zero is not an all-padding row.
+func TestNonzeroMaskIsRealToken(t *testing.T) {
+	c := casesOf[modelCase](t, loadHead(t), "decision_model")[0]
+	h := newFromCase(t, c)
+	logits0, act0, err := h.Forward(c.H.tensor(t, "h"), c.batch())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, vals := range [][]int64{{2}, {-1}, {1, -1}} {
+		b := cloneBatch(c.batch())
+		zeroSum := false
+		for i, row := range b.AttentionMask {
+			k, sum := 0, int64(0)
+			for s, m := range row {
+				if m != 0 {
+					b.AttentionMask[i][s] = vals[k%len(vals)]
+					sum += b.AttentionMask[i][s]
+					k++
+				}
+			}
+			zeroSum = zeroSum || sum == 0
+		}
+		if len(vals) == 2 && !zeroSum {
+			t.Fatal("no fixture row has an even token count, so no mask row sums to zero")
+		}
+		logits1, act1, err := h.Forward(c.H.tensor(t, "h"), b)
+		if err != nil {
+			t.Errorf("mask values %v: %v", vals, err)
+			continue
+		}
+		if !equalRows(logits0, logits1) || !equalRows(act0, act1) {
+			t.Errorf("mask values %v moved the outputs", vals)
+		}
+	}
+}
+
 // TestNHead pins nhead = max(1, d // 64) (common.py:96): the checkpoints'
 // 1024 and 768 give 16 and 12 heads of 64.
 func TestNHead(t *testing.T) {
@@ -523,7 +563,6 @@ func TestForwardErrors(t *testing.T) {
 	}{
 		{"fewer mask rows", "attention mask has 2 rows", func(b *backend.Batch) { b.AttentionMask = b.AttentionMask[:2] }},
 		{"short mask row", "attention mask row 1 has", func(b *backend.Batch) { b.AttentionMask[1] = b.AttentionMask[1][:seq-1] }},
-		{"mask value 2", "want 0 or 1", func(b *backend.Batch) { b.AttentionMask[0][0] = 2 }},
 		{"all-padding row", "row 2 has no real token", func(b *backend.Batch) { b.AttentionMask[2] = make([]int64, seq) }},
 		{"input_ids rows", "input_ids rows", func(b *backend.Batch) { b.InputIDs = b.InputIDs[:1] }},
 		{"input_ids width", "input_ids row 0", func(b *backend.Batch) { b.InputIDs[0] = b.InputIDs[0][:2] }},

@@ -98,7 +98,7 @@ func NewLayer(w LayerWeights, nhead int) (Layer, error) {
 }
 
 // Forward applies the layer to x [B, S, d] with the collator's attention mask
-// [B][S], 1 over real tokens and 0 over padding; upstream passes its negation
+// [B][S], nonzero over real tokens and 0 over padding; upstream passes its negation
 // as src_key_padding_mask (common.py:111). It returns a new tensor [B, S, d]
 // that the caller owns.
 //
@@ -243,8 +243,9 @@ func addInto(y, x *tensor.Tensor) *tensor.Tensor {
 	return y
 }
 
-// checkAttention requires a [batch][seq] mask of zeros and ones with a real
-// token in every row.
+// checkAttention requires a [batch][seq] mask with a real token in every row.
+// Like upstream's ~attention_mask.bool() (common.py:111), any nonzero value
+// marks a real token, so a value is never rejected for not being 1.
 func checkAttention(attention [][]int64, batch, seq int) error {
 	if len(attention) != batch {
 		return fmt.Errorf("head: attention mask has %d rows for a batch of %d", len(attention), batch)
@@ -253,14 +254,7 @@ func checkAttention(attention [][]int64, batch, seq int) error {
 		if len(row) != seq {
 			return fmt.Errorf("head: attention mask row %d has %d entries for a sequence of %d", b, len(row), seq)
 		}
-		tokens := 0
-		for s, m := range row {
-			if m != 0 && m != 1 {
-				return fmt.Errorf("head: attention mask [%d][%d] = %d, want 0 or 1", b, s, m)
-			}
-			tokens += int(m)
-		}
-		if tokens == 0 {
+		if !slices.ContainsFunc(row, func(m int64) bool { return m != 0 }) {
 			return fmt.Errorf("head: attention mask row %d has no real token", b)
 		}
 	}
