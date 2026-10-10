@@ -14,7 +14,15 @@ Task 8.2 writes the norms. They come from the modules, not a hand-written ``nn.L
 and one input sits at +1000, where a float32 single-pass ``E[x^2] - E[x]^2`` variance
 cancels to nothing.
 
-The file is meant to grow: Task 8.3 appends MLP cases. Each case draws from its own generator,
+Task 8.3 appends the MLPs: ``layers.N.mlp``, the real ``ModernBertMLP`` (GeGLU over a fused
+``Wi``, no bias), with seeded random ``Wi`` and ``Wo``. Most inputs put the gate
+preactivations in the band where the exact erf GELU and its tanh approximation differ most
+(|u| ~ 2.7, up to 4.7e-4); one is large and mostly negative, for GELU's tails. The summary
+prints how far each wrong reading of the module -- tanh GELU, ``erf(x)`` for
+``erf(x/sqrt 2)``, the halves swapped, ``Wo`` read as ``[I, H]`` -- moves the output, so a
+case that cannot tell them apart shows.
+
+The file is meant to grow. Each case draws from its own generator,
 seeded from ``SEED`` and its name, so adding, removing or reordering cases leaves every other
 record byte-identical. The header holds nothing that depends on which cases exist.
 
@@ -22,7 +30,10 @@ Format, one JSON object::
 
     {"header": {"versions": {...}, "seed": 82, "config": {...}, ...},
      "cases": [{"op": "layernorm", "name": ..., "module": ..., "module_class": ...,
-                "seed": ..., "input": T, "weight": T | null, "output": T}, ...]}
+                "seed": ..., "input": T, "weight": T | null, "output": T},
+               {"op": "mlp", "name": ..., "module": ..., "module_class": "ModernBertMLP",
+                "seed": ..., "hidden_activation": "gelu", "mlp_bias": false,
+                "input": T, "wi": T, "wo": T, "output": T}, ...]}
 
 where ``T`` is ``{"dtype": "float32", "shape": [...], "data": [...]}``, row-major, each value
 the shortest decimal that round-trips to its float32. ``"weight": null`` means the module has
@@ -40,6 +51,7 @@ import argparse
 import copy
 import hashlib
 import json
+import math
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -50,6 +62,8 @@ import torch
 import transformers
 from torch import nn
 from transformers import ModernBertConfig, ModernBertModel
+from transformers.activations import GELUActivation
+from transformers.models.modernbert.modeling_modernbert import ModernBertMLP
 
 REPO = Path(__file__).resolve().parent.parent
 REQUIREMENTS = REPO / "scripts" / "requirements-ref.txt"
@@ -80,6 +94,12 @@ CONFIG = {
     "norm_eps": NORM_EPS,
     "norm_bias": NORM_BIAS,
 }
+
+# Both checkpoints' encoder config.json say hidden_activation "gelu" and mlp_bias false. They
+# are the ModernBertConfig defaults, so CONFIG leaves them out (and the header unchanged);
+# mlp_case asserts them instead.
+HIDDEN_ACTIVATION = "gelu"
+MLP_BIAS = False
 
 # The versions that decide the numbers. The Go test asserts the same pins.
 PINNED = ("torch", "transformers", "numpy")
@@ -182,6 +202,21 @@ NORM_CASES: list[tuple[str, str, Input]] = [
 IDENTITY_PATH = "layers.0.attn_norm"
 
 
+# (name, module, input), the last dimension hidden_size. With Wi drawn at 1/sqrt(hidden), a
+# preactivation has the spread of one input element.
+MLP_CASES: list[tuple[str, str, Input]] = [
+    # Preactivations ~N(0, 2.5^2): half fall in 1 < |u| < 4, where tanh GELU is off by 1e-4
+    # and more.
+    ("mlp_layer0", "layers.0.mlp", lambda g, h: 2.5 * randn(g, 3, h)),
+    # Large inputs, mostly negative: preactivations ~N(0, 11^2), deep in GELU's tails (this
+    # draw puts 4 of the 12 activated ones below -5), where an activation that is not ~0
+    # there shows. Wi has zero mean, so the input's offset does not shift them.
+    ("mlp_large_negative", "layers.1.mlp", lambda g, h: 10 * randn(g, 2, h) - 5),
+    # Rank 3, as hidden states are [batch, seq, hidden].
+    ("mlp_rank3", "layers.1.mlp", lambda g, h: 2 * randn(g, 2, 2, h) + 1),
+]
+
+
 def norm_case(model: ModernBertModel, name: str, path: str, make_input: Input) -> dict[str, Any]:
     hidden = model.config.hidden_size
     # A copy, so that the weights written below do not leak into later cases: a case that
@@ -224,6 +259,114 @@ def norm_case(model: ModernBertModel, name: str, path: str, make_input: Input) -
     }
 
 
+def mlp_case(model: ModernBertModel, name: str, path: str, make_input: Input) -> dict[str, Any]:
+    cfg = model.config
+    hidden, inter = cfg.hidden_size, cfg.intermediate_size
+    if cfg.hidden_activation != HIDDEN_ACTIVATION or cfg.mlp_bias != MLP_BIAS:
+        raise AssertionError(
+            f"config has hidden_activation {cfg.hidden_activation!r}, mlp_bias {cfg.mlp_bias}; "
+            f"the checkpoints have {HIDDEN_ACTIVATION!r}, {MLP_BIAS}"
+        )
+    mod = copy.deepcopy(model.get_submodule(path))  # as in norm_case
+    if not isinstance(mod, ModernBertMLP):
+        raise AssertionError(f"{path} is {type(mod).__name__}, want ModernBertMLP")
+    if mod.Wi.bias is not None or mod.Wo.bias is not None:
+        raise AssertionError(f"{path} has an MLP bias")
+    # "gelu" is GELUActivation calling nn.functional.gelu, whose default is the exact erf
+    # form; the Go side reimplements exactly that.
+    if not isinstance(mod.act, GELUActivation) or mod.act.act is not nn.functional.gelu:
+        raise AssertionError(f"{path}.act is {mod.act}, want GELUActivation(nn.functional.gelu)")
+    if mod.Wi.weight.shape != (2 * inter, hidden) or mod.Wo.weight.shape != (hidden, inter):
+        raise AssertionError(f"{path}: Wi {mod.Wi.weight.shape}, Wo {mod.Wo.weight.shape}")
+
+    seed = case_seed(name)
+    g = torch.Generator().manual_seed(seed)
+    wi = randn(g, 2 * inter, hidden) / math.sqrt(hidden)
+    wo = randn(g, hidden, inter) / math.sqrt(inter)
+    with torch.no_grad():
+        mod.Wi.weight.copy_(wi)
+        mod.Wo.weight.copy_(wo)
+
+    x = make_input(g, hidden)
+    with torch.no_grad():
+        y = mod(x)
+
+    return {
+        "op": "mlp",
+        "name": name,
+        "module": path,
+        "module_class": type(mod).__name__,
+        "seed": seed,
+        "hidden_activation": cfg.hidden_activation,
+        "mlp_bias": cfg.mlp_bias,
+        "input": tensor_rec(x),
+        "wi": tensor_rec(wi),
+        "wo": tensor_rec(wo),
+        "output": tensor_rec(y),
+    }
+
+
+def float64_mlp(
+    x: np.ndarray,
+    wi: np.ndarray,
+    wo: np.ndarray,
+    act: Callable[[np.ndarray], np.ndarray],
+    *,
+    swap: bool = False,
+    wo_transposed: bool = False,
+) -> np.ndarray:
+    """ModernBertMLP in float64, or one of the wrong readings of it, for the summary only."""
+    x, wi, wo = x.astype(np.float64), wi.astype(np.float64), wo.astype(np.float64)
+    inp, gate = np.split(x @ wi.T, 2, axis=-1)
+    if swap:
+        inp, gate = gate, inp
+    h = act(inp) * gate
+    return h @ wo.reshape(wo.shape[1], wo.shape[0]) if wo_transposed else h @ wo.T
+
+
+_erf = np.vectorize(math.erf)
+
+
+def gelu_erf(u: np.ndarray) -> np.ndarray:
+    return 0.5 * u * (1 + _erf(u / math.sqrt(2)))
+
+
+def gelu_tanh(u: np.ndarray) -> np.ndarray:
+    return 0.5 * u * (1 + np.tanh(math.sqrt(2 / math.pi) * (u + 0.044715 * u**3)))
+
+
+def gelu_erf_unscaled(u: np.ndarray) -> np.ndarray:
+    return 0.5 * u * (1 + _erf(u))
+
+
+def as_array(rec: dict[str, Any]) -> np.ndarray:
+    return np.array(rec["data"], dtype=np.float32).reshape(rec["shape"])
+
+
+def summarize_norm(c: dict[str, Any]) -> None:
+    x = as_array(c["input"])
+    w = None if c["weight"] is None else as_array(c["weight"])
+    diff = np.abs(as_array(c["output"]) - float64_layernorm(x, w)).max()
+    print(f"{c['name']:28} {c['module']:20} {str(c['input']['shape']):12} torch-f64 {diff:.2e}")
+
+
+def summarize_mlp(c: dict[str, Any]) -> None:
+    x, wi, wo, y = (as_array(c[k]) for k in ("input", "wi", "wo", "output"))
+    exact = float64_mlp(x, wi, wo, gelu_erf)
+    wrong = {
+        "tanh": float64_mlp(x, wi, wo, gelu_tanh),
+        "erf(x)": float64_mlp(x, wi, wo, gelu_erf_unscaled),
+        "swap": float64_mlp(x, wi, wo, gelu_erf, swap=True),
+        "woT": float64_mlp(x, wi, wo, gelu_erf, wo_transposed=True),
+    }
+    moved = " ".join(f"{k} {np.abs(v - exact).max():.1e}" for k, v in wrong.items())
+    diff = np.abs(y - exact).max()
+    print(
+        f"{c['name']:28} {c['module']:20} {str(c['input']['shape']):12} torch-f64 {diff:.2e}"
+        f"  moved by: {moved}"
+    )
+
+
 def build_model() -> ModernBertModel:
     torch.manual_seed(SEED)
     model = ModernBertModel(ModernBertConfig(**CONFIG)).eval()
@@ -248,7 +391,7 @@ def header(model: ModernBertModel) -> dict[str, Any]:
 
 
 def write(path: Path, head: dict[str, Any], cases: list[dict[str, Any]]) -> None:
-    """One case per line, so appending a case is a diff of added lines only."""
+    """One case per line, so appending a case adds lines and a comma to the last old one."""
     body = ",\n".join("    " + json.dumps(c) for c in cases)
     text = f'{{\n  "header": {json.dumps(head)},\n  "cases": [\n{body}\n  ]\n}}\n'
     json.loads(text)  # the hand-built layout must still be one valid document
@@ -265,15 +408,12 @@ def main() -> int:
     torch.set_num_threads(1)
     model = build_model()
     cases = [norm_case(model, *c) for c in NORM_CASES]
+    cases += [mlp_case(model, *c) for c in MLP_CASES]
     write(args.out, header(model), cases)
 
     print(json.dumps(versions()))
     for c in cases:
-        x = np.array(c["input"]["data"], dtype=np.float32).reshape(c["input"]["shape"])
-        w = None if c["weight"] is None else np.array(c["weight"]["data"], dtype=np.float32)
-        y = np.array(c["output"]["data"], dtype=np.float32).reshape(c["output"]["shape"])
-        diff = np.abs(y - float64_layernorm(x, w)).max()
-        print(f"{c['name']:28} {c['module']:20} {str(c['input']['shape']):12} torch-f64 {diff:.2e}")
+        {"layernorm": summarize_norm, "mlp": summarize_mlp}[c["op"]](c)
     print(f"wrote {len(cases)} cases, {args.out.stat().st_size} bytes to {args.out}")
     return 0
 
