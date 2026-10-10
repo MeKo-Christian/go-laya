@@ -42,7 +42,7 @@ box under it is ticked.
 | [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done               |
 | [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | ✅ done               |
 | [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | 🟡 B.1, B.6–B.10 done |
-| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ⬜ deferred           |
+| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | 🟡 8.1–8.3 done       |
 
 **Critical path to 1.0:** M7 (loader → `SystemOne` → answer parity → e2e parity → README). The
 Backlog and M8 do not gate 1.0.
@@ -709,9 +709,41 @@ zero-shared-library backend, not a speed play (D8). The facts it needs are in
       All 62 tests (53 lifted, 9 in the new `robustness_test.go` files) pass on amd64, on arm64
       under `qemu-aarch64-static` and on 386 (the pure-Go fallback). `ReadHeader` stays the only
       header parser, and F16/BF16 decoding builds on it in 8.7 (`tensor/doc.go`). `NOTICE`
-      records the provenance and the fixes.
-- [ ] **8.2** Bias-free LayerNorm (eps 1e-5; layer 0 has no `attn_norm`).
-- [ ] **8.3** GeGLU with the fused `mlp.Wi [5248,1024]` gate+up split, no MLP bias.
+      records the provenance and the fixes. Rerun on `500b614`:
+      `go test -count=1 -v ./internal/runtime/...` gives 62 `--- PASS` and no failure; both
+      packages also pass under `GOARCH=arm64 go test -exec qemu-aarch64-static` and
+      `GOARCH=386 go test`, and `GOARCH=arm64` and `GOARCH=386` `go vet ./internal/runtime/...`
+      pass. Mutation (PR #40): passing `len(a)-1` to the AVX2 dot kernel fails `TestDotProduct`,
+      `TestDotProductEveryLength`, two `MatMulTransB` tests and two attention tests.
+- [x] **8.2** Bias-free LayerNorm (eps 1e-5; layer 0 has no `attn_norm`).
+      (2026-10-10) `internal/modernbert.Norm` wraps `tensor.LayerNorm` with no bias and
+      `NormEps = 1e-5`, from both encoder configs. `IdentityNorm()` models layer 0's
+      `nn.Identity` `attn_norm`; a nil weight and the zero `Norm` are errors, not the identity.
+      The oracle is `scripts/dump_modernbert_ops.py`, which takes the norms from the real modules
+      of a tiny `ModernBertModel` with seeded random weights and refuses versions other than
+      `requirements-ref.txt`'s. A review fix made it accept `nn.Identity` only at
+      `layers.0.attn_norm`, so an upstream drift that dropped another norm stops generation
+      instead of being recorded as a null-weight oracle.
+      `TestNormMatchesTorch` pins the six case names and each case's module class: embeddings,
+      attn, mlp and final norm, the layer-0 identity, a +1000 offset, a variance below eps and a
+      rank-3 input, all within a κ-scaled float32 bound (worst case 13 % of it).
+      `go test -count=1 -v ./internal/modernbert/` passes, and a rerun of the dumper leaves
+      `internal/modernbert/testdata/ops.json` byte-identical (`git diff --exit-code`). Mutations
+      (PR #41): eps 1e-6, the identity as a ones-weight norm and a bias of 0.1 each fail
+      `TestNormMatchesTorch` and `TestIdentityIsNotOnesNorm`.
+- [x] **8.3** GeGLU with the fused `mlp.Wi [5248,1024]` gate+up split, no MLP bias.
+      (2026-10-10) `internal/modernbert.MLP` applies one `Linear` over the fused `Wi [2I,H]`,
+      puts the first `I` of each row through the exact erf GELU (`GELUActivation`), multiplies by
+      the last `I`, then applies `Wo [H,I]`; there is no bias, and dropout is not modelled.
+      `NewMLP` rejects an odd, empty or zero-sized `Wi` and a `Wo` given as `[I,H]` (the
+      zero-sized `Wi` was a review fix: it panicked in `Forward`). The dumper appends three `mlp`
+      cases from the real `ModernBertMLP` to `ops.json`, leaving every layernorm record unchanged.
+      `go test -count=1 -v ./internal/modernbert/` passes: `TestMLPMatchesTorch` also asserts
+      that the tanh GELU, `erf(x)`, the swapped halves and `Wo` read as `[I,H]` each miss torch
+      by at least 10× the tolerance (61×, 27 300×, 734 888× and 988 660×), and
+      `TestMLPRealDimensions` checks values at ModernBERT-large's `[5248,1024]`/`[1024,2624]` and
+      mmBERT-base's 768/1152. Mutations (PR #42): each of those four readings, put into `mlp.go`,
+      fails `TestMLPMatchesTorch` on all three cases.
 - [ ] **8.4** Fused QKV unpacking (`attn.Wqkv [3072,1024]`, no attention bias).
 - [ ] **8.5** Sliding-window attention masks (window 128, ±64) and per-layer-type RoPE theta.
 - [ ] **8.6** The decision head with a **ReLU** FFN and the manual layer loop.
