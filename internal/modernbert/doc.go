@@ -1,7 +1,8 @@
 // Package modernbert holds the ModernBERT and mmBERT building blocks of the
-// pure-Go native backend (PLAN.md M8, D8): the bias-free LayerNorm (Task 8.2)
-// and, as Tasks 8.3-8.6 land, GeGLU, the fused QKV, the attention masks and
-// RoPE, and the layer loop. Each block is tested against the real transformers
+// pure-Go native backend (PLAN.md M8, D8): the bias-free LayerNorm (Task 8.2),
+// the GeGLU MLP (8.3), the attention with its fused QKV, sliding-window mask
+// and per-layer-type RoPE (8.4, 8.5) and, as the rest of M8 lands, the layer
+// loop. Each block is tested against the real transformers
 // modules through testdata/ops.json, which scripts/dump_modernbert_ops.py
 // writes.
 //
