@@ -404,10 +404,8 @@ per-question cost stays flat:
 So, plainly: sub-second per question is reachable only on `laya-multilingual` at short sequences,
 and on CPU this is a batch and background workload, not an interactive one. Anything with a human
 waiting on it wants a GPU, and this port has no GPU execution provider yet: `WithDevice("cuda")`
-falls back to CPU with a warning. Upstream publishes T4 GPU figures (32.8 ms for one question on
-`laya-multilingual`), which are
-[in `BENCHMARKS.md`](BENCHMARKS.md#speed-tesla-t4--upstreams-published-figures-not-measured-here)
-and were not measured here.
+falls back to CPU with a warning. GPU latency is not measured here, and stays unmeasured until CUDA
+support (PLAN Task B.3) lands.
 
 ### Laya (with routing) vs Jev
 

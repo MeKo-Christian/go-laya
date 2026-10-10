@@ -866,12 +866,19 @@ The dynamic-typing decisions:
       `WithSubfolder("multilingul")` in `ExampleAgent_SetLimits`, only that subtest fails; with
       the sentinel no longer printed, all seven fail with "did not run to its end". With neither
       `-short` nor `LAYA_MODELS` set, it reports SKIP.
-- [ ] Measured latency published in `BENCHMARKS.md` for the hardware actually tested, replacing
+- [x] Measured latency published in `BENCHMARKS.md` for the hardware actually tested, replacing
       upstream's T4 numbers rather than repeating them. Upstream cites a `research/results/`
-      directory that does not exist; do not inherit that. (2026-10-10) — partial: the CPU
-      latency is measured and published with its hardware ("Speed — CPU, measured here"), and the
-      raw transcripts are in `docs/benchmarks/raw/`. Still not met: - the "Speed (Tesla T4)" section repeats upstream's table, labelled "not measured here"; - the headline's T4 row repeats it too; - the header table cites `research/results/*.json` as the source of the T4, CPU-sweep and
-      Applications runs.
+      directory that does not exist; do not inherit that. (2026-10-10, user decision: CPU only)
+      "Speed — CPU, measured here" is the only latency in `BENCHMARKS.md`, with its hardware, and
+      the raw transcripts are in `docs/benchmarks/raw/`. Upstream's "Speed (Tesla T4)" table, the
+      headline's T4 row, the sentences that leaned on the T4 figure and every
+      `research/results/*.json` citation are gone. The accuracy, calibration and option-order
+      figures that stay are attributed to upstream's `BENCHMARKS.md` at 0.3.4 (`d113dca`, which
+      `NOTICE` pins). One line says GPU latency stays unmeasured until B.3.
+      `grep -rn 'T4\|research/results' --include='*.md' . | grep -v '^./original/'` has no hit in
+      `BENCHMARKS.md`. The README keeps four, all in its labelled upstream comparison (the figure
+      caption, the shared benchmark's hardware, the Jev table's T4 row) or a notebook's file name;
+      the rest are this file's history (7.6.4, R3, this box).
 - [x] `TestGoldenProvenance` green, **and** it asserts the checkpoint revision the vectors came
       from. (2026-10-10) Until now it checked library versions and `compute`, not the Hub sha.
       `checkProvenance` requires each header's `checkpoint_sha` to equal `pinnedRevision`
