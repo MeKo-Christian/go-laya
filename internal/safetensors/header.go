@@ -1,6 +1,7 @@
 // Package safetensors reads and validates a .safetensors file's header by the
 // rules of the safetensors library's own validation, so a downloaded weights
-// file is known to be well-formed before anything maps its data.
+// file is known to be well-formed before anything reads its data, and decodes
+// its F16 and F32 tensors into float32.
 package safetensors
 
 import (
@@ -72,6 +73,15 @@ func readHeader(path string) (*Header, error) {
 		return nil, err
 	}
 	defer f.Close()
+	return readHeaderFrom(f)
+}
+
+// readHeaderFrom validates the header of the open file f, reading it from the
+// start. Open uses it on the descriptor it then reads tensors through, so a
+// file replaced at path after the check is never read in place of the one
+// that passed it. A file rewritten in place is still read only inside the
+// validated spans.
+func readHeaderFrom(f *os.File) (*Header, error) {
 	fi, err := f.Stat()
 	if err != nil {
 		return nil, err
@@ -81,8 +91,9 @@ func readHeader(path string) (*Header, error) {
 		return nil, fmt.Errorf("file of %d bytes is shorter than 8 bytes", size)
 	}
 
+	r := io.NewSectionReader(f, 0, size)
 	var prefix [8]byte
-	if _, err := io.ReadFull(f, prefix[:]); err != nil {
+	if _, err := io.ReadFull(r, prefix[:]); err != nil {
 		return nil, err
 	}
 	n := binary.LittleEndian.Uint64(prefix[:])
@@ -93,7 +104,7 @@ func readHeader(path string) (*Header, error) {
 		return nil, fmt.Errorf("header of %d bytes runs past the end of the file (%d bytes)", n, size)
 	}
 	raw := make([]byte, n)
-	if _, err := io.ReadFull(f, raw); err != nil {
+	if _, err := io.ReadFull(r, raw); err != nil {
 		return nil, err
 	}
 

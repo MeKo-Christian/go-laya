@@ -7,6 +7,7 @@
 // The package reads no weight files. internal/safetensors.ReadHeader stays
 // the only safetensors header parser and the gate in front of every weight
 // read: the native backend may build a tensor from a file's data only after
-// ReadHeader has validated that file, and decoding F16/BF16 data into
-// float32 (PLAN.md Task 8.7) is to build on the offsets ReadHeader returns.
+// ReadHeader has validated that file. internal/safetensors.File decodes F16
+// and F32 data into float32 on the offsets ReadHeader returns (PLAN.md Task
+// 8.7); BF16 is not decoded, as no shipped checkpoint stores it.
 package tensor
