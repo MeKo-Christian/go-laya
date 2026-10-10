@@ -44,6 +44,16 @@ seconds together, and `--fixture` regenerates one at a time. Peak RSS is about
 `agent.py:294-343` against a real `laya.Agent.system_one` run, because a copy that
 drifts would produce a corpus that is internally consistent and wrong.
 
+`head_intermediates.jsonl` (Task 8.8) is the other fixture that loads the
+checkpoints. It runs the `logits.jsonl` batches, plus one single-option batch per
+checkpoint, through upstream's `DecisionModel` and records what invariants #35-38
+need: the filled logits and the act features of every batch, and for one batch per
+checkpoint the hidden states at `[CLS]` and the markers after the type embedding,
+after each head layer and as gathered. The head layers are observed through taps in
+the loop `forward` runs rather than hooks, which would push torch off the fast path
+the checkpoints take. It adds about two and a half minutes to `--all` and leaves
+`logits.jsonl` untouched.
+
 `testdata/*.jsonl` is excluded from `treefmt` (see `treefmt.toml`): the vectors are
 compared byte-for-byte, so nothing may reflow them.
 

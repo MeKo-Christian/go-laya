@@ -1725,6 +1725,38 @@ LOGITS_STATES: list[tuple[str, Any]] = [
 ]
 
 
+def logits_batch(
+    tok: Any,
+    state: Any,
+    questions: dict[str, dict[str, Any]],
+    max_len: int,
+    head_max_len: int,
+    where: str,
+) -> tuple[list[dict[str, Any]], list[str], dict[str, Any]]:
+    """One state's questions, rendered and collated as ``Agent.system_one`` does.
+
+    Returns the items, their question ids and the ``collate_items`` batch. Both
+    ``dump_logits`` and ``dump_head_intermediates`` build their batches here, so the two
+    files describe the same forward passes.
+    """
+    from laya.common import build_sequence, collate_items, render_options
+
+    items, qids = [], []
+    for qid, qdef in questions.items():
+        q = to_internal(qdef)
+        ids, markers = build_sequence(tok, state, q, max_len, head_max_len)
+        # The same guard the Agent applies (agent.py:262-263). A fixture case
+        # that silently dropped a marker would be a wrong golden vector.
+        if len(markers) != len(render_options(q)):
+            raise SystemExit(
+                f"{where}/{qid}: options exceed head_max_len="
+                f"{head_max_len}; upstream raises ValueError here"
+            )
+        items.append({"ids": ids, "markers": markers, "qtype": QTYPES_MAP[q["t"]]})
+        qids.append(qid)
+    return items, qids, collate_items([items], tok.pad_token_id)
+
+
 def dump_logits(models_root: Path, out_dir: Path, checkpoints: list[str]) -> None:
     """End-to-end ``(state, questions) -> (logits, act_logits)``, batch-level.
 
@@ -1734,9 +1766,10 @@ def dump_logits(models_root: Path, out_dir: Path, checkpoints: list[str]) -> Non
     computation. Every record therefore carries the whole ``questions`` dict.
 
     Only final outputs are stored. Invariants #35-38 (the manual head loop, the
-    ``-1e4`` masking, the four act features) need intermediates, but they are only
-    asserted if the head is reimplemented, which is M8 -- deferred post-1.0. Task 8.8
-    regenerates with intermediates when it starts.
+    ``-1e4`` masking, the four act features) need intermediates; Task 8.8 records
+    them for the same batches in ``head_intermediates.jsonl``
+    (``dump_head_intermediates``) and leaves this file byte for byte as it was, so the
+    header's note below, written before 8.8, stays as it is too.
 
     ``result_json`` (Task 7.4.3) is the whole ``system_one`` envelope, built from
     this same forward pass through ``answer_block`` and serialized as
@@ -1751,8 +1784,6 @@ def dump_logits(models_root: Path, out_dir: Path, checkpoints: list[str]) -> Non
     sys.path.insert(0, str(REPO_ROOT / "scripts"))
     from export_onnx import build_decision_model
 
-    from laya.common import build_sequence, collate_items, render_options
-
     torch.set_num_threads(1)
 
     cases: list[dict[str, Any]] = []
@@ -1766,20 +1797,9 @@ def dump_logits(models_root: Path, out_dir: Path, checkpoints: list[str]) -> Non
         envelopes: list[tuple[str, Any, dict[str, Any]]] = []
 
         for state_name, state in LOGITS_STATES:
-            items, qids = [], []
-            for qid, qdef in LOGITS_QUESTIONS.items():
-                q = to_internal(qdef)
-                ids, markers = build_sequence(tok, state, q, max_len, head_max_len)
-                # The same guard the Agent applies (agent.py:262-263). A fixture case
-                # that silently dropped a marker would be a wrong golden vector.
-                if len(markers) != len(render_options(q)):
-                    raise SystemExit(
-                        f"{ckpt}/{state_name}/{qid}: options exceed head_max_len="
-                        f"{head_max_len}; upstream raises ValueError here"
-                    )
-                items.append({"ids": ids, "markers": markers, "qtype": QTYPES_MAP[q["t"]]})
-                qids.append(qid)
-            b = collate_items([items], tok.pad_token_id)
+            items, qids, b = logits_batch(
+                tok, state, LOGITS_QUESTIONS, max_len, head_max_len, f"{ckpt}/{state_name}"
+            )
             with torch.no_grad():
                 logits, act_logits = model(
                     b["input_ids"],
@@ -1885,6 +1905,216 @@ def tensor_rec(a: np.ndarray) -> dict[str, Any]:
 QTYPES_MAP = {"choice": 0, "score": 1, "noul": 2}
 
 
+# ------------------------------------------------------ 8.8 head intermediates
+
+
+# The batch whose hidden states head_intermediates.jsonl records, once per checkpoint.
+# Every LOGITS_STATES batch would do: its three questions render to different lengths,
+# so the shorter rows are padded, and kmax is the choice's four, so the score and the
+# noul rows carry marker fill. dump_head_intermediates checks that this one has both.
+HEAD_TRACE_STATE = "en/billing"
+
+# Invariant #38's clamp(min=2) decides the entropy's denominator only for a row with
+# fewer than two markers, and every LOGITS_QUESTIONS row has at least two, so on the
+# logits.jsonl batches alone an unclamped ln(k) is indistinguishable. This batch adds a
+# choice with a single option beside the noul: kmax is 2, and the choice row has one
+# marker and one fill column. Python accepts it (build_sequence renders one marker,
+# agent.py:262-263 checks only that none was dropped).
+HEAD_SINGLE_OPTION_QUESTIONS: dict[str, dict[str, Any]] = {
+    "category": {
+        "type": "choice",
+        "instructions": "Which team should handle the email in `body`?",
+        "criteria": {"billing": "invoices, payments, refunds"},
+    },
+    "is_spam": LOGITS_QUESTIONS["is_spam"],
+}
+HEAD_SINGLE_OPTION_STATE = "en/billing"
+
+
+def _tap_head_layers(model: Any) -> list[Any]:
+    """Route ``model.head.layers`` through taps that keep each layer's input and output.
+
+    ``DecisionModel.forward`` loops over ``self.head.layers`` itself (common.py:112-113),
+    so a tap in that list sees exactly what the loop hands from one layer to the next:
+    layer 0's input is h after the type embedding (#35), each output is h after that
+    layer (#36). A forward hook would be simpler and wrong: ``TransformerEncoderLayer``
+    takes its fused fast path only while no hook sits on it or its submodules
+    (``torch/nn/modules/transformer.py``), and the checkpoints' 16 and 12 heads run that
+    path in production. The taps hold no hook, so the layers run the kernel they always
+    run; the caller proves it by counting fast-path calls and comparing every output
+    with an untapped pass, bit for bit.
+    """
+    from torch import nn
+
+    class Tap(nn.Module):
+        def __init__(self, layer: nn.Module) -> None:
+            super().__init__()
+            self.layer = layer
+            self.seen: list[tuple[Any, Any]] = []
+
+        def forward(self, src: Any, src_key_padding_mask: Any = None) -> Any:
+            out = self.layer(src, src_key_padding_mask=src_key_padding_mask)
+            self.seen.append((src, out))
+            return out
+
+    taps = [Tap(layer) for layer in model.head.layers]
+    model.head.layers = nn.ModuleList(taps)
+    model.eval()
+    return taps
+
+
+def dump_head_intermediates(models_root: Path, out_dir: Path, checkpoints: list[str]) -> None:
+    """The head intermediates of invariants #35-38 on the real checkpoints (Task 8.8).
+
+    The same batches as ``logits.jsonl`` -- every ``LOGITS_STATES`` state with
+    ``LOGITS_QUESTIONS``, built by the same ``logits_batch`` -- plus one single-option
+    batch per checkpoint (``HEAD_SINGLE_OPTION_QUESTIONS``), run through upstream's own
+    ``DecisionModel`` as ``agent.py`` runs it on the CPU: eval, no_grad, float32. Nothing
+    of the forward pass is reimplemented here; it is observed:
+
+    * the layer taps of ``_tap_head_layers`` see h after the type embedding and after
+      each head layer,
+    * a pre-hook on ``scorer`` sees the gathered marker rows,
+    * a pre-hook on ``act_head`` sees ``cat([h[:, 0], feats])``, whose last four columns
+      are the act features ``[top1, top1 - top2, ent / ln(clamp(k, 2)), k / 255]``.
+
+    Every case records the collated batch, the filled marker logits (``-1e4`` outside
+    the markers), the features and the act logits. One case per checkpoint
+    (``HEAD_TRACE_STATE``) also records the hidden states, but only at [CLS] and at each
+    row's real markers -- the rows the gather and the pooling read -- because whole
+    [B, S, d] tensors at d=1024 would be tens of megabytes. Values are the shortest
+    decimals that round-trip to their float32 (``dump_head_ops.tensor_rec``).
+
+    ``logits.jsonl`` is left exactly as it was: the intermediates go into their own file
+    so that adding them is not a regeneration of the vectors every earlier milestone was
+    tested against.
+    """
+    import torch
+    from transformers import AutoTokenizer
+
+    # The sibling scripts are imported, not run; leave no __pycache__ beside them.
+    sys.dont_write_bytecode = True
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    from dump_head_ops import FastPathCounter
+    from dump_head_ops import tensor_rec as f32_tensor_rec
+    from export_onnx import build_decision_model
+
+    torch.set_num_threads(1)
+    states = dict(LOGITS_STATES)
+
+    def forward(model: Any, b: dict[str, Any], n_layers: int, where: str) -> tuple[Any, Any, int]:
+        with torch.no_grad(), FastPathCounter() as fp:
+            out = model(
+                b["input_ids"],
+                b["attention_mask"],
+                b["marker_pos"],
+                b["marker_mask"],
+                b["qtype"],
+                False,
+            )
+        if fp.calls != n_layers:
+            raise SystemExit(
+                f"{where}: {fp.calls} fast-path calls for {n_layers} head layers; the "
+                f"recorded pass would not be the one the checkpoints run"
+            )
+        return out[0], out[1], fp.calls
+
+    # What the scorer and act_head pre-hooks saw in the last pass.
+    seen: dict[str, Any] = {}
+    cases: list[dict[str, Any]] = []
+    for ckpt in checkpoints:
+        ckpt_dir = models_root / "laya" / CHECKPOINT_DIRS[ckpt]
+        cfg = json.loads((ckpt_dir / "rl_agent_config.json").read_text())
+        tok = AutoTokenizer.from_pretrained(ckpt_dir / "tokenizer")
+        print(f"  building {ckpt} ...", flush=True)
+        model = build_decision_model(ckpt_dir, attn="sdpa")
+        max_len, head_max_len = cfg.get("max_len", 512), cfg.get("head_max_len", 192)
+        n_layers, d = len(model.head.layers), model.type_emb.embedding_dim
+
+        batches = [(f"{ckpt}/{name}", name, LOGITS_QUESTIONS) for name, _ in LOGITS_STATES] + [
+            (
+                f"{ckpt}/single-option/{HEAD_SINGLE_OPTION_STATE}",
+                HEAD_SINGLE_OPTION_STATE,
+                HEAD_SINGLE_OPTION_QUESTIONS,
+            )
+        ]
+        built = {
+            name: logits_batch(tok, states[s], qs, max_len, head_max_len, name)
+            for name, s, qs in batches
+        }
+        # The untapped pass first: what the taps and hooks see must be what an
+        # unobserved model computes.
+        plain = {name: forward(model, b, n_layers, name) for name, (_, _, b) in built.items()}
+
+        taps = _tap_head_layers(model)
+        model.scorer.register_forward_pre_hook(lambda _m, a: seen.__setitem__("gathered", a[0]))
+        model.act_head.register_forward_pre_hook(lambda _m, a: seen.__setitem__("act_in", a[0]))
+
+        for name, state_name, questions in batches:
+            _, qids, b = built[name]
+            for t in taps:
+                t.seen.clear()
+            seen.clear()
+            logits, act, fast_path_calls = forward(model, b, n_layers, name)
+            if not (torch.equal(logits, plain[name][0]) and torch.equal(act, plain[name][1])):
+                raise SystemExit(f"{name}: the tapped pass differs from the untapped one")
+            act_in = seen["act_in"]
+            # #38: the pooled half of the act head's input is h[:, 0] after the layers.
+            if not torch.equal(act_in[:, :d], taps[-1].seen[0][1][:, 0]):
+                raise SystemExit(f"{name}: act_head's pooled input is not h[:, 0]")
+
+            rec: dict[str, Any] = {
+                "name": name,
+                "checkpoint": ckpt,
+                "state": states[state_name],
+                "questions": questions,
+                "qids": qids,
+                "qtypes": [int(q) for q in b["qtype"]],
+                "collated": {
+                    k: tensor_rec(b[k].numpy())
+                    for k in ("input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype")
+                },
+                "head_layers": n_layers,
+                # Counted, not assumed: the Go test holds it to head_layers.
+                "fast_path_calls": fast_path_calls,
+                "logits": f32_tensor_rec(logits.float()),
+                "feats": f32_tensor_rec(act_in[:, d:]),
+                "act_logits": f32_tensor_rec(act.float()),
+            }
+            if name == f"{ckpt}/{HEAD_TRACE_STATE}":
+                mask, mpos, mmask = b["attention_mask"], b["marker_pos"], b["marker_mask"]
+                if not (bool((mask == 0).any()) and bool((~mmask).any())):
+                    raise SystemExit(f"{name}: the traced batch needs padding and marker fill")
+                # [CLS] and each row's real markers: what the gather and the pooling read.
+                positions = []
+                for i in range(mask.shape[0]):
+                    positions.append([i, 0])
+                    positions += [[i, int(p)] for p, m in zip(mpos[i], mmask[i], strict=True) if m]
+                rows = torch.tensor([p[0] for p in positions])
+                cols = torch.tensor([p[1] for p in positions])
+                rec["trace"] = {
+                    "positions": positions,
+                    "h_typed": f32_tensor_rec(taps[0].seen[0][0][rows, cols]),
+                    "h_layers": [f32_tensor_rec(t.seen[0][1][rows, cols]) for t in taps],
+                    "gathered": f32_tensor_rec(seen["gathered"]),
+                }
+            cases.append(rec)
+        del model, taps
+
+    head = header(
+        "head_intermediates",
+        models_root,
+        torch=torch_version(),
+        torch_cpu_capability=torch_cpu_capability(),
+        note=(
+            "Task 8.8: the head intermediates of invariants 35-38 for the logits.jsonl "
+            "batches, plus one single-option batch per checkpoint, which logits.jsonl "
+            "does not have. logits.jsonl itself is unchanged."
+        ),
+    )
+    write_jsonl(out_dir / "head_intermediates.jsonl", head, cases)
+
+
 # ---------------------------------------------------------------------------- main
 
 
@@ -1966,6 +2196,7 @@ FIXTURES = (
     "mailtext",
     "logits",
     "act_softmax",
+    "head_intermediates",
 )
 
 
@@ -1982,7 +2213,10 @@ def main() -> int:
         choices=sorted(CHECKPOINT_DIRS),
         action="append",
         default=[],
-        help="restrict the logits fixture; the others always cover every checkpoint",
+        help=(
+            "restrict the logits and head_intermediates fixtures; the others always cover "
+            "every checkpoint"
+        ),
     )
     ap.add_argument(
         "--act-softmax",
@@ -2053,6 +2287,10 @@ def main() -> int:
         require_torch_cpu_capability("logits.jsonl")
         cks = args.checkpoint or sorted(CHECKPOINT_DIRS)
         dump_logits(args.models_root, args.out, cks)
+    if "head_intermediates" in wanted:
+        require_torch_cpu_capability("head_intermediates.jsonl")
+        cks = args.checkpoint or sorted(CHECKPOINT_DIRS)
+        dump_head_intermediates(args.models_root, args.out, cks)
     return 0
 
 
