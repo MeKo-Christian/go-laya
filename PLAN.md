@@ -817,7 +817,7 @@ The dynamic-typing decisions:
       raw transcripts are in `docs/benchmarks/raw/`. Still not met: - the "Speed (Tesla T4)" section repeats upstream's table, labelled "not measured here"; - the headline's T4 row repeats it too; - the header table cites `research/results/*.json` as the source of the T4, CPU-sweep and
       Applications runs.
 - [x] `TestGoldenProvenance` green, **and** it asserts the checkpoint revision the vectors came
-      from. Today it checks library versions and `compute`, not the Hub sha. (2026-10-10)
+      from. (2026-10-10) Until now it checked library versions and `compute`, not the Hub sha.
       `checkProvenance` requires each header's `checkpoint_sha` to equal `pinnedRevision`
       (loader.go), the constant itself rather than a copy. `TestGoldenProvenanceRejects` gains
       "another checkpoint revision" and "`checkpoint_sha` null", and both pin the substring
