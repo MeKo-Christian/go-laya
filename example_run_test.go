@@ -25,8 +25,11 @@ const (
 
 // readmeExamples are the seven README Examples that need weights, so `go test`
 // compiles them but never runs them (they carry no Output comment). want lists
-// what the README's trailing comments promise each one prints, in the order it
-// prints them; an Example the README promises nothing for only has to finish.
+// what each one must print, in that order: what the README's trailing comments
+// promise, else what it prints on the pinned checkpoint. That is the
+// confidence branch Answer_confidence takes (the probabilities are
+// TestE2EParity's to pin) and one answer per preset question in
+// Agent_presets. An Example with neither only has to finish.
 var readmeExamples = []struct {
 	name string
 	run  func()
@@ -43,8 +46,8 @@ var readmeExamples = []struct {
 	{"ExampleRouter_Preload", ExampleRouter_Preload, []string{"[english multilingual]"}},
 	{"ExampleRouter_Attach", ExampleRouter_Attach, nil},
 	{"ExampleOpen", ExampleOpen, []string{"Department: billing"}},
-	{"ExampleAnswer_confidence", ExampleAnswer_confidence, nil},
-	{"ExampleAgent_presets", ExampleAgent_presets, nil},
+	{"ExampleAnswer_confidence", ExampleAnswer_confidence, []string{"route automatically to billing"}},
+	{"ExampleAgent_presets", ExampleAgent_presets, []string{"4 5 5 5"}},
 	{"ExampleAgent_SetLimits", ExampleAgent_SetLimits, []string{"1024 512"}},
 }
 
@@ -113,7 +116,7 @@ func TestREADMEExamples(t *testing.T) {
 			for _, w := range ex.want {
 				_, after, found := strings.Cut(rest, w)
 				if !found {
-					t.Errorf("%s does not print %q where the README promises it", ex.name, w)
+					t.Errorf("%s does not print %q in its expected place", ex.name, w)
 					break
 				}
 				rest = after
