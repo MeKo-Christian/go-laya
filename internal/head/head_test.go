@@ -95,27 +95,27 @@ func TestHeadMatchesTorch(t *testing.T) {
 			}
 
 			x := c.H.tensor(t, "h")
-			var tr trace
-			if _, _, err := h.forward(x, c.batch(), &tr); err != nil {
-				t.Fatalf("forward: %v", err)
+			tr, err := h.ForwardTrace(x, c.batch())
+			if err != nil {
+				t.Fatalf("ForwardTrace: %v", err)
 			}
 			if !slices.Equal(x.Data(), c.H.Data) {
-				t.Error("forward modified the caller's hidden state")
+				t.Error("ForwardTrace modified the caller's hidden state")
 			}
 
 			worst := map[string]float64{}
-			worst["h_typed"] = closeTo(t, "h_typed", tr.typed.Data(), c.HTyped)
-			if len(tr.layers) != len(c.HLayers) {
-				t.Fatalf("%d layer outputs, want %d", len(tr.layers), len(c.HLayers))
+			worst["h_typed"] = closeTo(t, "h_typed", tr.Typed.Data(), c.HTyped)
+			if len(tr.Layers) != len(c.HLayers) {
+				t.Fatalf("%d layer outputs, want %d", len(tr.Layers), len(c.HLayers))
 			}
-			for i, l := range tr.layers {
+			for i, l := range tr.Layers {
 				worst["h_layers"] = math.Max(worst["h_layers"], closeTo(t, "h_layers", l.Data(), c.HLayers[i]))
 			}
-			worst["gathered"] = closeTo(t, "gathered", tr.gathered.Data(), c.Gathered)
-			worst["logits"] = closeTo(t, "logits", flat(tr.logits), c.Logits)
-			worst["probs"] = closeTo(t, "probs", flat(tr.probs), c.Probs)
-			worst["feats"] = closeTo(t, "feats", flat(tr.feats), c.Feats)
-			worst["act_logits"] = closeTo(t, "act_logits", flat(tr.act), c.ActLogits)
+			worst["gathered"] = closeTo(t, "gathered", tr.Gathered.Data(), c.Gathered)
+			worst["logits"] = closeTo(t, "logits", flat(tr.Logits), c.Logits)
+			worst["probs"] = closeTo(t, "probs", flat(tr.Probs), c.Probs)
+			worst["feats"] = closeTo(t, "feats", flat(tr.Feats), c.Feats)
+			worst["act_logits"] = closeTo(t, "act_logits", flat(tr.Act), c.ActLogits)
 			for _, k := range []string{"h_typed", "h_layers", "gathered", "logits", "probs", "feats", "act_logits"} {
 				t.Logf("%-10s worst |diff|/tol %.4f", k, worst[k])
 			}
@@ -123,19 +123,19 @@ func TestHeadMatchesTorch(t *testing.T) {
 			// #37: the fill is exactly -1e4, not merely close to it.
 			for b, row := range c.Batch.MarkerMask {
 				for j, isMarker := range row {
-					if !isMarker && tr.logits[b][j] != -1e4 {
-						t.Errorf("logits[%d][%d] = %g over the fill, want exactly -1e4", b, j, tr.logits[b][j])
+					if !isMarker && tr.Logits[b][j] != -1e4 {
+						t.Errorf("logits[%d][%d] = %g over the fill, want exactly -1e4", b, j, tr.Logits[b][j])
 					}
 				}
 			}
 
-			// Forward is forward's outputs, nothing else.
+			// Forward is ForwardTrace's outputs, nothing else.
 			logits, act, err := h.Forward(c.H.tensor(t, "h"), c.batch())
 			if err != nil {
 				t.Fatalf("Forward: %v", err)
 			}
-			if !equalRows(logits, tr.logits) || !equalRows(act, tr.act) {
-				t.Error("Forward's outputs differ from forward's trace")
+			if !equalRows(logits, tr.Logits) || !equalRows(act, tr.Act) {
+				t.Error("Forward's outputs differ from ForwardTrace's")
 			}
 			if len(act) != len(c.Batch.QType) || len(act[0]) != c.NAct {
 				t.Errorf("act is %dx%d, want %dx%d", len(act), len(act[0]), len(c.Batch.QType), c.NAct)

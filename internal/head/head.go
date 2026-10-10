@@ -167,18 +167,38 @@ func (h *Head) Forward(x *tensor.Tensor, b backend.Batch) (logits, act [][]float
 	return h.forward(x, b, nil)
 }
 
-// trace is what forward computes, stage by stage, for the tests to compare
-// against the fixture's intermediates. Forward passes none, so it copies no
-// hidden state it does not need.
-type trace struct {
-	typed                     *tensor.Tensor   // h after type_emb, [B, S, d]
-	layers                    []*tensor.Tensor // h after each layer
-	gathered                  *tensor.Tensor   // the marker rows, [B, kmax, d]
-	logits, probs, feats, act [][]float32
+// Trace is what one pass of the head computes, stage by stage: the
+// intermediates invariants #35-38 are about, for tests to hold against
+// PyTorch's. Every tensor is the trace's own.
+type Trace struct {
+	// Typed is h after the type embedding, [B, S, d] (#35).
+	Typed *tensor.Tensor
+	// Layers are h after each head layer, in order, each [B, S, d] (#36).
+	Layers []*tensor.Tensor
+	// Gathered are the rows the scorer reads, [B, kmax, d]: the last
+	// layer's output at each marker position, clamped at 0.
+	Gathered *tensor.Tensor
+	// Logits are the filled marker logits (#37) and Act the act logits,
+	// Forward's two outputs.
+	Logits, Act [][]float32
+	// Probs are the softmax of each row of Logits, and Feats the act
+	// features computed from them (#38).
+	Probs, Feats [][]float32
 }
 
-// forward is Forward, recording each stage into tr unless it is nil.
-func (h *Head) forward(x *tensor.Tensor, b backend.Batch, tr *trace) (logits, act [][]float32, err error) {
+// ForwardTrace is Forward, returning every stage of the pass. It runs the
+// same code as Forward, which only skips the copies.
+func (h *Head) ForwardTrace(x *tensor.Tensor, b backend.Batch) (*Trace, error) {
+	tr := new(Trace)
+	if _, _, err := h.forward(x, b, tr); err != nil {
+		return nil, err
+	}
+	return tr, nil
+}
+
+// forward is Forward, recording each stage into tr unless it is nil, so
+// Forward copies no hidden state it does not need.
+func (h *Head) forward(x *tensor.Tensor, b backend.Batch, tr *Trace) (logits, act [][]float32, err error) {
 	if h == nil || h.w.TypeEmb == nil {
 		return nil, nil, errors.New("head: uninitialized head; build it with New")
 	}
@@ -198,7 +218,7 @@ func (h *Head) forward(x *tensor.Tensor, b backend.Batch, tr *trace) (logits, ac
 		}
 	}
 	if tr != nil {
-		tr.typed = hs.Clone()
+		tr.Typed = hs.Clone()
 	}
 
 	// #36: the layers one by one, as the manual loop runs them, so no final
@@ -209,7 +229,7 @@ func (h *Head) forward(x *tensor.Tensor, b backend.Batch, tr *trace) (logits, ac
 			return nil, nil, fmt.Errorf("%w (head.layers.%d)", err, i)
 		}
 		if tr != nil {
-			tr.layers = append(tr.layers, hs.Clone())
+			tr.Layers = append(tr.Layers, hs.Clone())
 		}
 	}
 
@@ -236,7 +256,7 @@ func (h *Head) forward(x *tensor.Tensor, b backend.Batch, tr *trace) (logits, ac
 		return nil, nil, err
 	}
 	if tr != nil {
-		tr.gathered, tr.logits, tr.probs, tr.feats, tr.act = gathered, logits, probs, feats, act
+		tr.Gathered, tr.Logits, tr.Probs, tr.Feats, tr.Act = gathered, logits, probs, feats, act
 	}
 	return logits, act, nil
 }
