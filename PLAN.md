@@ -800,15 +800,16 @@ The dynamic-typing decisions:
       `example_run_test.go` runs them: `TestREADMEExamples` re-executes the test binary once per
       weight-bound Example, because they end on `log.Fatal`. For each one it checks the exit
       status, a sentinel printed once the Example has returned, and the lines the README promises
-      it prints. It is a local gate: it skips under `-short` and without `LAYA_ONNX_DIR`, and it
-      needs the Hub. It stages the `-dynamo` exports as hard links in a temporary directory beside
-      them, as `linkExports` does, so `$TMPDIR` may sit on another filesystem.
-      `env -u TMPDIR LAYA_ONNX_DIR=/mnt/projekte/Code/go-laya/build/onnx go test -count=1 -run TestREADMEExamples -v .`
-      passes all seven in 34 s. With `ExampleRouter_Route`, which `go test` runs against its own
+      it prints. It is a local gate: it skips under `-short`, without `LAYA_MODELS` (the opt-in
+      AGENTS.md names; Codex P2 on PR #39) and without `LAYA_ONNX_DIR`, and it needs the Hub. It
+      stages the `-dynamo` exports as hard links in a temporary directory beside them, as
+      `linkExports` does, so `$TMPDIR` may sit on another filesystem. With both variables set to
+      the main checkout's `models` and `build/onnx`, and `TMPDIR` unset,
+      `go test -count=1 -run TestREADMEExamples -v .` passes all seven in 35 s. With `ExampleRouter_Route`, which `go test` runs against its own
       `Output`, all eight README Examples have now run. Mutations: with
       `WithSubfolder("multilingul")` in `ExampleAgent_SetLimits`, only that subtest fails; with
       the sentinel no longer printed, all seven fail with "did not run to its end". With neither
-      `-short` nor the variable set, it reports SKIP.
+      `-short` nor `LAYA_MODELS` set, it reports SKIP.
 - [ ] Measured latency published in `BENCHMARKS.md` for the hardware actually tested, replacing
       upstream's T4 numbers rather than repeating them. Upstream cites a `research/results/`
       directory that does not exist; do not inherit that. (2026-10-10) — partial: the CPU
