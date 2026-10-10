@@ -1,0 +1,49 @@
+# PLAN.md Task 8.9, ORT reference cell, sweep b, 2026-10-10. MEASURED UNDER LOAD -- a quiet rerun follows.
+#
+# bench-onnx's harness and go test invocation (internal/backend/onnx), filtered to -bench 'BenchmarkForward/<ck>$/threads=8$/b1_s512_k4$', -benchtime=5x, ORT 1.23.0 from /usr/local/lib, same 8 GB cap. Sweep a adds BenchmarkSessionLoad.
+# Run order: native a, ORT a, native b, ORT b, native c, ORT c, 20:48-21:12, on
+# a machine shared with two other test sessions; uptime heads every process.
+
+2026-10-10T21:06:21+02:00
+ 21:06:21 up 15 days,  8:51,  1 user,  load average: 9,46, 9,52, 5,89
+nproc: 12
+go version go1.26.9 linux/amd64
+== BenchmarkForward/english/threads=8/b1_s512_k4:  21:06:21 up 15 days,  8:51,  1 user,  load average: 9,46, 9,52, 5,89
+goos: linux
+goarch: amd64
+pkg: github.com/MeKo-Christian/go-laya/internal/backend/onnx
+cpu: 12th Gen Intel(R) Core(TM) i7-1255U
+BenchmarkForward
+    bench_test.go:230: ONNX Runtime 1.23.0 (C API 23) from /usr/local/lib/libonnxruntime.so, GOMAXPROCS=11
+BenchmarkForward/english
+BenchmarkForward/english/threads=8
+BenchmarkForward/english/threads=8/b1_s512_k4
+BenchmarkForward/english/threads=8/b1_s512_k4-11         	       5	1662286021 ns/op	      1657 p50_ms	      1709 p90_ms
+PASS
+ok  	github.com/MeKo-Christian/go-laya/internal/backend/onnx	15.095s
+== BenchmarkForward/multilingual/threads=8/b1_s512_k4:  21:06:36 up 15 days,  8:51,  1 user,  load average: 8,87, 9,39, 5,90
+goos: linux
+goarch: amd64
+pkg: github.com/MeKo-Christian/go-laya/internal/backend/onnx
+cpu: 12th Gen Intel(R) Core(TM) i7-1255U
+BenchmarkForward
+    bench_test.go:230: ONNX Runtime 1.23.0 (C API 23) from /usr/local/lib/libonnxruntime.so, GOMAXPROCS=11
+BenchmarkForward/multilingual
+BenchmarkForward/multilingual/threads=8
+BenchmarkForward/multilingual/threads=8/b1_s512_k4
+BenchmarkForward/multilingual/threads=8/b1_s512_k4-11         	       5	 634763882 ns/op	       627.8 p50_ms	       669.0 p90_ms
+PASS
+ok  	github.com/MeKo-Christian/go-laya/internal/backend/onnx	5.615s
+== BenchmarkForward/typed-decisions/threads=8/b1_s512_k4:  21:06:42 up 15 days,  8:51,  1 user,  load average: 8,74, 9,34, 5,92
+goos: linux
+goarch: amd64
+pkg: github.com/MeKo-Christian/go-laya/internal/backend/onnx
+cpu: 12th Gen Intel(R) Core(TM) i7-1255U
+BenchmarkForward
+    bench_test.go:230: ONNX Runtime 1.23.0 (C API 23) from /usr/local/lib/libonnxruntime.so, GOMAXPROCS=11
+BenchmarkForward/typed-decisions
+BenchmarkForward/typed-decisions/threads=8
+BenchmarkForward/typed-decisions/threads=8/b1_s512_k4
+BenchmarkForward/typed-decisions/threads=8/b1_s512_k4-11         	       5	2850964215 ns/op	      2682 p50_ms	      3730 p90_ms
+PASS
+ok  	github.com/MeKo-Christian/go-laya/internal/backend/onnx	24.701s

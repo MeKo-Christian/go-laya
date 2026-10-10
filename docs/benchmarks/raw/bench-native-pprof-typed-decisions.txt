@@ -1,0 +1,44 @@
+# PLAN.md Task 8.9, CPU profile of the native backend, 2026-10-10. MEASURED UNDER LOAD.
+#
+# LAYA_MODELS=... systemd-run --user --scope -q -p MemoryMax=8G -p MemorySwapMax=0 \
+#   go test -run '^$' -bench 'BenchmarkForward/typed-decisions$' -benchtime=1x \
+#   -cpuprofile build/native-typed-decisions.cpu.pprof -o build/native.test ./internal/backend/native/
+# go tool pprof -top -nodecount=15 build/native.test build/native-typed-decisions.cpu.pprof
+#
+# The profile covers Open (safetensors decode), the untimed warm-up pass and one
+# timed pass, all at 512 tokens.
+
+goos: linux
+goarch: amd64
+pkg: github.com/MeKo-Christian/go-laya/internal/backend/native
+cpu: 12th Gen Intel(R) Core(TM) i7-1255U
+BenchmarkForward/typed-decisions/workers=8/b1_s512_k4-11         	       1	19668658969 ns/op	     19669 p50_ms	     19669 p90_ms
+--- BENCH: BenchmarkForward/typed-decisions/workers=8/b1_s512_k4-11
+    bench_test.go:124: GOMAXPROCS=11, 8 kernel workers
+PASS
+ok  	github.com/MeKo-Christian/go-laya/internal/backend/native	46.248s
+
+File: native.test
+Build ID: 7202f7c0312b03161c9b09caee12c01d924ccfee
+Type: cpu
+Time: 2026-10-10 21:12:43 CEST
+Duration: 46.24s, Total samples = 155.18s (335.63%)
+Showing nodes accounting for 153.04s, 98.62% of 155.18s total
+Dropped 123 nodes (cum <= 0.78s)
+Showing top 15 nodes out of 37
+      flat  flat%   sum%        cum   cum%
+   138.90s 89.51% 89.51%    138.90s 89.51%  github.com/MeKo-Christian/go-laya/internal/runtime/tensor.dotF32AVX2
+     2.63s  1.69% 91.20%    135.52s 87.33%  github.com/MeKo-Christian/go-laya/internal/runtime/tensor.Linear.func1
+     2.38s  1.53% 92.74%      2.47s  1.59%  math.erf
+     1.74s  1.12% 93.86%    140.64s 90.63%  github.com/MeKo-Christian/go-laya/internal/runtime/tensor.dotF32
+     1.66s  1.07% 94.93%      2.79s  1.80%  github.com/MeKo-Christian/go-laya/internal/modernbert.softmaxRow
+     1.15s  0.74% 95.67%      2.09s  1.35%  github.com/MeKo-Christian/go-laya/internal/safetensors.decode
+     1.14s  0.73% 96.40%      1.14s  0.73%  math.archExp
+     1.01s  0.65% 97.06%      1.01s  0.65%  runtime.memmove
+     0.74s  0.48% 97.53%      0.85s  0.55%  github.com/MeKo-Christian/go-laya/internal/safetensors.f16ToF32
+     0.70s  0.45% 97.98%      8.48s  5.46%  github.com/MeKo-Christian/go-laya/internal/runtime/tensor.matMulTransBGeneric
+     0.37s  0.24% 98.22%      3.19s  2.06%  github.com/MeKo-Christian/go-laya/internal/modernbert.MLP.Forward
+     0.29s  0.19% 98.41%      2.77s  1.79%  github.com/MeKo-Christian/go-laya/internal/modernbert.gelu (inline)
+     0.27s  0.17% 98.58%      7.80s  5.03%  github.com/MeKo-Christian/go-laya/internal/modernbert.Attention.Forward
+     0.05s 0.032% 98.61%      1.19s  0.77%  math.Exp (inline)
+     0.01s 0.0064% 98.62%      4.55s  2.93%  github.com/MeKo-Christian/go-laya/internal/head.Layer.Forward

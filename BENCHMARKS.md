@@ -297,6 +297,98 @@ The Python side is `scripts/bench_ort.py`, which builds `BenchmarkForward`'s exa
 transcripts are `docs/benchmarks/raw/ort-version-gap-balanced.txt` (the evidence) and
 `ort-version-gap.txt` (the first, fixed-order run).
 
+### Native backend (M8)
+
+> **Idle-machine rerun, 2026-10-10 21:38–21:47.** The headline table is from three sweeps run with
+> no other test session on the machine. The 1-minute load average of 2.8–6.3 in those transcripts
+> is the benchmark's own 8 workers. The first measurement, taken under load from two parallel
+> test sessions, is kept further down because it shows how the ratio swings under contention.
+
+PLAN.md Task 8.9 holds the pure-Go backend (`internal/backend/native`, D8) to **within 10× of ORT-CPU
+at 512 tokens on the same hardware**. D8 makes it a zero-shared-library backend, not a speed play, so
+the budget is a ceiling, not a target.
+
+**Hardware.** The S3 laptop above: i7-1255U, 12 hardware threads, `powersave`, Linux 6.8.
+
+**Stack.** go1.26.9, no cgo on the backend's path, `GOMAXPROCS=11` (Go's own choice here, the same as
+in every S3 transcript). The weights are decoded from the checkpoints' fp16 `model.safetensors` to
+float32. The kernels are pure Go, plus the repository's AVX2/FMA dot product, and run on 8 workers
+(`tensor.SetWorkers(8)`, the counterpart of S3's `IntraOpNumThreads=8`).
+
+**Method.** S3's reference cell, with S3's inputs value for value: one question, 512 tokens, 4
+options, every position attended, ids `1 + (i·7919) mod 997`. `BenchmarkForward` in
+`internal/backend/native/bench_test.go` mirrors S3's harness: one untimed pass, then five timed
+ones, and p50 and p90 per cell. `TestBenchHarness` pins the cell and the inputs to S3's in CI. Three
+sweeps of `just bench-native`, one process per checkpoint under an 8 GB memory cap; the table takes
+the **minimum p50 across the sweeps**, as S3 does. Right after the three native sweeps, S3's own
+ORT harness ran the same cell (`-bench 'BenchmarkForward/<checkpoint>$/threads=8$/b1_s512_k4$'`,
+ORT 1.23.0) once, on the same idle machine. That gives the "ORT p50, here" column, which agrees
+with S3's figures to within 3–10%.
+
+| checkpoint             | native p50 | native p90 | ORT p50, S3 | ORT p50, here | ratio (vs S3 / vs here) | 10× budget | met |
+| ---------------------- | ---------- | ---------- | ----------- | ------------- | ----------------------- | ---------- | --- |
+| `laya` (english)       | 9721 ms    | 11623 ms   | 1691 ms     | 1729 ms       | 5.7× / 5.6×             | 16.9 s     | yes |
+| `laya-multilingual`    | 3593 ms    | 3690 ms    | 645 ms      | 623 ms        | 5.6× / 5.8×             | 6.45 s     | yes |
+| `laya-typed-decisions` | 9986 ms    | 12014 ms   | 1856 ms     | 1662 ms       | 5.4× / 6.0×             | 18.6 s     | yes |
+
+The p90 is from the sweep that gave the minimum p50. The three idle sweeps agree to within 4% at
+p50:
+
+- `laya`: 9721–9821 ms;
+- `laya-multilingual`: 3593–3718 ms;
+- `laya-typed-decisions`: 9986–10485 ms.
+
+Every checkpoint is inside the budget on both ORT columns. The ratio is 5.4–6.0×, which leaves
+1.7–1.8× of headroom. The under-load numbers were close, at 9958, 3640 and 10458 ms.
+
+**Under load the margin does not hold.** The first measurement ran while two other test sessions
+were active. Each native sweep was paired with the ORT run that followed it:
+
+| sweep | 1-min load, start of each native run | `laya`         | `laya-multilingual` | `laya-typed-decisions` |
+| ----- | ------------------------------------ | -------------- | ------------------- | ---------------------- |
+| a     | 1.0–4.7                              | 9958 ms, 6.2×  | 3640 ms, 3.4×       | 12076 ms, 4.6×         |
+| b     | 11.7–12.5                            | 21473 ms, 13×  | 7423 ms, 11.8×      | 16917 ms, 6.3×         |
+| c     | 9.7–12.4                             | 18280 ms, 5.8× | 7019 ms, 5.0×       | 10458 ms, 4.1×         |
+
+Sweep b broke the budget on two checkpoints. Both sides slowed down by up to about 2× under this
+load (native `laya` 9958 to 21473 ms, ORT `laya` 1613 to 3174 ms), but not in the same minutes, so a
+single pair swings from 3.4× to 13×. The load samples are `uptime` taken before each process, not
+during it. The idle rerun confirms the margin above. A busy shared machine can still put a single
+measurement over 10×.
+
+A CPU profile of one typed-decisions run under that load (`bench-native-pprof-typed-decisions.txt`;
+it covers `Open` and the warm-up pass too) puts **87%** of the CPU time in `tensor.Linear`, almost
+all of it in the AVX2 dot product. On amd64, `Linear` computes one dot product per output with no
+cache blocking, so every token streams the whole weight matrix again. Attention is 5%, on one
+goroutine, and decoding the weights about 2%.
+
+**Loading.** `BenchmarkLoad` is `Open` from a warm page cache, timed over five loads per sweep, with
+the resident growth of the first load in a fresh process. The native column is the idle rerun; the
+ORT "here" column is from the run under load:
+
+| checkpoint             | native load | resident after load | ORT session load, S3 | ORT session load, here |
+| ---------------------- | ----------- | ------------------- | -------------------- | ---------------------- |
+| `laya`                 | 1.39–1.41 s | 1966–1978 MiB       | 2.1 s, 1423 MiB      | 2.2 s, 1423 MiB        |
+| `laya-multilingual`    | 1.19–1.21 s | 1575–1584 MiB       | 1.5 s, 488 MiB       | 0.9 s, 488 MiB         |
+| `laya-typed-decisions` | 1.37–1.49 s | 1965–1983 MiB       | 3.2 s, 1423 MiB      | 2.2 s, 1423 MiB        |
+
+All three load at least as fast as an ORT session did in S3. Memory is the larger cost: the
+native backend holds every weight as float32 on the Go heap, so all three loaded at once need about
+5.5 GB, against ORT's 3.3 GB.
+
+**Raw transcripts.**
+
+- **Idle rerun:**
+  - `docs/benchmarks/raw/bench-native-quiet-{a,b,c}.txt` are the three `just bench-native` sweeps.
+  - `bench-onnx-refcell-quiet.txt` is the ORT run after them.
+- **The first run, under load:**
+  - `bench-native-sweep-{a,b,c}.txt` are the native sweeps.
+  - `bench-onnx-refcell-{a,b,c}.txt` are the ORT runs, one after each. ORT run a also holds the
+    fresh `BenchmarkSessionLoad`.
+
+Every process is headed by its `uptime`.
+`bench-native-pprof-typed-decisions.txt` is the profile's top 15.
+
 ### What this means
 
 **Sequence length and checkpoint decide the cost:** at 128 tokens `laya-multilingual` answers in

@@ -1,0 +1,79 @@
+# PLAN.md Task 8.9, native backend, sweep c, 2026-10-10. MEASURED UNDER LOAD -- a quiet rerun follows.
+#
+# just bench-native 5 (LAYA_MODELS set), on feat/m8-latency (stacked on #49).
+# Run order: native a, ORT a, native b, ORT b, native c, ORT c, 20:48-21:12, on
+# a machine shared with two other test sessions; uptime heads every process.
+
+2026-10-10T21:07:07+02:00
+ 21:07:07 up 15 days,  8:52,  1 user,  load average: 12,39, 10,12, 6,27
+nproc: 12
+go version go1.26.9 linux/amd64
+== BenchmarkForward/english:  21:07:07 up 15 days,  8:52,  1 user,  load average: 12,39, 10,12, 6,27
+goos: linux
+goarch: amd64
+pkg: github.com/MeKo-Christian/go-laya/internal/backend/native
+cpu: 12th Gen Intel(R) Core(TM) i7-1255U
+BenchmarkForward
+BenchmarkForward/english
+BenchmarkForward/english/workers=8
+BenchmarkForward/english/workers=8/b1_s512_k4
+    bench_test.go:124: GOMAXPROCS=11, 8 kernel workers
+BenchmarkForward/english/workers=8/b1_s512_k4-11         	       5	17782397573 ns/op	     18280 p50_ms	     19084 p90_ms
+PASS
+ok  	github.com/MeKo-Christian/go-laya/internal/backend/native	111.164s
+== BenchmarkForward/multilingual:  21:08:58 up 15 days,  8:54,  1 user,  load average: 10,76, 10,43, 6,83
+goos: linux
+goarch: amd64
+pkg: github.com/MeKo-Christian/go-laya/internal/backend/native
+cpu: 12th Gen Intel(R) Core(TM) i7-1255U
+BenchmarkForward
+BenchmarkForward/multilingual
+BenchmarkForward/multilingual/workers=8
+BenchmarkForward/multilingual/workers=8/b1_s512_k4
+    bench_test.go:124: GOMAXPROCS=11, 8 kernel workers
+BenchmarkForward/multilingual/workers=8/b1_s512_k4-11         	       5	6808687426 ns/op	      7019 p50_ms	      9392 p90_ms
+PASS
+ok  	github.com/MeKo-Christian/go-laya/internal/backend/native	44.544s
+== BenchmarkForward/typed-decisions:  21:09:43 up 15 days,  8:54,  1 user,  load average: 9,68, 10,24, 6,94
+goos: linux
+goarch: amd64
+pkg: github.com/MeKo-Christian/go-laya/internal/backend/native
+cpu: 12th Gen Intel(R) Core(TM) i7-1255U
+BenchmarkForward
+BenchmarkForward/typed-decisions
+BenchmarkForward/typed-decisions/workers=8
+BenchmarkForward/typed-decisions/workers=8/b1_s512_k4
+    bench_test.go:124: GOMAXPROCS=11, 8 kernel workers
+BenchmarkForward/typed-decisions/workers=8/b1_s512_k4-11         	       5	10634496962 ns/op	     10458 p50_ms	     11637 p90_ms
+PASS
+ok  	github.com/MeKo-Christian/go-laya/internal/backend/native	65.209s
+== BenchmarkLoad/english:  21:10:49 up 15 days,  8:55,  1 user,  load average: 7,04, 9,23, 6,81
+goos: linux
+goarch: amd64
+pkg: github.com/MeKo-Christian/go-laya/internal/backend/native
+cpu: 12th Gen Intel(R) Core(TM) i7-1255U
+BenchmarkLoad
+BenchmarkLoad/english
+BenchmarkLoad/english-11         	       5	1516715969 ns/op	      1965 rss_MiB
+PASS
+ok  	github.com/MeKo-Christian/go-laya/internal/backend/native	7.718s
+== BenchmarkLoad/multilingual:  21:10:57 up 15 days,  8:56,  1 user,  load average: 6,56, 9,10, 6,78
+goos: linux
+goarch: amd64
+pkg: github.com/MeKo-Christian/go-laya/internal/backend/native
+cpu: 12th Gen Intel(R) Core(TM) i7-1255U
+BenchmarkLoad
+BenchmarkLoad/multilingual
+BenchmarkLoad/multilingual-11         	       5	2038970519 ns/op	      1584 rss_MiB
+PASS
+ok  	github.com/MeKo-Christian/go-laya/internal/backend/native	10.363s
+== BenchmarkLoad/typed-decisions:  21:11:07 up 15 days,  8:56,  1 user,  load average: 7,04, 9,09, 6,81
+goos: linux
+goarch: amd64
+pkg: github.com/MeKo-Christian/go-laya/internal/backend/native
+cpu: 12th Gen Intel(R) Core(TM) i7-1255U
+BenchmarkLoad
+BenchmarkLoad/typed-decisions
+BenchmarkLoad/typed-decisions-11         	       5	2322000878 ns/op	      2000 rss_MiB
+PASS
+ok  	github.com/MeKo-Christian/go-laya/internal/backend/native	11.749s
