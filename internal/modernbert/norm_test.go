@@ -2,6 +2,7 @@ package modernbert
 
 import (
 	"encoding/json"
+	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -113,17 +114,20 @@ func rowKappa(x []float32, d int) []float64 {
 //
 // The case list is fixed: a regenerated fixture that lost the identity, the
 // +1000 offset (the only variance-algorithm guard) or the tiny variance (the
-// only eps guard) would otherwise still pass.
+// only eps guard) would otherwise still pass. So is each case's module class:
+// only layer 0's attn_norm is nn.Identity upstream, and a fixture that turned
+// any other norm into Identity with a null weight would otherwise pass as an
+// exact identity check.
 func TestNormMatchesTorch(t *testing.T) {
 	f := loadOps(t)
 	hidden := f.Header.Config.HiddenSize
-	wantCases := []string{
-		"attn_norm_layer0_identity",
-		"attn_norm_offset",
-		"embeddings_norm",
-		"final_norm_wide",
-		"mlp_norm_rank3",
-		"mlp_norm_tiny_variance",
+	wantClass := map[string]string{
+		"attn_norm_layer0_identity": "Identity",
+		"attn_norm_offset":          "LayerNorm",
+		"embeddings_norm":           "LayerNorm",
+		"final_norm_wide":           "LayerNorm",
+		"mlp_norm_rank3":            "LayerNorm",
+		"mlp_norm_tiny_variance":    "LayerNorm",
 	}
 
 	raws := casesOf(t, f, "layernorm")
@@ -135,6 +139,9 @@ func TestNormMatchesTorch(t *testing.T) {
 		}
 		names = append(names, c.Name)
 		t.Run(c.Name, func(t *testing.T) {
+			if want, ok := wantClass[c.Name]; ok && c.ModuleClass != want {
+				t.Fatalf("%s is a %s, want %s", c.Module, c.ModuleClass, want)
+			}
 			w := c.weight(t)
 			x := c.Input.tensor(t, "input")
 			want := c.Output.tensor(t, "output")
@@ -179,8 +186,8 @@ func TestNormMatchesTorch(t *testing.T) {
 	}
 
 	slices.Sort(names)
-	if !slices.Equal(names, wantCases) {
-		t.Errorf("layernorm cases = %v, want %v", names, wantCases)
+	if wantNames := slices.Sorted(maps.Keys(wantClass)); !slices.Equal(names, wantNames) {
+		t.Errorf("layernorm cases = %v, want %v", names, wantNames)
 	}
 }
 
