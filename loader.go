@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/MeKo-Christian/go-laya/backend"
+	"github.com/MeKo-Christian/go-laya/internal/backend/native"
 	"github.com/MeKo-Christian/go-laya/internal/backend/onnx"
 	"github.com/MeKo-Christian/go-laya/internal/checkpoint"
 	"github.com/MeKo-Christian/go-laya/internal/hub"
@@ -29,7 +30,8 @@ const pinnedRevision = "1c5edc17a7acd8701df6fc341c0d179f1c62c982"
 // It differs from upstream in where the weights come from (D24). The Hub
 // checkpoints ship safetensors, which only torch can run, so the forward pass
 // is a local ONNX export of the same checkpoint and only the config and the
-// tokenizer are downloaded.
+// tokenizer are downloaded. With RuntimeNative it runs those safetensors in
+// pure Go instead, and downloads them and the encoder's config too (D30).
 type defaultLoader struct {
 	hub      *hub.Client
 	onnxDir  string // "" is onnx/ under the laya cache, resolved per load
@@ -37,11 +39,14 @@ type defaultLoader struct {
 	revision string       // "" is D17's pin for the bundle repo, main for any other
 	cacheDir string       // "" is hub.DefaultDir(), resolved per load
 	logger   *slog.Logger // nil is slog.Default()
+	runtime  Runtime
 
 	// snapshot and open are the network and the runtime. They are fields so
 	// that tests can stand in for both; CI has neither.
 	snapshot func(ctx context.Context, repo, rev string, allow []string) (string, error)
 	open     func(path string, opts onnx.Options) (backend.Backend, error)
+	// openNative is the native runtime, a field for the same reason.
+	openNative func(ctx context.Context, dir string) (backend.Backend, error)
 }
 
 // loaderSettings configure the default loader. The Router's options set them
@@ -53,6 +58,7 @@ type loaderSettings struct {
 	revision string       // "" is D17's pin for the bundle repo, main for any other
 	cacheDir string       // "" is hub.DefaultDir()
 	logger   *slog.Logger // nil is slog.Default()
+	runtime  Runtime      // the zero value is RuntimeONNX
 }
 
 func newDefaultLoader(cfg loaderSettings) *defaultLoader {
@@ -67,6 +73,7 @@ func newDefaultLoader(cfg loaderSettings) *defaultLoader {
 		revision: cfg.revision,
 		cacheDir: cfg.cacheDir,
 		logger:   cfg.logger,
+		runtime:  cfg.runtime,
 	}
 	if l.onnxDir == "" {
 		l.onnxDir = os.Getenv("LAYA_ONNX_DIR")
@@ -74,6 +81,14 @@ func newDefaultLoader(cfg loaderSettings) *defaultLoader {
 	l.snapshot = l.hub.Snapshot
 	l.open = func(path string, opts onnx.Options) (backend.Backend, error) {
 		return onnx.Open(path, opts)
+	}
+	l.openNative = func(ctx context.Context, dir string) (backend.Backend, error) {
+		b, err := native.Open(ctx, dir, native.Options{})
+		if err != nil {
+			// Not a typed nil.
+			return nil, fmt.Errorf("laya: %w", err)
+		}
+		return b, nil
 	}
 	return l
 }
@@ -112,9 +127,13 @@ func (l *defaultLoader) load(ctx context.Context, name string, spec ModelSpec) (
 
 // build loads the checkpoint spec locates and runs it on the export graph
 // names. graph is asked for only once the checkpoint has been read, so a bad
-// checkpoint is reported as such rather than as a missing export.
+// checkpoint is reported as such rather than as a missing export. With
+// RuntimeNative, graph is never asked for: buildNative runs the checkpoint.
 func (l *defaultLoader) build(ctx context.Context, spec ModelSpec, graph func() (string, error)) (*Agent, error) {
-	cfg, tok, actWidth, err := l.readCheckpoint(ctx, spec)
+	if l.runtime == RuntimeNative {
+		return l.buildNative(ctx, spec)
+	}
+	_, cfg, tok, actWidth, err := l.readCheckpoint(ctx, spec)
 	if err != nil {
 		return nil, err
 	}
@@ -140,14 +159,66 @@ func (l *defaultLoader) build(ctx context.Context, spec ModelSpec, graph func() 
 // backend (WithBackend). Unlike build it never closes be: on failure the
 // caller still owns it.
 func (l *defaultLoader) buildOn(ctx context.Context, spec ModelSpec, be backend.Backend) (*Agent, error) {
-	cfg, tok, actWidth, err := l.readCheckpoint(ctx, spec)
+	_, cfg, tok, actWidth, err := l.readCheckpoint(ctx, spec)
 	if err != nil {
 		return nil, err
 	}
-	return newAgent(shapeChecked{be, actWidth}, cfg, tok)
+	return newAgent(shapeChecked{Backend: be, actWidth: actWidth, label: "caller's backend"}, cfg, tok)
 }
 
-// shapeChecked holds a caller's backend to the output shapes the ONNX backend
+// buildNative loads the checkpoint spec locates and runs it on the native
+// backend, from the checkpoint's own weights. The head the weights describe
+// is held to the config before a weight is decoded, and the backend's
+// outputs to the config's act width, as a caller's are.
+func (l *defaultLoader) buildNative(ctx context.Context, spec ModelSpec) (*Agent, error) {
+	dir, cfg, tok, actWidth, err := l.readCheckpoint(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkNativeHead(dir, cfg, actWidth); err != nil {
+		return nil, err
+	}
+	be, err := l.openNative(ctx, dir)
+	if err != nil {
+		return nil, err
+	}
+	// The native backend's errors name it already.
+	a, err := newAgent(shapeChecked{Backend: be, actWidth: actWidth, label: "laya"}, cfg, tok)
+	if err != nil {
+		_ = be.Close()
+		return nil, err
+	}
+	return a, nil
+}
+
+// checkNativeHead holds the head that dir's model.safetensors describes to
+// the one upstream builds from the config, head_layers layers and
+// len(act_costs)+1 act logits (common.py:137); upstream's strict
+// load_state_dict refuses weights that disagree (agent.py:184). Only the
+// header is read.
+func checkNativeHead(dir string, cfg *checkpoint.Config, actWidth int) error {
+	layers, err := cfg.HeadLayers()
+	if err != nil {
+		return fmt.Errorf("laya: %w", err)
+	}
+	got, err := native.ReadHeadShape(dir)
+	if err != nil {
+		return fmt.Errorf("laya: %w", err)
+	}
+	weights := filepath.Join(dir, "model.safetensors")
+	if got.Layers != layers {
+		return fmt.Errorf("%w: %s has %d head layers, but %s has head_layers %d",
+			ErrIncompatibleCheckpoint, weights, got.Layers, checkpoint.ConfigFile, layers)
+	}
+	if got.ActWidth != actWidth {
+		return fmt.Errorf("%w: %s has %d act logits, but %s's act_costs give %d",
+			ErrIncompatibleCheckpoint, weights, got.ActWidth, checkpoint.ConfigFile, actWidth)
+	}
+	return nil
+}
+
+// shapeChecked holds a backend the agent did not build from an export (a
+// caller's, or the native one) to the output shapes the ONNX backend
 // enforces on itself: per row, one logit per marker column and the config's
 // act width. A wrong width would otherwise answer plausibly, an act
 // probability of 1 from a row one wide, where it should fail.
@@ -155,12 +226,13 @@ type shapeChecked struct {
 	backend.Backend
 
 	actWidth int
+	label    string // prefixes the backend's own errors
 }
 
 func (b shapeChecked) Forward(ctx context.Context, in backend.Batch) (logits, act [][]float32, err error) {
 	logits, act, err = b.Backend.Forward(ctx, in)
 	if err != nil {
-		return nil, nil, fmt.Errorf("caller's backend: %w", err)
+		return nil, nil, fmt.Errorf("%s: %w", b.label, err)
 	}
 	if len(logits) != len(in.MarkerPos) || len(act) != len(in.MarkerPos) {
 		return nil, nil, fmt.Errorf("%w: %d logit rows and %d act rows for %d in the batch",
@@ -181,24 +253,23 @@ func (b shapeChecked) Forward(ctx context.Context, in backend.Batch) (logits, ac
 
 // readCheckpoint reads the config and the tokenizer of the checkpoint spec
 // locates, downloading them first if it is on the Hub, and the act_logits
-// width the config derives.
+// width the config derives. dir is the checkpoint's directory.
 func (l *defaultLoader) readCheckpoint(ctx context.Context, spec ModelSpec) (
-	cfg *checkpoint.Config, tok *tokenizer.HF, actWidth int, err error,
+	dir string, cfg *checkpoint.Config, tok *tokenizer.HF, actWidth int, err error,
 ) {
-	dir, err := l.checkpointDir(ctx, spec)
-	if err != nil {
-		return nil, nil, 0, err
+	if dir, err = l.checkpointDir(ctx, spec); err != nil {
+		return "", nil, nil, 0, err
 	}
 	if cfg, err = checkpoint.LoadConfig(dir); err != nil {
-		return nil, nil, 0, fmt.Errorf("laya: %w", err)
+		return "", nil, nil, 0, fmt.Errorf("laya: %w", err)
 	}
 	if actWidth, err = cfg.ActWidth(); err != nil {
-		return nil, nil, 0, fmt.Errorf("laya: %w", err)
+		return "", nil, nil, 0, fmt.Errorf("laya: %w", err)
 	}
 	if tok, err = tokenizer.Open(filepath.Join(dir, "tokenizer")); err != nil {
-		return nil, nil, 0, fmt.Errorf("%w: %w", ErrIncompatibleCheckpoint, err)
+		return "", nil, nil, 0, fmt.Errorf("%w: %w", ErrIncompatibleCheckpoint, err)
 	}
-	return cfg, tok, actWidth, nil
+	return dir, cfg, tok, actWidth, nil
 }
 
 // checkpointDir is agent.py:115-135: a directory that exists is used as it is,
@@ -234,8 +305,9 @@ func (l *defaultLoader) checkpointDir(ctx context.Context, spec ModelSpec) (stri
 	return sub, nil
 }
 
-// download snapshots the spec's config and tokenizer at the loader's
-// revision, else the bundle repo at D17's pin and any other repo at main.
+// download snapshots the spec's config and tokenizer, and with RuntimeNative
+// its weights, at the loader's revision, else the bundle repo at D17's pin
+// and any other repo at main.
 func (l *defaultLoader) download(ctx context.Context, spec ModelSpec) (string, error) {
 	rev := l.revision
 	switch {
@@ -245,7 +317,7 @@ func (l *defaultLoader) download(ctx context.Context, spec ModelSpec) (string, e
 	default:
 		rev = "main"
 	}
-	dir, err := l.snapshot(ctx, spec.Repo, rev, allowPatterns(spec.Subfolder))
+	dir, err := l.snapshot(ctx, spec.Repo, rev, allowPatternsFor(spec.Subfolder, l.runtime))
 	// A missing repo, and a subfolder the allow filter finds no file for, are
 	// both hub.ErrNotFound; the local cases answer with ErrCheckpointNotFound,
 	// so the Hub's do too.
@@ -272,6 +344,23 @@ func allowPatterns(sub string) []string {
 		prefix = sub + "/"
 	}
 	return []string{prefix + checkpoint.ConfigFile, prefix + "tokenizer/*"}
+}
+
+// allowPatternsFor is what a snapshot downloads for the runtime rt:
+// allowPatterns, and with RuntimeNative the checkpoint's own weights and its
+// encoder's config, which the native backend runs on (D24 as amended, D30).
+// They are anchored as allowPatterns' are, so the root's model.safetensors
+// matches no subfolder's and encoder/config.json no other file of encoder/.
+func allowPatternsFor(sub string, rt Runtime) []string {
+	allow := allowPatterns(sub)
+	if rt != RuntimeNative {
+		return allow
+	}
+	prefix := ""
+	if sub != "" {
+		prefix = sub + "/"
+	}
+	return append(allow, prefix+"model.safetensors", prefix+"encoder/config.json")
 }
 
 // graphDir is where the loader looks for exports.

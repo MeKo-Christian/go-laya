@@ -26,6 +26,7 @@
 // one model; an RWMutex guards only the lifecycle against Close, as in
 // internal/backend/onnx.
 //
-// Selecting this backend through a public option, and downloading
-// model.safetensors for it, are the rest of Task 8.10.
+// laya.WithRuntime(laya.RuntimeNative) selects this backend (D30). The
+// root's loader downloads model.safetensors and encoder/config.json for it,
+// and holds ReadHeadShape's head to rl_agent_config.json before Open.
 package native

@@ -18,9 +18,10 @@ import (
 )
 
 // Agent is one loaded checkpoint: its backend (an ONNX Runtime session, unless
-// WithBackend gave another), its config and its tokenizer. It is Python's
-// laya.Agent (agent.py:99), built by Open as laya.load builds that one, and it
-// is also what the Router's default loader caches, so it satisfies Predictor.
+// WithRuntime or WithBackend chose another), its config and its tokenizer. It
+// is Python's laya.Agent (agent.py:99), built by Open as laya.load builds that
+// one, and it is also what the Router's default loader caches, so it satisfies
+// Predictor.
 //
 // SystemOne, Predict and SetLimits may be called from several goroutines at
 // once.
@@ -121,7 +122,8 @@ func (a *Agent) limits() (maxLen, headMaxLen int) {
 
 // Option configures Open. The options are laya.load's keyword arguments
 // (agent.py:351-352), plus WithGraph, which the local ONNX export needs (D24),
-// and the port's own settings, such as WithRevision (D29).
+// and the port's own settings, such as WithRevision (D29) and WithRuntime
+// (D30).
 type Option func(*agentConfig) error
 
 type agentConfig struct {
@@ -130,6 +132,7 @@ type agentConfig struct {
 	subfolder          string
 	graph              string
 	backend            backend.Backend // nil is the ONNX backend on the export
+	runtimeSet         bool            // WithRuntime was given, whatever its value
 	maxLen, headMaxLen int             // 0 keeps the config's
 }
 
@@ -147,10 +150,40 @@ func WithSubfolder(sub string) Option {
 // WithDevice is the device the agent runs on: "cpu", "cuda", "cuda:N",
 // "coreml", or "" / "auto" for the best one the ONNX Runtime library offers.
 // An unusable device falls back to the CPU with a warning, and a name that is
-// no device fails Open with ErrUnknownDevice.
+// no device fails Open with ErrUnknownDevice. RuntimeNative runs on the CPU
+// only, so beside it any device but "", "auto" and "cpu" fails Open with
+// ErrConflictingOptions.
 func WithDevice(d string) Option {
 	return func(c *agentConfig) error {
 		c.device = d
+		return nil
+	}
+}
+
+// WithRuntime selects what runs the forward pass (D30). RuntimeONNX, the
+// default, runs a local ONNX export, as WithGraph and WithDevice describe.
+// RuntimeNative runs the checkpoint's own model.safetensors in pure Go on the
+// CPU, with no shared library and no export: a Hub checkpoint's download then
+// adds the weights and encoder/config.json to the config and the tokenizer,
+// through the same hash-verified, cancellable path, and a local directory
+// must hold them. The weights are held to rl_agent_config.json's head_layers
+// and act_costs, and a file that disagrees is ErrIncompatibleCheckpoint.
+//
+// A checkpoint without encoder/config.json is ErrIncompatibleCheckpoint here,
+// a deviation (D30): upstream then builds the encoder from the config's
+// "encoder" Hub id (common.py:132-135). Every laya checkpoint ships encoder/.
+//
+// RuntimeNative beside WithGraph, or beside a WithDevice other than "",
+// "auto" and "cpu", fails Open with ErrConflictingOptions, as does any
+// WithRuntime beside a non-nil WithBackend, which replaces the runtime. A
+// value that is neither runtime fails Open with ErrUnknownRuntime as the
+// option is applied.
+func WithRuntime(rt Runtime) Option {
+	return func(c *agentConfig) error {
+		if err := rt.check(); err != nil {
+			return err
+		}
+		c.runtime, c.runtimeSet = rt, true
 		return nil
 	}
 }
@@ -213,9 +246,9 @@ func WithLogger(l *slog.Logger) Option {
 // WithBackend runs the checkpoint on b in place of the ONNX backend: a test
 // double or another runtime (D9). Open still reads the checkpoint's config and
 // tokenizer, downloading them as it would otherwise, but looks for no export
-// and opens no ONNX backend, so WithGraph or WithDevice beside it fails Open
-// with ErrConflictingOptions. Nil keeps the ONNX backend; a nil pointer of a
-// concrete type is not nil and fails at the first SystemOne. Open holds b's
+// and opens no ONNX backend, so WithGraph, WithDevice or WithRuntime beside it
+// fails Open with ErrConflictingOptions. Nil keeps the ONNX backend; a nil
+// pointer of a concrete type is not nil and fails at the first SystemOne. Open holds b's
 // outputs to the shapes the ONNX backend enforces on itself, and a mismatch
 // is ErrIncompatibleCheckpoint. b must be safe for concurrent Forward calls,
 // as the backend.Backend contract requires, because the Agent does not
@@ -234,7 +267,9 @@ func WithBackend(b backend.Backend) Option {
 // wrote. Without it, Open looks for laya-<name>.onnx in $LAYA_ONNX_DIR, else
 // in onnx/ under the laya cache, where name is the checkpoint the repo and
 // subfolder locate in DefaultModels or StandaloneModels. A checkpoint neither
-// registry names, such as a local directory, needs WithGraph.
+// registry names, such as a local directory, needs WithGraph. RuntimeNative
+// runs no export, so beside it WithGraph fails Open with
+// ErrConflictingOptions.
 func WithGraph(path string) Option {
 	return func(c *agentConfig) error {
 		c.graph = path
@@ -262,11 +297,14 @@ func WithLimits(maxLen, headMaxLen int) Option {
 // the config and the tokenizer, the bundle repo at the revision every golden
 // vector was recorded against (D17) unless WithRevision names another, and
 // the forward pass runs on a local ONNX export (D24), or on WithBackend's.
+// With WithRuntime(RuntimeNative) it runs the checkpoint's own weights in
+// pure Go instead, which a Hub repo then downloads as well (D30).
 //
 // It fails with ErrCheckpointNotFound for a checkpoint that is not there,
 // ErrNoGraph for an export that is not, ErrIncompatibleCheckpoint for one
-// this port cannot run, and ErrConflictingOptions for options that cannot
-// apply together. The caller closes the agent.
+// this port cannot run, ErrConflictingOptions for options that cannot apply
+// together, and ErrUnknownRuntime for a runtime that does not exist. The
+// caller closes the agent.
 func Open(ctx context.Context, ref string, opts ...Option) (*Agent, error) {
 	return openAgent(ctx, ref, opts, newDefaultLoader)
 }
@@ -305,10 +343,12 @@ func openAgent(ctx context.Context, ref string, opts []Option, newLoader func(lo
 }
 
 // checkConflicts refuses WithBackend beside the options that configure the
-// ONNX backend it replaces, before anything is downloaded.
+// ONNX backend it replaces or select the runtime it replaces, and
+// RuntimeNative beside the options only the ONNX backend reads, before
+// anything is downloaded.
 func (c *agentConfig) checkConflicts() error {
 	if c.backend == nil {
-		return nil
+		return c.checkNative(c.graph != "", "WithGraph", "WithDevice")
 	}
 	var ignored []string
 	if c.graph != "" {
@@ -320,6 +360,9 @@ func (c *agentConfig) checkConflicts() error {
 	if len(ignored) > 0 {
 		return fmt.Errorf("%w: WithBackend replaces the ONNX backend that %s configures",
 			ErrConflictingOptions, strings.Join(ignored, " and "))
+	}
+	if c.runtimeSet {
+		return fmt.Errorf("%w: WithBackend replaces the runtime that WithRuntime selects", ErrConflictingOptions)
 	}
 	return nil
 }
