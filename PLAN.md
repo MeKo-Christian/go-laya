@@ -760,6 +760,10 @@ zero-shared-library backend, not a speed play (D8). The facts it needs are in
       fails `TestMLPMatchesTorch` on all three cases.
 - [ ] **8.4** Fused QKV unpacking (`attn.Wqkv [3072,1024]`, no attention bias).
 - [ ] **8.5** Sliding-window attention masks (window 128, ±64) and per-layer-type RoPE theta.
+- [ ] **8.5.1** Assemble the encoder: `tok_embeddings`, then the embeddings norm, then the layers in
+      `layer_types` order (full or sliding attention per layer), then `final_norm`. Check it
+      against the real `ModernBertModel` on a tiny config. Found while planning batch 2
+      (2026-10-10): no task covered the assembly, and 8.6 is the decision head's own loop.
 - [ ] **8.6** The decision head with a **ReLU** FFN and the manual layer loop.
 - [ ] **8.7** fp16 weight loading. The loader tolerates the per-checkpoint `temperature` dtype,
       which is never read.
