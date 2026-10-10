@@ -73,7 +73,11 @@ func prepareRoPE(x, cos, sin *tensor.Tensor, pos int64) (ropeParams, *tensor.Ten
 	outData := out.RawData()
 	cosData := cos.RawData()
 	sinData := sin.RawData()
-	p.prefix = int64(len(outData)) / (p.seq * p.dim)
+	// An empty tensor has nothing to rotate; prefix stays 0 so applyRoPE
+	// is a no-op instead of dividing by a zero seq*dim.
+	if len(outData) > 0 {
+		p.prefix = int64(len(outData)) / (p.seq * p.dim)
+	}
 
 	return p, out, outData, cosData, sinData, nil
 }

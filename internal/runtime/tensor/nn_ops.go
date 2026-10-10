@@ -301,7 +301,13 @@ func Linear(x, weight, bias *Tensor) (*Tensor, error) {
 		return nil, err
 	}
 
-	batch := len(x.data) / int(in)
+	// The row count comes from the shape: len(x.data)/in divides by zero
+	// for a zero input width, where every output is 0 plus the bias.
+	batch, err := shapeElemCount(x.shape[:x.Rank()-1])
+	if err != nil {
+		return nil, err
+	}
+
 	outData := make([]float32, batch*int(out))
 	inI := int(in)
 	outI := int(out)
