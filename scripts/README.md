@@ -16,6 +16,7 @@ Python in `original/`.
 | `build_corpus.py`                 | Assemble the ~157k-line tokenizer differential corpus into `build/corpus/`             | Task 4.5.3 |
 | `dump_stages.py`                  | Run that corpus through the oracle, recording every pipeline stage                     | Task 4.5.3 |
 | `dump_modernbert_ops.py`          | Run tiny ModernBERT blocks through torch for the native backend's per-block tests      | Task 8.2   |
+| `dump_head_ops.py`                | Run a tiny laya decision head through torch for the native backend's head tests        | Task 8.6   |
 | `requirements-ref.txt`            | The pinned reference environment — **this file is the contract**                       | Task 1.1   |
 
 ## Regenerating the golden vectors
@@ -60,6 +61,18 @@ The script refuses to run unless torch, transformers and numpy match
 `requirements-ref.txt`, and `TestOpsProvenance` checks the same pins on the Go side.
 Each case seeds its own generator, so a later task appending cases leaves the existing
 records byte-identical; a rerun without changes reproduces the file exactly.
+
+```bash
+.venv-ref/bin/python -I scripts/dump_head_ops.py
+git diff --stat internal/head/testdata/
+```
+
+`internal/head/testdata/head.json` is the oracle for the decision head (Task 8.6):
+upstream's own `DecisionModel` from `original/laya/common.py`, imported and not copied,
+at d=8 with seeded random weights and a stub encoder that hands it the recorded hidden
+states, plus one two-head `nn.TransformerEncoderLayer`. It runs as `agent.py` runs on the
+CPU (`eval()`, `no_grad()`, float32) and records which `TransformerEncoderLayer` path
+torch took. The same version guard applies, and `TestHeadProvenance` checks it.
 
 ## The tokenizer differential run
 

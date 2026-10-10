@@ -29,6 +29,8 @@ excludes = [
   # it, and scripts/dump_modernbert_ops.py lays out one case per line so that appending a
   # case leaves the others untouched. A rerun of the dumper must reproduce it byte for byte.
   "internal/modernbert/testdata/*.json",
+  # The decision head's oracle (Task 8.6), laid out the same way by scripts/dump_head_ops.py.
+  "internal/head/testdata/*.json",
   # Binary and generated artefacts.
   "*.png",
   "*.svg",
