@@ -78,7 +78,13 @@ file, so this section is the record of where the code came from.
    fixes for this repository's configuration: `nolint` directives for
    `gocognit` on four kernels and for `cyclop` on two of them,
    `slices.Backward` in `computeStrides`, and an unused `nolint:funlen`
-   removed from `Concat`.
+   removed from `Concat`. Robustness fixes from review: `shapeElemCount`
+   checks for overflow before each multiplication; `Linear` takes its row
+   count from the shape and `RoPE` returns an empty input unchanged, so
+   zero-sized operands no longer divide by zero; `Narrow` bounds `start`
+   before comparing `length` with what is left; and the approximate
+   comparison test helpers reject NaN. Their tests are in the new
+   `robustness_test.go` in each package.
 
 Model weights
 -------------
