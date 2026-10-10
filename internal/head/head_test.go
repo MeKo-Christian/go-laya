@@ -159,7 +159,7 @@ func TestLayerMatchesTorch(t *testing.T) {
 			if c.Path != "fast" || c.FastPathCalls != 1 {
 				t.Errorf("fixture path %q (%d fast calls), want the fast path", c.Path, c.FastPathCalls)
 			}
-			l, err := NewLayer(layerWeights(t, c.Weights, ""), c.NHead)
+			l, err := NewLayer(layerWeights(func(name string) *tensor.Tensor { return weight(t, c.Weights, name) }, ""), c.NHead)
 			if err != nil {
 				t.Fatalf("NewLayer: %v", err)
 			}

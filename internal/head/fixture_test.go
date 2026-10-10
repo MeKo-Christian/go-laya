@@ -161,25 +161,22 @@ func casesOf[T any](tb testing.TB, f headFixture, op string) []T {
 	return out
 }
 
-// layerWeights reads one TransformerEncoderLayer's tensors, named as its
-// state_dict names them under prefix.
-func layerWeights(tb testing.TB, w map[string]tensorRec, prefix string) LayerWeights {
-	tb.Helper()
-
-	get := func(name string) *tensor.Tensor { return weight(tb, w, prefix+name) }
+// layerWeights reads one TransformerEncoderLayer's tensors through get, named
+// as its state_dict names them under prefix.
+func layerWeights(get func(name string) *tensor.Tensor, prefix string) LayerWeights {
 	return LayerWeights{
-		InProjWeight:  get("self_attn.in_proj_weight"),
-		InProjBias:    get("self_attn.in_proj_bias"),
-		OutProjWeight: get("self_attn.out_proj.weight"),
-		OutProjBias:   get("self_attn.out_proj.bias"),
-		Linear1Weight: get("linear1.weight"),
-		Linear1Bias:   get("linear1.bias"),
-		Linear2Weight: get("linear2.weight"),
-		Linear2Bias:   get("linear2.bias"),
-		Norm1Weight:   get("norm1.weight"),
-		Norm1Bias:     get("norm1.bias"),
-		Norm2Weight:   get("norm2.weight"),
-		Norm2Bias:     get("norm2.bias"),
+		InProjWeight:  get(prefix + "self_attn.in_proj_weight"),
+		InProjBias:    get(prefix + "self_attn.in_proj_bias"),
+		OutProjWeight: get(prefix + "self_attn.out_proj.weight"),
+		OutProjBias:   get(prefix + "self_attn.out_proj.bias"),
+		Linear1Weight: get(prefix + "linear1.weight"),
+		Linear1Bias:   get(prefix + "linear1.bias"),
+		Linear2Weight: get(prefix + "linear2.weight"),
+		Linear2Bias:   get(prefix + "linear2.bias"),
+		Norm1Weight:   get(prefix + "norm1.weight"),
+		Norm1Bias:     get(prefix + "norm1.bias"),
+		Norm2Weight:   get(prefix + "norm2.weight"),
+		Norm2Bias:     get(prefix + "norm2.bias"),
 	}
 }
 
@@ -209,13 +206,7 @@ func modelWeights(tb testing.TB, c modelCase) Weights {
 		ActLinear2Bias:      track("act_head.2.bias"),
 	}
 	for i := range c.HeadLayers {
-		prefix := fmt.Sprintf("head.layers.%d.", i)
-		for name := range w {
-			if strings.HasPrefix(name, prefix) {
-				used[name] = true
-			}
-		}
-		out.Layers = append(out.Layers, layerWeights(tb, w, prefix))
+		out.Layers = append(out.Layers, layerWeights(track, fmt.Sprintf("head.layers.%d.", i)))
 	}
 	for name := range w {
 		if !used[name] {
