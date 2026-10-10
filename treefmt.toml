@@ -25,6 +25,10 @@ excludes = [
   # *.jsonl, which is half the reason the corpus is JSONL -- but the fixtures are the
   # contract and that is not a distinction worth leaving to a glob.
   "testdata/*.jsonl",
+  # The native backend's per-block oracle (PLAN.md M8). It is JSON, so prettier would claim
+  # it, and scripts/dump_modernbert_ops.py lays out one case per line so that appending a
+  # case leaves the others untouched. A rerun of the dumper must reproduce it byte for byte.
+  "internal/modernbert/testdata/*.json",
   # Binary and generated artefacts.
   "*.png",
   "*.svg",

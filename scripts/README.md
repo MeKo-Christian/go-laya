@@ -15,6 +15,7 @@ Python in `original/`.
 | `crosscheck_transformers.py`      | Diff a transformers 4.x build against the pinned 5.17.0                                | Task 1.6   |
 | `build_corpus.py`                 | Assemble the ~157k-line tokenizer differential corpus into `build/corpus/`             | Task 4.5.3 |
 | `dump_stages.py`                  | Run that corpus through the oracle, recording every pipeline stage                     | Task 4.5.3 |
+| `dump_modernbert_ops.py`          | Run tiny ModernBERT blocks through torch for the native backend's per-block tests      | Task 8.2   |
 | `requirements-ref.txt`            | The pinned reference environment — **this file is the contract**                       | Task 1.1   |
 
 ## Regenerating the golden vectors
@@ -44,6 +45,21 @@ drifts would produce a corpus that is internally consistent and wrong.
 
 `testdata/*.jsonl` is excluded from `treefmt` (see `treefmt.toml`): the vectors are
 compared byte-for-byte, so nothing may reflow them.
+
+## The native backend's block fixtures
+
+```bash
+.venv-ref/bin/python -I scripts/dump_modernbert_ops.py
+git diff --stat internal/modernbert/testdata/   # review it, as above
+```
+
+`internal/modernbert/testdata/ops.json` is the per-block oracle for the pure-Go
+backend (`PLAN.md` M8): the real transformers modules of a tiny `ModernBertModel`,
+run on seeded inputs. It needs no weights and no network and takes about a second.
+The script refuses to run unless torch, transformers and numpy match
+`requirements-ref.txt`, and `TestOpsProvenance` checks the same pins on the Go side.
+Each case seeds its own generator, so a later task appending cases leaves the existing
+records byte-identical; a rerun without changes reproduces the file exactly.
 
 ## The tokenizer differential run
 
