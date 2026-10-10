@@ -1,6 +1,7 @@
 // Package safetensors reads and validates a .safetensors file's header by the
 // rules of the safetensors library's own validation, so a downloaded weights
-// file is known to be well-formed before anything maps its data.
+// file is known to be well-formed before anything reads its data, and decodes
+// its F16 and F32 tensors into float32.
 package safetensors
 
 import (
