@@ -15,7 +15,8 @@ import (
 
 // opsFixture is testdata/ops.json, written by scripts/dump_modernbert_ops.py from
 // the real transformers modules of a tiny ModernBertModel. Cases stay raw because
-// each op has its own fields: "layernorm" (Task 8.2) and "mlp" (Task 8.3).
+// each op has its own fields: "layernorm" (Task 8.2), "mlp" (Task 8.3) and
+// "attention" (Tasks 8.4 and 8.5).
 type opsFixture struct {
 	Header opsHeader         `json:"header"`
 	Cases  []json.RawMessage `json:"cases"`
