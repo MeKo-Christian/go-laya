@@ -96,7 +96,7 @@ var (
 	ErrUnknownRuntime = errors.New("laya: unknown runtime")
 
 	// ErrConflictingOptions reports options that cannot apply together, one
-	// of which would be silently ignored. For Open: WithBackend beside
+	// of which would be silently ignored. For Open: a non-nil WithBackend beside
 	// WithGraph or WithDevice, which choose the graph and the device of the
 	// ONNX backend WithBackend replaces, or beside any WithRuntime, which
 	// selects the runtime it replaces; and WithRuntime(RuntimeNative) beside

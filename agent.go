@@ -243,14 +243,16 @@ func WithLogger(l *slog.Logger) Option {
 	}
 }
 
-// WithBackend runs the checkpoint on b in place of the ONNX backend: a test
-// double or another runtime (D9). Open still reads the checkpoint's config and
-// tokenizer, downloading them as it would otherwise, but looks for no export
-// and opens no ONNX backend, so WithGraph, WithDevice or WithRuntime beside it
-// fails Open with ErrConflictingOptions. Nil keeps the ONNX backend; a nil
-// pointer of a concrete type is not nil and fails at the first SystemOne. Open holds b's
-// outputs to the shapes the ONNX backend enforces on itself, and a mismatch
-// is ErrIncompatibleCheckpoint. b must be safe for concurrent Forward calls,
+// WithBackend runs the checkpoint on b in place of the runtime WithRuntime
+// selects: a test double or another runtime (D9). Open still reads the
+// checkpoint's config and tokenizer, downloading them as it would otherwise,
+// but with a non-nil b it looks for no export and opens no backend of its
+// own, so WithGraph, WithDevice or WithRuntime beside it fails Open with
+// ErrConflictingOptions. Nil is Open without the option: the selected
+// runtime runs, ONNX unless WithRuntime chose another, and the other options
+// apply as usual. A nil pointer of a concrete type is not nil and fails at
+// the first SystemOne. Open holds b's outputs to the shapes the ONNX backend
+// enforces on itself, and a mismatch is ErrIncompatibleCheckpoint. b must be safe for concurrent Forward calls,
 // as the backend.Backend contract requires, because the Agent does not
 // serialize them.
 //

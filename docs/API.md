@@ -289,9 +289,10 @@ func WithCacheDir(dir string) Option
 // WithLogger receives the ONNX backend's device-fallback warnings; nil is slog.Default().
 func WithLogger(l *slog.Logger) Option
 // WithBackend runs the checkpoint on b, a public leaf package type (PLAN D9): test
-// doubles, alternative runtimes. The config and tokenizer are still downloaded; no
-// export is looked for and no ONNX backend opened. Beside WithGraph, WithDevice or
-// any WithRuntime it is ErrConflictingOptions; nil keeps the ONNX backend. A successful Open hands b to
+// doubles, alternative runtimes. The config and tokenizer are still downloaded; with a
+// non-nil b no export is looked for and no backend of Open's own opened, and beside
+// WithGraph, WithDevice or any WithRuntime it is ErrConflictingOptions. Nil is Open
+// without the option: the runtime WithRuntime selects runs. A successful Open hands b to
 // the Agent, whose Close closes it; a failed Open leaves b open and the caller's (D29).
 // Its outputs are held to the ONNX backend's shapes: kmax logits and the config's act
 // width per row, else ErrIncompatibleCheckpoint. b must be safe for concurrent
@@ -479,7 +480,7 @@ var (
 	ErrInvalidLimits           = errors.New("laya: max_len and head_max_len must be positive") // SetLimits, WithLimits
 	ErrInvalidRevision         = errors.New("laya: invalid revision")    // WithRevision / WithRouterRevision not safe in a URL and a cache path
 	ErrUnknownRuntime          = errors.New("laya: unknown runtime")     // WithRuntime / WithRouterRuntime neither RuntimeONNX nor RuntimeNative
-	ErrConflictingOptions      = errors.New("laya: conflicting options") // WithBackend beside WithGraph, WithDevice or WithRuntime;
+	ErrConflictingOptions      = errors.New("laya: conflicting options") // a non-nil WithBackend beside WithGraph, WithDevice or WithRuntime;
 	// RuntimeNative beside WithGraph / WithONNXDir or a device other than "", "auto", "cpu"
 )
 
