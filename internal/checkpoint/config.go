@@ -8,13 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/MeKo-Christian/go-laya/backend"
+	"github.com/MeKo-Christian/go-laya/internal/regularfile"
 )
 
 // ConfigFile is the checkpoint config's name inside a checkpoint directory
@@ -45,16 +45,17 @@ func (c *Config) Field(key string) (json.RawMessage, bool) {
 
 // LoadConfig reads dir's rl_agent_config.json and requires the keys
 // "encoder" and "head_layers" to be present, whatever their value, as
-// `k not in cfg` does (agent.py:51-57). Every failure wraps
+// `k not in cfg` does (agent.py:51-57). The file must be a regular file: a
+// named pipe there is refused without waiting on it. Every failure wraps
 // backend.ErrIncompatibleCheckpoint; a missing file also wraps
 // fs.ErrNotExist.
 func LoadConfig(dir string) (*Config, error) {
 	path := filepath.Join(dir, ConfigFile)
-	// #nosec G304 -- dir is the checkpoint directory the caller chose to load;
-	// reading its config is the point.
-	f, err := os.Open(path)
+	// Opened as a regular file only: a named pipe there would otherwise
+	// block Open, on either backend, in a wait no context can end.
+	f, err := regularfile.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("config: %w: %w", err, backend.ErrIncompatibleCheckpoint)
+		return nil, fmt.Errorf("config: %s: %w: %w", path, err, backend.ErrIncompatibleCheckpoint)
 	}
 	defer f.Close()
 
