@@ -889,6 +889,15 @@ build/diff-tokenizer.txt` exits 0: en "mismatching: 85", "accepted (B.2 NFC devi
       (`BENCHMARKS.md`, Task 8.9). arm64 already has a 4×4 NEON block. It must keep every bit, or
       be a recorded numerics change in algo-tensor and a new golden run here. Measure against
       Task 8.9's cell. Depends on B.19.
+- [ ] **B.21** Read `internal/hub`'s cached refs and listings (`readCached`,
+      `internal/hub/snapshot.go`) through `regularfile.Open` with a cap, and open the cached ORT
+      library in `ortlib.Cached` the same way. Both `Lstat` the path and then plainly open it, so a
+      named pipe swapped in between blocks an offline `Open`, and `readCached` reads without a size
+      limit; refs and listings are kilobytes. `purego.Dlopen` reopens the library path afterwards
+      anyway, the same unavoidable second open as ORT's for the graph. Exploiting either needs
+      write access to the user's cache directory, so it is low severity. A FIFO test per reader,
+      modelled on `TestReadFIFO`. Found in B.17's audit, PR #61 (2026-10-11).
+
 ### M8 — Pure-Go native backend (after 1.0)
 
 Same `backend.Backend` interface, no API change. It implements ModernBERT, mmBERT and the head over
