@@ -717,6 +717,10 @@ the ECE/Brier inputs.
       `internal/regularfile.Open`. It still uses a plain `os.Open`, so a FIFO there blocks `Open`
       on either backend in a wait no context can end. Found while fixing the same for
       `encoder/config.json` in PR #49's review (2026-10-11).
+- [ ] **B.15** Decide whether `checkpoint.LoadConfig` accepts the JSON literals `NaN`, `Infinity`
+      and `-Infinity`, which Python's `json` parses. It refuses the whole file today. Each field
+      that could carry one needs its own parity check: an infinite temperature changes what the
+      logits are divided by. Found in PR #50's review (2026-10-11).
 
 ### M8 — Pure-Go native backend (after 1.0)
 
