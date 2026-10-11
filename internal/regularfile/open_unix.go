@@ -1,6 +1,6 @@
 //go:build unix
 
-package safetensors
+package regularfile
 
 import "syscall"
 
