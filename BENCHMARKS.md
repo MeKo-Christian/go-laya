@@ -331,7 +331,7 @@ with S3's figures to within 3–10%.
 | `laya-multilingual`    | 3593 ms    | 3690 ms    | 645 ms      | 623 ms        | 5.6× / 5.8×             | 6.45 s     | yes |
 | `laya-typed-decisions` | 9986 ms    | 12014 ms   | 1856 ms     | 1662 ms       | 5.4× / 6.0×             | 18.6 s     | yes |
 
-The p90 is from the sweep that gave the minimum p50. The three idle sweeps agree to within 4% at
+The p90 is from the sweep that gave the minimum p50. The three idle sweeps agree to within 5% at
 p50:
 
 - `laya`: 9721–9821 ms;
