@@ -570,7 +570,24 @@ ORT "here" column is from the run under load:
 
 All three load at least as fast as an ORT session did in S3. Memory is the larger cost: the
 native backend holds every weight as float32 on the Go heap, so all three loaded at once need about
-5.5 GB, against ORT's 3.3 GB.
+4.7 GB since B.16 (5.5 GB in the table above), against ORT's 3.3 GB.
+
+**Peak memory at load (PLAN.md B.16).** `load` used to copy each decoded weight into its tensor, so
+every weight existed twice for a moment; it now takes the decoded slice over. `BenchmarkLoad` also
+reports `peak_MiB`, the process's `VmHWM` right after the first load in a fresh process. One test
+binary per commit, before (`2566863`) and after (`753ad96`), interleaved per checkpoint over two
+rounds, each run its own process under an 8 GB cap:
+
+| checkpoint             | peak, before  | peak, after | resident after load, before → after |
+| ---------------------- | ------------- | ----------- | ----------------------------------- |
+| `laya`                 | 1972–1984 MiB | 1676 MiB    | 1967–1978 → 1670 MiB                |
+| `laya-multilingual`    | 1581–1589 MiB | 1334 MiB    | 1576–1584 → 1328 MiB                |
+| `laya-typed-decisions` | 1971–2006 MiB | 1676 MiB    | 1965–2001 → 1670 MiB                |
+
+The peak drops by 250–330 MiB, about 15%. The resident size after load drops by as much, because
+the runtime has not returned the freed copies to the OS when `Open` returns; the table above, from
+before B.16, counts them. Other test sessions shared the machine (1-minute load average 10–14), so
+the load times in that transcript, `docs/benchmarks/raw/bench-native-load-b16.txt`, do not compare.
 
 **Raw transcripts.**
 
@@ -581,6 +598,8 @@ native backend holds every weight as float32 on the Go heap, so all three loaded
   - `bench-native-sweep-{a,b,c}.txt` are the native sweeps.
   - `bench-onnx-refcell-{a,b,c}.txt` are the ORT runs, one after each. ORT run a also holds the
     fresh `BenchmarkSessionLoad`.
+- **B.16, peak memory at load:** `bench-native-load-b16.txt`, `BenchmarkLoad` before and after,
+  interleaved.
 
 Every process is headed by its `uptime`.
 `bench-native-pprof-typed-decisions.txt` is the profile's top 15.
