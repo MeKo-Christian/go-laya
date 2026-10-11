@@ -14,7 +14,7 @@ codepoint reads the table out of the implementation.
 Result at tokenizers 0.23.2 / transformers 5.17.0: **108 codepoints** on which the
 Rust normaliser behind HF `tokenizers` does not reorder while Go's
 `golang.org/x/text` and CPython's own `unicodedata` both do. They are combining
-marks assigned in Unicode 11.0 through 15.0 -- U+07FD, U+0898-089F, U+08CA-08D3,
+marks assigned in Unicode 10.0 through 15.0 -- U+07FD, U+0898-089F, U+08CA-08D3,
 U+1AC0-1ACE, U+1DF6-1DFA, U+10D24-10D27, U+10EFD-10EFF and others -- so the Rust
 crate's tables predate them and treat each as a starter, which blocks the
 canonical reordering the other two perform.

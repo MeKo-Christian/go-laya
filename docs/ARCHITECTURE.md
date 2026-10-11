@@ -160,7 +160,7 @@ Semantics the implementation gets right from config, not by convention:
 
 **Differential result (157 281 lines × 2 tokenizers).** There is one divergence class: 85 lines,
 all in NFC on English/typed-decisions. `tokenizers` 0.23.2's Rust tables lack the canonical
-combining class of 108 codepoints assigned in Unicode 11–15. Go and CPython agree with each other,
+combining class of 108 codepoints assigned in Unicode 10.0–15.0. Go and CPython agree with each other,
 so the oracle is the outlier. No natural text, vocabulary entry or UI string in the corpus reaches
 it, and multilingual (no NFC) cannot. `scripts/probe_ccc.py` enumerates the set. PLAN Task B.2
 decided (2026-10-10) to stay Unicode-conformant rather than reproduce the Rust tables, so the
