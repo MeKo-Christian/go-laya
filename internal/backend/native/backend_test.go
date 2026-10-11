@@ -152,12 +152,14 @@ func TestOpenStrict(t *testing.T) {
 			s.config["num_hidden_layers"] = 3
 			s.config["layer_types"] = tinyLayerTypes[:3]
 		}, []string{"4 encoder layers", "num_hidden_layers", "3"}},
-		// The plan transformers would derive is 2^40 layers long; the file's
-		// count must refuse it before anything is that large.
+		// The plan transformers would derive is 2^28 layers long, gigabytes
+		// of layer types; the file's count must refuse it before anything is
+		// that large. 2^28 fits a 32-bit int, so the case reaches the layer
+		// count on every word size rather than failing to parse.
 		{"a plan far beyond the file", func(s *synth) {
 			delete(s.config, "layer_types")
-			s.config["num_hidden_layers"] = 1 << 40
-		}, []string{"4 encoder layers", "num_hidden_layers 1099511627776"}},
+			s.config["num_hidden_layers"] = 1 << 28
+		}, []string{"4 encoder layers", "num_hidden_layers 268435456"}},
 		// Each numbered layer implies a dozen tensors; a file that numbers
 		// far more layers than it has tensors must be refused before the
 		// loader lists them all.

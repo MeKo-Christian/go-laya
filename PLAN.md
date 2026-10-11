@@ -709,9 +709,14 @@ the ECE/Brier inputs.
       (`internal/head/head.go`, `checkMarkers`); the ONNX path has no check, and its failure is
       untested. Decide whether to reject this before the backend, and test both backends. Found
       while ticking 8.6 (2026-10-10).
-- [ ] **B.13** Route `safetensors.ReadHeader` through the same regular-file open as
-      `safetensors.Open`. It still uses a plain `os.Open`, so a FIFO path blocks it. Found while
-      ticking 8.7 against PR #46's review fix (2026-10-10).
+- [ ] **B.13** Route `safetensors.ReadHeader` through `internal/regularfile.Open`, the
+      regular-file open that `safetensors.Open` and the native backend's `encoder/config.json` read
+      use. It still uses a plain `os.Open`, so a FIFO path blocks it. Found while ticking 8.7
+      against PR #46's review fix (2026-10-10).
+- [ ] **B.14** Route `checkpoint.LoadConfig`'s read of `rl_agent_config.json` through
+      `internal/regularfile.Open`. It still uses a plain `os.Open`, so a FIFO there blocks `Open`
+      on either backend in a wait no context can end. Found while fixing the same for
+      `encoder/config.json` in PR #49's review (2026-10-11).
 
 ### M8 — Pure-Go native backend (after 1.0)
 
@@ -858,7 +863,8 @@ zero-shared-library backend, not a speed play (D8). The facts it needs are in
       every tensor that is neither F16 nor F32 except `temperature`, which may have any dtype.
       A review fix opens the file `O_NONBLOCK` and type-checks the opened descriptor rather than
       the path, so a regular file swapped for a FIFO between the check and the open cannot block
-      (`TestOpenRegularFIFO`). `File.Float32` reads one tensor with `ReadAt` in 1 MiB chunks
+      (`TestOpenRegularFIFO`, since moved with the open to `internal/regularfile` as
+      `TestOpenFIFO`). `File.Float32` reads one tensor with `ReadAt` in 1 MiB chunks
       inside its validated span, checks the context per chunk, and decodes F16 exactly; BF16 is
       rejected (no checkpoint uses it), and `tensor/doc.go` now promises F16 and F32 only.
       `TestF16ToF32Exhaustive` checks all 65536 bit patterns against a decoder written from the
