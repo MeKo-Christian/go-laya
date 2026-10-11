@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/MeKo-Christian/go-laya/backend"
+	"github.com/MeKo-Christian/go-laya/internal/backend/native"
 	"github.com/MeKo-Christian/go-laya/internal/backend/onnx"
 	"github.com/MeKo-Christian/go-laya/internal/head"
 	"github.com/MeKo-Christian/go-laya/internal/hub"
@@ -27,7 +28,8 @@ import (
 // writeCheckpoint laid out: an encoder/config.json and a model.safetensors
 // whose header numbers headLayers head layers and gives act_head.2 actWidth
 // rows. The stubbed native open never reads the rest, so the file holds
-// nothing else; the loader's head check reads only its header.
+// nothing else; the real native open refuses a head that disagrees with the
+// config from the header alone, before it reads encoder/config.json.
 func writeWeights(t *testing.T, dir string, headLayers, actWidth int) {
 	t.Helper()
 	type entry struct {
@@ -93,13 +95,14 @@ type runtimeRec struct {
 	snapshots   []snapshotCall
 	onnxOpens   []string
 	nativeOpens []string
+	nativeHeads []native.HeadShape // the head each native open expected
 	native      *nativeBackend
 }
 
 // stubRuntimes makes newDefaultLoader's constructor stub both runtimes: a
 // snapshot answers with root (or fails the test when root is ""), the ONNX
-// open records the graph and the native open the directory. Both return
-// rec.native.
+// open records the graph and the native open the directory and the head it
+// expects. Both return rec.native.
 func stubRuntimes(t *testing.T, root string, rec *runtimeRec) func(loaderSettings) *defaultLoader {
 	t.Helper()
 	if rec.native == nil {
@@ -122,10 +125,11 @@ func stubRuntimes(t *testing.T, root string, rec *runtimeRec) func(loaderSetting
 			rec.onnxOpens = append(rec.onnxOpens, path)
 			return rec.native, nil
 		}
-		l.openNative = func(_ context.Context, dir string) (backend.Backend, error) {
+		l.openNative = func(_ context.Context, dir string, head native.HeadShape) (backend.Backend, error) {
 			rec.mu.Lock()
 			defer rec.mu.Unlock()
 			rec.nativeOpens = append(rec.nativeOpens, dir)
+			rec.nativeHeads = append(rec.nativeHeads, head)
 			return rec.native, nil
 		}
 		return l
@@ -517,11 +521,12 @@ func TestOpenNativeShapeChecked(t *testing.T) {
 	}
 }
 
-// Task 8.10 (PR #49's review finding 2): upstream builds the head from
-// rl_agent_config.json, head_layers layers (none when it is not positive)
-// and len(act_costs)+1 act logits, and its strict load refuses weights that
-// disagree. The loader holds the file to both before the native backend
-// decodes a weight.
+// Task 8.10 (PR #49's review finding 2, PR #50's review): upstream builds
+// the head from rl_agent_config.json, head_layers layers (none when it is
+// not positive) and len(act_costs)+1 act logits, and its strict load
+// refuses weights that disagree. The loader passes both to the native
+// backend, which holds the very file it decodes to them before decoding a
+// weight; a mismatch names the file and the config's key.
 func TestOpenNativeHeadMismatch(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
@@ -535,8 +540,8 @@ func TestOpenNativeHeadMismatch(t *testing.T) {
 		{"act width short", "", 2, 2, []string{"2 act logits", "act_costs give 3"}},
 		{"act width long", "", 2, 4, []string{"4 act logits", "act_costs give 3"}},
 		{"negative head_layers is none", `{"encoder": "x", "head_layers": -1, "act_costs": {"a": 1, "b": 2}}`, 0, 3, nil},
+		{"true head_layers is one", `{"encoder": "x", "head_layers": true, "act_costs": {"a": 1, "b": 2}}`, 1, 3, nil},
 		{"zero head_layers, one in the file", `{"encoder": "x", "head_layers": 0, "act_costs": {"a": 1, "b": 2}}`, 1, 3, []string{"1 head layers", "head_layers 0"}},
-		{"head_layers not an integer", `{"encoder": "x", "head_layers": "2", "act_costs": {"a": 1, "b": 2}}`, 2, 3, []string{"head_layers"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ck := t.TempDir()
@@ -548,27 +553,53 @@ func TestOpenNativeHeadMismatch(t *testing.T) {
 			}
 			writeWeights(t, ck, tc.layers, tc.act)
 
-			rec := &runtimeRec{}
-			a, err := openAgent(context.Background(), ck, []Option{WithRuntime(RuntimeNative)}, stubRuntimes(t, "", rec))
 			if tc.want == nil {
+				// The stub records the head the loader expects: the
+				// file's, since the two agree.
+				rec := &runtimeRec{}
+				a, err := openAgent(context.Background(), ck, []Option{WithRuntime(RuntimeNative)}, stubRuntimes(t, "", rec))
 				if err != nil {
 					t.Fatalf("Open: %v", err)
 				}
 				_ = a.Close()
+				if want := (native.HeadShape{Layers: tc.layers, ActWidth: tc.act}); !slices.Equal(rec.nativeHeads, []native.HeadShape{want}) {
+					t.Errorf("native open expected %+v, want %+v", rec.nativeHeads, want)
+				}
 				return
 			}
+
+			// The real native open: it refuses the head from the header,
+			// before it reads the stand-in encoder/config.json.
+			_, err := openAgent(context.Background(), ck, []Option{WithRuntime(RuntimeNative)}, newDefaultLoader)
 			if !errors.Is(err, ErrIncompatibleCheckpoint) {
 				t.Fatalf("Open = %v, want ErrIncompatibleCheckpoint", err)
 			}
-			for _, s := range tc.want {
+			for _, s := range append(tc.want, "model.safetensors", "rl_agent_config.json") {
 				if !strings.Contains(err.Error(), s) {
 					t.Errorf("Open = %v, want it to say %q", err, s)
 				}
 			}
-			if len(rec.nativeOpens) != 0 {
-				t.Errorf("native backend opened on %q; the check must come first", rec.nativeOpens)
-			}
 		})
+	}
+}
+
+// A head_layers upstream refuses fails as the config is read, before the
+// native backend is opened.
+func TestOpenNativeHeadLayersRefused(t *testing.T) {
+	ck := t.TempDir()
+	writeCheckpoint(t, ck)
+	if err := os.WriteFile(filepath.Join(ck, "rl_agent_config.json"),
+		[]byte(`{"encoder": "x", "head_layers": "2", "act_costs": {"a": 1, "b": 2}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeWeights(t, ck, 2, 3)
+	rec := &runtimeRec{}
+	_, err := openAgent(context.Background(), ck, []Option{WithRuntime(RuntimeNative)}, stubRuntimes(t, "", rec))
+	if !errors.Is(err, ErrIncompatibleCheckpoint) || !strings.Contains(err.Error(), "head_layers") {
+		t.Fatalf("Open = %v, want ErrIncompatibleCheckpoint naming head_layers", err)
+	}
+	if len(rec.nativeOpens) != 0 {
+		t.Errorf("native backend opened on %q", rec.nativeOpens)
 	}
 }
 
@@ -596,7 +627,7 @@ func TestOpenNativeFailures(t *testing.T) {
 		boom := errors.New("boom")
 		newLoader := func(s loaderSettings) *defaultLoader {
 			l := stubRuntimes(t, "", &runtimeRec{})(s)
-			l.openNative = func(context.Context, string) (backend.Backend, error) { return nil, boom }
+			l.openNative = func(context.Context, string, native.HeadShape) (backend.Backend, error) { return nil, boom }
 			return l
 		}
 		if _, err := openAgent(context.Background(), ck, []Option{WithRuntime(RuntimeNative)}, newLoader); !errors.Is(err, boom) {
@@ -606,12 +637,9 @@ func TestOpenNativeFailures(t *testing.T) {
 	t.Run("no weights", func(t *testing.T) {
 		ck := t.TempDir()
 		writeCheckpoint(t, ck)
-		rec := &runtimeRec{}
-		if _, err := openAgent(context.Background(), ck, []Option{WithRuntime(RuntimeNative)}, stubRuntimes(t, "", rec)); !errors.Is(err, ErrIncompatibleCheckpoint) {
-			t.Fatalf("Open = %v without model.safetensors, want ErrIncompatibleCheckpoint", err)
-		}
-		if len(rec.nativeOpens) != 0 {
-			t.Errorf("native backend opened on %q", rec.nativeOpens)
+		_, err := openAgent(context.Background(), ck, []Option{WithRuntime(RuntimeNative)}, newDefaultLoader)
+		if !errors.Is(err, ErrIncompatibleCheckpoint) || !strings.Contains(err.Error(), "model.safetensors") {
+			t.Fatalf("Open = %v without model.safetensors, want ErrIncompatibleCheckpoint naming it", err)
 		}
 	})
 }

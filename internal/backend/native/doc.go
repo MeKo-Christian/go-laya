@@ -28,5 +28,5 @@
 //
 // laya.WithRuntime(laya.RuntimeNative) selects this backend (D30). The
 // root's loader downloads model.safetensors and encoder/config.json for it,
-// and holds ReadHeadShape's head to rl_agent_config.json before Open.
+// and passes rl_agent_config.json's head as Options.Head.
 package native

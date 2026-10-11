@@ -222,16 +222,10 @@ func orNull(v json.RawMessage) json.RawMessage {
 	return v
 }
 
-// load opens dir/model.safetensors, resolves cfg's layer plan, checks every
-// tensor's name and shape against cfg, decodes them and builds the model.
-func load(ctx context.Context, dir string, cfg encoderConfig) (*model, error) {
-	path := filepath.Join(dir, weightsFile)
-	f, err := safetensors.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("native backend: %w", err)
-	}
-	defer f.Close()
-
+// load resolves cfg's layer plan against f, the weights file at path,
+// checks every tensor's name and shape against cfg, decodes them and builds
+// the model.
+func load(ctx context.Context, f *safetensors.File, path string, cfg encoderConfig) (*model, error) {
 	// Config.Layers allocates per configured layer, and without layer_types
 	// nothing but num_hidden_layers bounds that: a config.json asking for
 	// 2^40 layers would exhaust memory. The file's own layer count, bounded
@@ -251,6 +245,7 @@ func load(ctx context.Context, dir string, cfg encoderConfig) (*model, error) {
 		return nil, fmt.Errorf("native backend: %s numbers %d encoder layers and %d head layers, which alone need %d tensors, but it has %d: %w",
 			path, nEnc, nHead, need, len(names), backend.ErrIncompatibleCheckpoint)
 	}
+	var err error
 	if cfg.plan, err = cfg.Layers(); err != nil {
 		return nil, configError(cfg.path, err)
 	}

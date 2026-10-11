@@ -45,8 +45,10 @@ type defaultLoader struct {
 	// that tests can stand in for both; CI has neither.
 	snapshot func(ctx context.Context, repo, rev string, allow []string) (string, error)
 	open     func(path string, opts onnx.Options) (backend.Backend, error)
-	// openNative is the native runtime, a field for the same reason.
-	openNative func(ctx context.Context, dir string) (backend.Backend, error)
+	// openNative is the native runtime, a field for the same reason. head
+	// is the decision head the config describes, which it holds the
+	// weights to.
+	openNative func(ctx context.Context, dir string, head native.HeadShape) (backend.Backend, error)
 }
 
 // loaderSettings configure the default loader. The Router's options set them
@@ -82,11 +84,11 @@ func newDefaultLoader(cfg loaderSettings) *defaultLoader {
 	l.open = func(path string, opts onnx.Options) (backend.Backend, error) {
 		return onnx.Open(path, opts)
 	}
-	l.openNative = func(ctx context.Context, dir string) (backend.Backend, error) {
-		b, err := native.Open(ctx, dir, native.Options{})
+	l.openNative = func(ctx context.Context, dir string, head native.HeadShape) (backend.Backend, error) {
+		b, err := native.Open(ctx, dir, native.Options{Head: &head})
 		if err != nil {
 			// Not a typed nil.
-			return nil, fmt.Errorf("laya: %w", err)
+			return nil, nativeOpenError(err)
 		}
 		return b, nil
 	}
@@ -167,18 +169,23 @@ func (l *defaultLoader) buildOn(ctx context.Context, spec ModelSpec, be backend.
 }
 
 // buildNative loads the checkpoint spec locates and runs it on the native
-// backend, from the checkpoint's own weights. The head the weights describe
-// is held to the config before a weight is decoded, and the backend's
-// outputs to the config's act width, as a caller's are.
+// backend, from the checkpoint's own weights. The backend holds the head
+// those weights describe to the one upstream builds from the config,
+// head_layers layers and len(act_costs)+1 act logits (common.py:137), from
+// the header of the file it then decodes and before a weight is decoded;
+// upstream's strict load_state_dict refuses weights that disagree
+// (agent.py:184). Its outputs are held to the config's act width, as a
+// caller's backend's are.
 func (l *defaultLoader) buildNative(ctx context.Context, spec ModelSpec) (*Agent, error) {
 	dir, cfg, tok, actWidth, err := l.readCheckpoint(ctx, spec)
 	if err != nil {
 		return nil, err
 	}
-	if err := checkNativeHead(dir, cfg, actWidth); err != nil {
-		return nil, err
+	layers, err := cfg.HeadLayers()
+	if err != nil {
+		return nil, fmt.Errorf("laya: %w", err)
 	}
-	be, err := l.openNative(ctx, dir)
+	be, err := l.openNative(ctx, dir, native.HeadShape{Layers: layers, ActWidth: actWidth})
 	if err != nil {
 		return nil, err
 	}
@@ -191,30 +198,20 @@ func (l *defaultLoader) buildNative(ctx context.Context, spec ModelSpec) (*Agent
 	return a, nil
 }
 
-// checkNativeHead holds the head that dir's model.safetensors describes to
-// the one upstream builds from the config, head_layers layers and
-// len(act_costs)+1 act logits (common.py:137); upstream's strict
-// load_state_dict refuses weights that disagree (agent.py:184). Only the
-// header is read.
-func checkNativeHead(dir string, cfg *checkpoint.Config, actWidth int) error {
-	layers, err := cfg.HeadLayers()
-	if err != nil {
+// nativeOpenError is native.Open's err as Open reports it. A head that
+// disagrees with the config names the config's key, as the backend, which
+// does not read the config, cannot.
+func nativeOpenError(err error) error {
+	var hm *native.HeadMismatchError
+	if !errors.As(err, &hm) {
 		return fmt.Errorf("laya: %w", err)
 	}
-	got, err := native.ReadHeadShape(dir)
-	if err != nil {
-		return fmt.Errorf("laya: %w", err)
-	}
-	weights := filepath.Join(dir, "model.safetensors")
-	if got.Layers != layers {
+	if hm.Got.Layers != hm.Want.Layers {
 		return fmt.Errorf("%w: %s has %d head layers, but %s has head_layers %d",
-			ErrIncompatibleCheckpoint, weights, got.Layers, checkpoint.ConfigFile, layers)
+			ErrIncompatibleCheckpoint, hm.Path, hm.Got.Layers, checkpoint.ConfigFile, hm.Want.Layers)
 	}
-	if got.ActWidth != actWidth {
-		return fmt.Errorf("%w: %s has %d act logits, but %s's act_costs give %d",
-			ErrIncompatibleCheckpoint, weights, got.ActWidth, checkpoint.ConfigFile, actWidth)
-	}
-	return nil
+	return fmt.Errorf("%w: %s has %d act logits, but %s's act_costs give %d",
+		ErrIncompatibleCheckpoint, hm.Path, hm.Got.ActWidth, checkpoint.ConfigFile, hm.Want.ActWidth)
 }
 
 // shapeChecked holds a backend the agent did not build from an export (a
