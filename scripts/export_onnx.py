@@ -86,7 +86,9 @@ limit: Go's header check caps the graph file at 64 MiB (``internal/onnxheader``)
 source graph is handed to the quantizer loaded, not as a path, because given a path it
 writes a ``-inferred`` copy next to the source, and ``--from`` is read-only. The result
 must load in the Go side's pinned ORT 1.23, so it is held to IR <= 11 and opset <= 23.
-int8 is never the default (PLAN.md B.5.4, D6, D33).
+int8 is never the default (D6), and it is not shipped at all: it failed B.5.3's calibration
+thresholds on every checkpoint (BENCHMARKS.md, D33). The flag stays so that the measurement
+can be reproduced.
 """
 
 from __future__ import annotations

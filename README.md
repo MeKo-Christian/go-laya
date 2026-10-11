@@ -416,6 +416,11 @@ waiting on it wants a GPU, and this port has no GPU execution provider yet: `Wit
 falls back to CPU with a warning. GPU latency is not measured here, and stays unmeasured until CUDA
 support (PLAN Task B.3) lands.
 
+int8 dynamic quantization is not offered. It was measured at 1.5–2.8× faster, but 9–19.5% of the
+choice and score answers changed, which failed the calibration thresholds set for it on every
+checkpoint ([BENCHMARKS.md](BENCHMARKS.md#int8-dynamic-quantization-planmd-b5--measured-not-shipped),
+[D33][later]).
+
 ### Laya (with routing) vs Jev
 
 Upstream's comparison: every Laya figure is what upstream's `Router().predict(...)` returned — the

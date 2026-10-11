@@ -271,5 +271,9 @@ Three details are deliberate:
 
 The result is held to what Go's ORT 1.23 loads (IR ≤ 11, opset ≤ 23), and a one-batch fp32
 versus int8 comparison in this environment's ORT goes into the report. That comparison is a smoke
-check; the calibration verdict is `BENCHMARKS.md`'s ("int8 dynamic quantization"), and int8 is
-never the default (D6, D33).
+check, not a verdict.
+
+**int8 is not shipped.** It failed B.5.3's calibration thresholds on every checkpoint: 9–19.5% of
+the choice and score answers change. The numbers are in `BENCHMARKS.md` ("int8 dynamic
+quantization"), and D33 records the decision. The flag stays so that the measurement can be
+reproduced, and int8 is never the default (D6).
