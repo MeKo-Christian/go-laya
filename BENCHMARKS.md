@@ -602,11 +602,14 @@ timed passes each under an 8 GB cap, `GOMAXPROCS=12`:
 | `laya-multilingual`    | 10192 ms                 | 3939 ms                   | 2.6×    |
 | `laya-typed-decisions` | 31378 ms                 | 9076 ms                   | 3.5×    |
 
-These are p50s **under load**: other sessions shared the machine, with a 1-minute load average of
-3.5–10.8 at the start of each run, so the absolute numbers are no better than that and the speedup
-is a lower bound. The "after" column sits within 12% of the 8-worker idle table above. No result
-changes: every output of `Linear` and `MatMul` is one dot product however the work is split
-(`TestKernelsSameBitsAnyWorkers`).
+These are p50s **under uncontrolled, unequal load**: other sessions shared the machine, and the
+1-minute load average at the start of the before/after runs was 10.18/4.11 for `laya`, 10.75/10.29
+for `laya-multilingual` and 7.60/3.48 for `laya-typed-decisions`. The ratio is indicative, not a
+bound either way: contention can slow a 12-worker run more than a 1-worker run, and the lighter
+load in the "after" runs favours them. `laya-multilingual`, where both runs started at about the
+same load, still shows 2.6×. The "after" column sits within 12% of the 8-worker idle table above.
+No result changes: every output of `Linear` and `MatMul` is one dot product however the work is
+split (`TestKernelsSameBitsAnyWorkers`).
 
 **Raw transcripts.**
 

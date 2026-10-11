@@ -831,9 +831,9 @@ build/diff-tokenizer.txt` exits 0: en "mismatching: 85", "accepted (B.2 NFC devi
       (`Workers() = 1 by default, want GOMAXPROCS 11`), then passed; `TestKernelsSameBitsAnyWorkers`
       holds `Linear` (both split paths) and `MatMul` to the same bits at 1, 2, 3, 7 and
       `GOMAXPROCS` workers. `BenchmarkForwardDefaultWorkers` at the 8.9 cell, before and after,
-      interleaved, under load (1-minute load 3.5–10.8): english 35254 → 10822 ms p50, multilingual
-      10192 → 3939 ms, typed-decisions 31378 → 9076 ms (`BENCHMARKS.md`,
-      `docs/benchmarks/raw/bench-native-default-workers-b18.txt`).
+      interleaved, under uncontrolled, unequal load (1-minute load 3.5–10.8): english
+      35254 → 10822 ms p50, multilingual 10192 → 3939 ms, typed-decisions 31378 → 9076 ms
+      (`BENCHMARKS.md`, `docs/benchmarks/raw/bench-native-default-workers-b18.txt`).
 - [ ] **B.19** Replace `internal/runtime/tensor` and `internal/runtime/ops` with
       `github.com/cwbudde/algo-tensor`, the same kernels shared with go-whistle and go-pocket-tts.
       Every identifier go-laya uses exists there with the same signature. Before the switch,
