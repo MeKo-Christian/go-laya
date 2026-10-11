@@ -65,8 +65,9 @@ binding, so a build needs no C toolchain but a run needs two things on disk:
 
 `WithRuntime(RuntimeNative)` (for `Router`, `WithRouterRuntime`) needs neither: it runs the
 checkpoint's own `model.safetensors` in pure Go on the CPU, and `Open` downloads the weights and
-`encoder/config.json` with the config and the tokenizer ([D30][later]). Its full parity gate and its
-latency are still open (PLAN Tasks 8.8 and 8.9).
+`encoder/config.json` with the config and the tokenizer ([D30][later]). Every option probability
+agrees with PyTorch within 4e-6 on all golden cases (PLAN Task 8.8), and it runs about 5–6× slower
+than ONNX Runtime on the same CPU (Task 8.9, [BENCHMARKS.md](BENCHMARKS.md)).
 
 ---
 

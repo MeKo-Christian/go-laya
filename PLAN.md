@@ -42,7 +42,7 @@ box under it is ticked.
 | [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                    |
 | [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | ✅ done                    |
 | [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | 🟡 B.1, B.2, B.6–B.10 done |
-| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | 🟡 8.1–8.8 done            |
+| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ✅ done                    |
 
 **Critical path to 1.0:** M7 (loader → `SystemOne` → answer parity → e2e parity → README). The
 Backlog and M8 do not gate 1.0.
@@ -896,10 +896,36 @@ zero-shared-library backend, not a speed play (D8). The facts it needs are in
       1.61e-06, 1.43e-06; after the head layers and gathered: 1.02e-06, 6.97e-07, 9.73e-07
       (bounds 1e-5). Logits: 8.17e-06, 1.14e-05, 3.81e-06; act features: 5.54e-06, 6.97e-06,
       2.71e-06 (bounds 5e-5). Every fill column is exactly -1e4.
-- [ ] **8.9** Latency within 10× of ORT-CPU at 512 tokens on the same hardware, recorded in
+- [x] **8.9** Latency within 10× of ORT-CPU at 512 tokens on the same hardware, recorded in
       `BENCHMARKS.md` beside the S3 numbers.
-- [ ] **8.10** The `backend` interface is unchanged. The native backend is selected by option, and
+      (2026-10-10) `LAYA_MODELS=… just bench-native 5`, three sweeps on an idle machine
+      (`docs/benchmarks/raw/bench-native-quiet-{a,b,c}.txt`), min p50 at 1×512×4 and 8 workers:
+      english 9721 ms, multilingual 3593 ms, typed-decisions 9986 ms, i.e. 5.7×, 5.6× and 5.4× of
+      S3's ORT p50 (5.6×, 5.8× and 6.0× of the ORT reference cell rerun right after,
+      `bench-onnx-refcell-quiet.txt`). The sweeps agree within 5%; load takes 1.19–1.49 s. Under
+      load from two parallel test sessions one sweep crossed 10× (`BENCHMARKS.md` keeps that
+      table). 87% of CPU time is `tensor.Linear`; a blocked amd64 GEMM is the lever if the margin
+      is ever needed (PR #51).
+- [x] **8.10** The `backend` interface is unchanged. The native backend is selected by option, and
       `TestNoMLDependency` stays green.
+      (2026-10-11, user decision; D30) `type Runtime` (`RuntimeONNX`, the zero value and default;
+      `RuntimeNative`) with `WithRuntime` and `WithRouterRuntime`; any other value is
+      `ErrUnknownRuntime`. `ErrConflictingOptions` refuses `RuntimeNative` beside `WithGraph`,
+      `WithONNXDir` or a device other than `""`/`auto`/`cpu`, and any explicit `WithRuntime` beside
+      a non-nil `WithBackend`. With `RuntimeNative` the snapshot adds the anchored
+      `<sub>/model.safetensors` and `<sub>/encoder/config.json` through the existing
+      hash-verified hub path (D24 amended). `native.Open` takes the expected head shape in
+      `Options.Head` and holds the header of the file it loads to `head_layers` (a bool as 0/1,
+      none when not positive) and `len(act_costs)+1` before any weight is decoded, so the file is
+      opened once (PR #50's review fix). A missing `encoder/` is refused, a recorded deviation.
+      `git diff 3f66ab0 origin/main -- backend/backend.go` is empty. On `eb49517`,
+      `go test -count=1 -run 'TestRuntime|TestOpenRuntime|TestRouterRuntime|TestAllowPatternsForRuntime|TestOpenNative|TestRouterNative|TestNativeOffline|TestNoMLDependency|TestRuntimeImportedOnlyByBackend|TestRuntimeDownloadSet' -v .`
+      and `go test -count=1 -run TestOpenExpectedHead -v ./internal/backend/native/` pass,
+      `TestNoMLDependency` included; `TestRuntimeDownloadSet` finds the ONNX download set
+      unchanged and the native set exactly two files larger. Gated, on the identical tree
+      `047ef4a`: `LAYA_MODELS=… go test -count=1 -run TestOpenNativeGolden -v .` opens all three
+      local checkpoints with `WithRuntime(RuntimeNative)` and no export, and every answer of one
+      `logits.jsonl` case each has Python's argmax (`--- PASS: TestOpenNativeGolden (34.93s)`).
 
 ---
 
