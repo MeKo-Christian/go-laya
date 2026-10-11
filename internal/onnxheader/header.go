@@ -9,6 +9,7 @@ package onnxheader
 import (
 	"errors"
 	"fmt"
+	"io"
 	"math/bits"
 	"os"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	"google.golang.org/protobuf/encoding/protowire"
 
 	"github.com/MeKo-Christian/go-laya/backend"
+	"github.com/MeKo-Christian/go-laya/internal/regularfile"
 )
 
 // ONNX TensorProto.DataType values the tests name.
@@ -44,6 +46,10 @@ const maxDepth = 32
 // maxFileSize caps the graph file. The exports keep their weights in an
 // external-data file and their graphs are about 3 MB.
 const maxFileSize = 64 << 20
+
+// afterStat, when set, runs between read's Lstat of the graph and its open.
+// Tests set it to change the file inside that window.
+var afterStat func(path string)
 
 // Dim is one axis of a declared shape: Value is its static size, or -1 when
 // it is symbolic (Param names it) or unknown.
@@ -94,11 +100,25 @@ func read(path string) (*Header, error) {
 	if size > maxFileSize {
 		return nil, fmt.Errorf("larger than %d bytes", maxFileSize)
 	}
-	// #nosec G304 G703 -- path is the graph the caller chose to load;
-	// validating it is the point.
-	b, err := os.ReadFile(path)
+	if afterStat != nil {
+		afterStat(path)
+	}
+	// The Lstat refuses a symlink; the descriptor check and the capped read
+	// hold for whatever the path names by the time it is opened, so a named
+	// pipe swapped in since cannot block the read. ORT opens the path again
+	// to create the session, and that open stays outside this check (see
+	// internal/backend/onnx.Open on why the session needs the path).
+	f, err := regularfile.Open(path)
 	if err != nil {
 		return nil, err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, maxFileSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > maxFileSize {
+		return nil, fmt.Errorf("larger than %d bytes", maxFileSize)
 	}
 	r := &reader{dir: filepath.Dir(path), sizes: map[string]int64{}}
 	return r.model(b)
