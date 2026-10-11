@@ -709,9 +709,14 @@ the ECE/Brier inputs.
       (`internal/head/head.go`, `checkMarkers`); the ONNX path has no check, and its failure is
       untested. Decide whether to reject this before the backend, and test both backends. Found
       while ticking 8.6 (2026-10-10).
-- [ ] **B.13** Route `safetensors.ReadHeader` through the same regular-file open as
-      `safetensors.Open`. It still uses a plain `os.Open`, so a FIFO path blocks it. Found while
-      ticking 8.7 against PR #46's review fix (2026-10-10).
+- [ ] **B.13** Route `safetensors.ReadHeader` through `internal/regularfile.Open`, the
+      regular-file open that `safetensors.Open` and the native backend's `encoder/config.json` read
+      use. It still uses a plain `os.Open`, so a FIFO path blocks it. Found while ticking 8.7
+      against PR #46's review fix (2026-10-10).
+- [ ] **B.14** Route `checkpoint.LoadConfig`'s read of `rl_agent_config.json` through
+      `internal/regularfile.Open`. It still uses a plain `os.Open`, so a FIFO there blocks `Open`
+      on either backend in a wait no context can end. Found while fixing the same for
+      `encoder/config.json` in PR #49's review (2026-10-11).
 
 ### M8 — Pure-Go native backend (after 1.0)
 

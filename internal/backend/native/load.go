@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -16,6 +15,7 @@ import (
 	"github.com/MeKo-Christian/go-laya/backend"
 	"github.com/MeKo-Christian/go-laya/internal/head"
 	"github.com/MeKo-Christian/go-laya/internal/modernbert"
+	"github.com/MeKo-Christian/go-laya/internal/regularfile"
 	"github.com/MeKo-Christian/go-laya/internal/runtime/tensor"
 	"github.com/MeKo-Christian/go-laya/internal/safetensors"
 )
@@ -74,9 +74,9 @@ func configError(path string, err error) error {
 func readConfig(dir string) (encoderConfig, error) {
 	path := filepath.Join(dir, "encoder", "config.json")
 	fail := func(err error) error { return configError(path, err) }
-	// #nosec G304 -- dir is the checkpoint directory the caller chose to
-	// load; reading its config is the point.
-	f, err := os.Open(path)
+	// Opened as a regular file only: a named pipe there would otherwise
+	// block Open in a wait ctx cannot end.
+	f, err := regularfile.Open(path)
 	if err != nil {
 		return encoderConfig{}, fail(err)
 	}
