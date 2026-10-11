@@ -154,10 +154,7 @@ func TestSystemOneSingleOptionInMixedBatch(t *testing.T) {
 	if want := (Obj{{Key: "0", Value: "low"}}); !slices.Equal(level.Legend, want) {
 		t.Errorf("legend = %v, want %v", level.Legend, want)
 	}
-	pair, _ := res.Answers.Get("pair")
-	if pair.Noul == nil || *pair.Noul == 1 {
-		t.Errorf("pair = %+v, want a noul below 1", pair)
-	}
+	checkNoulInOpenUnit(t, res, "pair")
 	if _, err := jsonx.Marshal(res.Map()); err != nil {
 		t.Errorf("marshal the result: %v", err)
 	}
@@ -224,7 +221,21 @@ func tooFewOptionsOn(t *testing.T, dir string, opts ...Option) {
 		t.Errorf("only = %+v, want billing at p 1 and confidence 1", only)
 	}
 	// The two-option row is unaffected by the other row's padded column.
-	if refund, _ := res.Answers.Get("refund"); refund.Noul == nil || *refund.Noul <= 0 || *refund.Noul >= 1 {
-		t.Errorf("refund = %+v, want a noul strictly between 0 and 1", refund)
+	checkNoulInOpenUnit(t, res, "refund")
+}
+
+// checkNoulInOpenUnit fails the test unless answer id carries a noul
+// probability strictly between 0 and 1. The range check is in positive form
+// so a NaN fails it too.
+func checkNoulInOpenUnit(t *testing.T, res *Result, id string) {
+	t.Helper()
+	a, ok := res.Answers.Get(id)
+	if !ok || a.Noul == nil {
+		t.Errorf("%s = %+v (found %v), want a noul", id, a, ok)
+		return
 	}
+	if p := *a.Noul; 0 < p && p < 1 {
+		return
+	}
+	t.Errorf("%s noul = %v, want strictly between 0 and 1", id, *a.Noul)
 }
