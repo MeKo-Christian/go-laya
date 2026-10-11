@@ -4,6 +4,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"runtime"
+	"sync"
 	"testing"
 
 	"github.com/cwbudde/algo-tensor/tensor"
@@ -14,6 +15,17 @@ import (
 // relies on and algo-tensor does not make in this form: they live here,
 // beside the only caller, so that a new algo-tensor tag must pass them
 // before go-laya takes it.
+
+// startWorkers is the kernels' worker count before any test sets it.
+var startWorkers = tensor.Workers()
+
+// TestWorkersDefault pins the default a caller of laya.Open gets (D34): one
+// kernel worker per GOMAXPROCS, not one in all.
+func TestWorkersDefault(t *testing.T) {
+	if want := max(1, runtime.GOMAXPROCS(0)); startWorkers != want {
+		t.Fatalf("Workers() = %d by default, want GOMAXPROCS %d", startWorkers, want)
+	}
+}
 
 // TestSetWorkersOneDisables pins that SetWorkers(1) and below still mean
 // single-threaded although the default is GOMAXPROCS.
@@ -35,14 +47,16 @@ func TestSetWorkersOneDisables(t *testing.T) {
 // same order wherever a piece starts, and MatMulTransB splits only between
 // its 4×4 blocks. The parity goldens hold at one worker count only because
 // of this, and the default follows the machine (D34). Each case is past its
-// kernel's parallel threshold: 2^18 multiply-adds for Linear, 2^19 for
-// MatMul, 2^20 for MatMulTransB.
+// kernel's parallel threshold, by at least 1.5×: 2^18 multiply-adds for
+// Linear, 2^19 for MatMul, 2^20 for MatMulTransB. On amd64 every output of
+// MatMulTransB is one dot product too, so its cases bite only on arm64, whose
+// NEON 4×4 block a split off the grid would change (CI's macOS runner).
 func TestKernelsSameBitsAnyWorkers(t *testing.T) {
 	prev := tensor.Workers()
 	t.Cleanup(func() { tensor.SetWorkers(prev) })
 
 	rng := rand.New(rand.NewPCG(7, 0))
-	w, bias := randTensor(t, rng, 384, 768), randTensor(t, rng, 384)
+	w, bias := randTensor(t, rng, 512, 768), randTensor(t, rng, 512)
 	rows, row := randTensor(t, rng, 5, 768), randTensor(t, rng, 1, 768) // batch > 1, and one row split over outputs
 	a, b := randTensor(t, rng, 2, 96, 64), randTensor(t, rng, 2, 64, 80)
 
@@ -50,7 +64,7 @@ func TestKernelsSameBitsAnyWorkers(t *testing.T) {
 	// calls it, (m, n, k): scores over 512 tokens with 64-wide heads, the
 	// output over them, a ragged size that leaves row, column and k tails,
 	// and fewer than 8 rows, which splits over the rows of b instead of a.
-	transB := [][3]int{{512, 512, 64}, {512, 64, 512}, {161, 157, 65}, {5, 1027, 300}}
+	transB := [][3]int{{512, 512, 64}, {512, 64, 512}, {161, 157, 130}, {5, 2051, 300}}
 	transBIn := make([][2][]float32, len(transB))
 	for i, s := range transB {
 		if s[0]*s[1]*s[2] < 1<<20 {
@@ -89,6 +103,42 @@ func TestKernelsSameBitsAnyWorkers(t *testing.T) {
 				if math.Float32bits(got[j]) != math.Float32bits(want[i][j]) {
 					t.Fatalf("workers=%d: kernel %d output %d = %v, want %v as at one worker", n, i, j, got[j], want[i][j])
 				}
+			}
+		}
+	}
+}
+
+// TestMatMulTransBConcurrent runs MatMulTransB above its parallel threshold
+// from several goroutines at once, as concurrent Forward calls do on the
+// attention path. Their helpers come from one budget shared by every caller
+// (D35), and each result must still equal the one-worker product. CI runs it
+// under -race; TestForwardConcurrent's batches are below the threshold.
+func TestMatMulTransBConcurrent(t *testing.T) {
+	prev := tensor.Workers()
+	t.Cleanup(func() { tensor.SetWorkers(prev) })
+
+	const m, n, k, callers = 512, 512, 64, 8
+	rng := rand.New(rand.NewPCG(11, 0))
+	a, b := randData(rng, m*k), randData(rng, n*k)
+	want := make([]float32, m*n)
+	tensor.SetWorkers(1)
+	tensor.MatMulTransB(want, n, a, b, m, n, k)
+
+	tensor.SetWorkers(4)
+	got := make([][]float32, callers)
+	var wg sync.WaitGroup
+	for i := range got {
+		wg.Go(func() {
+			got[i] = make([]float32, m*n)
+			tensor.MatMulTransB(got[i], n, a, b, m, n, k)
+		})
+	}
+	wg.Wait()
+
+	for i, c := range got {
+		for j := range c {
+			if math.Float32bits(c[j]) != math.Float32bits(want[j]) {
+				t.Fatalf("caller %d: output %d = %v, want %v as at one worker", i, j, c[j], want[j])
 			}
 		}
 	}
