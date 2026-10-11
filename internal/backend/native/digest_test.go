@@ -16,8 +16,8 @@ import (
 	"github.com/MeKo-Christian/go-laya/internal/golden"
 )
 
-// digestCases are the inputs TestForwardDigest hashes: Task 8.9's reference
-// cell, the batch BenchmarkForward times, and a small batch of three
+// digestCases are the two inputs TestForwardDigest hashes: Task 8.9's
+// reference cell, which BenchmarkForward times, and a small batch of three
 // questions with padding, a dead marker and every qtype. At 160 tokens its
 // attention products (160·160·64 multiply-adds) are past the 2^20 at which
 // a parallel MatMulTransB splits them.
@@ -42,9 +42,11 @@ func digestPaddedBatch() backend.Batch {
 
 // forwardDigests are the sha256 sums forwardDigest gave on the kernels of
 // internal/runtime/tensor before Backlog B.19, per checkpoint and case. They
-// hold on amd64 with AVX2 and FMA, in a default build: arm64's NEON block, an
-// amd64 without AVX2 and a purego or GOAMD64=v3 build add in another order,
-// so there the test logs the digests and compares the worker counts only.
+// hold on amd64 with AVX2 and FMA, in a default build (digestBuildPinned):
+// arm64's NEON block, an amd64 without AVX2 and a purego or GOAMD64=v3 build
+// add in another order, so there the test logs the digests and compares the
+// worker counts only. A new Go toolchain can move them too, through the
+// compiler or math's assembly, as can a new algo-tensor tag.
 var forwardDigests = map[string]string{
 	golden.English + "/b1_s512_k4":               "8aa73e3f5db46c8d913cff8f6c3a0f884bc4fd990b6f0585dffcd689be02f770",
 	golden.English + "/b3_s160_k4_padded":        "410626e0cc79ff207e422086bbd661f3cf14349e868d4888c7d121ffeca5dc33",
@@ -70,7 +72,7 @@ func TestForwardDigest(t *testing.T) {
 	if def < 2 {
 		t.Logf("the default is %d kernel worker: workers=1 and the default run the same split", def)
 	}
-	pinned := cpu.X86.HasAVX2 && cpu.X86.HasFMA // false off amd64
+	pinned := digestBuildPinned && cpu.X86.HasAVX2 && cpu.X86.HasFMA
 
 	for _, ck := range benchCheckpoints {
 		t.Run(ck, func(t *testing.T) {
@@ -104,7 +106,7 @@ func TestForwardDigest(t *testing.T) {
 					t.Errorf("%s: %d workers give %s, one worker %s", c.name, def, sums[1], sums[0])
 				}
 				if want := forwardDigests[ck+"/"+c.name]; pinned && sums[0] != want {
-					t.Errorf("%s: sha256 %s, want %s as on the kernels before B.19", c.name, sums[0], want)
+					t.Errorf("%s: sha256 %s, want %s as recorded before B.19", c.name, sums[0], want)
 				}
 			}
 		})
