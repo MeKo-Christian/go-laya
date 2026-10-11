@@ -5,6 +5,8 @@ package evalset
 // (LAYA_ONNX_INT8_DIR, written by scripts/export_onnx.py --int8) and the
 // subsets cmd/laya-evalfetch draws (LAYA_EVAL_DIR, default build/eval). It
 // fails where int8 misses a threshold of metrics.go, which is B.5.4's gate.
+// The fp32 side is the export each int8 graph's laya.int8 stamp names as its
+// source (stageBaseline), so the deltas compare one graph at two precisions.
 // Run it one checkpoint per process, under a memory cap:
 //
 //	LAYA_EVAL_CHECKPOINTS=english systemd-run --user --scope -q -p MemoryMax=8G \
@@ -23,6 +25,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"google.golang.org/protobuf/encoding/protowire"
 
 	"github.com/MeKo-Christian/go-laya"
 	"github.com/MeKo-Christian/go-laya/internal/golden"
@@ -153,31 +157,141 @@ func checkPrecision(graph string, quantized bool) error {
 	return nil
 }
 
-// stageFP32 returns a directory holding fp32Dir's export of ck as
-// laya-<ck>.onnx, the name the loader reads. A canonical directory is used as
-// it is. Otherwise the -dynamo export is hard-linked beside fp32Dir, never
-// into it: the loader refuses a symlink, and a hard link must stay on one
-// filesystem.
-func stageFP32(t *testing.T, fp32Dir, ck string) string {
+// int8Stamp is the key scripts/export_onnx.py --int8 stamps its recipe under,
+// in the int8 graph's metadata_props; the stamp's "source" is the file name of
+// the fp32 export it quantized.
+const int8Stamp = "laya.int8"
+
+// int8Source reads the int8 graph at path (64 MiB at most, its weights being
+// external) and returns the fp32 file name its laya.int8 stamp records.
+func int8Source(path string) (string, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if !fi.Mode().IsRegular() || fi.Size() > 64<<20 {
+		return "", fmt.Errorf("%s: not a graph file of at most 64 MiB", path)
+	}
+	b, err := os.ReadFile(path) // #nosec G304 -- the developer's own export
+	if err != nil {
+		return "", err
+	}
+	stamp, err := metadataProp(b, int8Stamp)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", path, err)
+	}
+	var v struct {
+		Source string `json:"source"`
+	}
+	if err := json.Unmarshal([]byte(stamp), &v); err != nil {
+		return "", fmt.Errorf("%s: %s stamp: %w", path, int8Stamp, err)
+	}
+	if v.Source == "" || filepath.Base(v.Source) != v.Source || v.Source == "." || v.Source == ".." {
+		return "", fmt.Errorf("%s: %s source %q is not a plain name", path, int8Stamp, v.Source)
+	}
+	return v.Source, nil
+}
+
+// metadataProp returns the value of the ModelProto metadata_props entry
+// (field 14, a StringStringEntryProto) called key.
+func metadataProp(model []byte, key string) (string, error) {
+	for b := model; len(b) > 0; {
+		num, typ, n := protowire.ConsumeTag(b)
+		if n < 0 {
+			return "", protowire.ParseError(n)
+		}
+		b = b[n:]
+		if num != 14 || typ != protowire.BytesType {
+			if n = protowire.ConsumeFieldValue(num, typ, b); n < 0 {
+				return "", protowire.ParseError(n)
+			}
+			b = b[n:]
+			continue
+		}
+		entry, n := protowire.ConsumeBytes(b)
+		if n < 0 {
+			return "", protowire.ParseError(n)
+		}
+		b = b[n:]
+		var k, v string
+		for e := entry; len(e) > 0; {
+			enum, etyp, m := protowire.ConsumeTag(e)
+			if m < 0 {
+				return "", protowire.ParseError(m)
+			}
+			e = e[m:]
+			if etyp != protowire.BytesType {
+				if m = protowire.ConsumeFieldValue(enum, etyp, e); m < 0 {
+					return "", protowire.ParseError(m)
+				}
+				e = e[m:]
+				continue
+			}
+			s, m := protowire.ConsumeString(e)
+			if m < 0 {
+				return "", protowire.ParseError(m)
+			}
+			e = e[m:]
+			switch enum { //nolint:exhaustive // StringStringEntryProto has only key (1) and value (2)
+			case 1:
+				k = s
+			case 2:
+				v = s
+			}
+		}
+		if k == key {
+			return v, nil
+		}
+	}
+	return "", fmt.Errorf("no %s metadata: not a graph scripts/export_onnx.py --int8 wrote", key)
+}
+
+// stageBaseline returns a directory, made in parent, that holds the fp32
+// export int8Graph was quantized from as laya-<ck>.onnx, the name the loader
+// reads, and that file's path in fp32Dir. The source is the one the int8
+// graph's laya.int8 stamp names, never whatever fp32Dir holds under the
+// loader's name: a canonical export beside the -dynamo one quantize_int8 read
+// is another exporter's graph, and every difference between the two would be
+// counted against int8. The files are hard-linked, as the loader refuses a
+// symlink, and the external data keeps the name the graph references.
+func stageBaseline(fp32Dir, int8Graph, ck, parent string) (staged, src string, err error) {
+	name, err := int8Source(int8Graph)
+	if err != nil {
+		return "", "", err
+	}
+	src = filepath.Join(fp32Dir, name)
+	for _, f := range []string{src, src + ".data"} {
+		if _, err := os.Stat(f); err != nil {
+			return "", "", fmt.Errorf("%s was quantized from %s, which %s does not hold: %w", int8Graph, name, fp32Dir, err)
+		}
+	}
+	staged, err = os.MkdirTemp(parent, "evalset-fp32-")
+	if err != nil {
+		return "", "", err
+	}
+	links := map[string]string{"laya-" + ck + ".onnx": src, name + ".data": src + ".data"}
+	for dst, from := range links {
+		if err := os.Link(from, filepath.Join(staged, dst)); err != nil {
+			return "", "", errors.Join(fmt.Errorf("hard-linking the %s export: %w", ck, err), os.RemoveAll(staged))
+		}
+	}
+	return staged, src, nil
+}
+
+// stageFP32 stages the fp32 baseline of ck beside fp32Dir, never into it,
+// a hard link having to stay on one filesystem.
+func stageFP32(t *testing.T, fp32Dir, int8Dir, ck string) string {
 	t.Helper()
-	if _, err := os.Stat(filepath.Join(fp32Dir, "laya-"+ck+".onnx")); err == nil {
-		return fp32Dir
+	int8Graph := filepath.Join(int8Dir, "laya-"+ck+".onnx")
+	if _, err := os.Stat(int8Graph); err != nil {
+		t.Skipf("no int8 %s export in %s", ck, int8Dir)
 	}
-	src := filepath.Join(fp32Dir, "laya-"+ck+"-dynamo.onnx")
-	if _, err := os.Stat(src); err != nil {
-		t.Skipf("no fp32 %s export in %s", ck, fp32Dir)
-	}
-	staged, err := os.MkdirTemp(filepath.Dir(filepath.Clean(fp32Dir)), "evalset-fp32-")
+	staged, src, err := stageBaseline(fp32Dir, int8Graph, ck, filepath.Dir(filepath.Clean(fp32Dir)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(staged) })
-	links := map[string]string{"laya-" + ck + ".onnx": src, filepath.Base(src) + ".data": src + ".data"}
-	for dst, from := range links {
-		if err := os.Link(from, filepath.Join(staged, dst)); err != nil {
-			t.Skipf("cannot hard-link the %s export: %v", ck, err)
-		}
-	}
+	t.Logf("%s: fp32 baseline %s, the source %s's %s stamp records", ck, src, int8Graph, int8Stamp)
 	return staged
 }
 
@@ -237,7 +351,7 @@ func TestInt8Calibration(t *testing.T) {
 	results := map[string]map[string]any{}
 	for _, ck := range selected {
 		t.Run(ck, func(t *testing.T) {
-			fp32 := stageFP32(t, fp32Dir, ck)
+			fp32 := stageFP32(t, fp32Dir, int8Dir, ck)
 			// One run per precision over every dataset, so each side opens
 			// the checkpoint once.
 			var all []Case
