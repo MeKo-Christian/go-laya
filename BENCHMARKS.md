@@ -511,7 +511,7 @@ in every S3 transcript). The weights are decoded from the checkpoints' fp16 `mod
 float32. The kernels are pure Go, plus an AVX2/FMA dot product, and run on 8 workers
 (`tensor.SetWorkers(8)`, the counterpart of S3's `IntraOpNumThreads=8`). These measurements ran on
 the repository's own copy of the kernels; since B.19 they come from `github.com/cwbudde/algo-tensor`
-with every output bit unchanged (D35).
+with every output bit unchanged in a default build (D35).
 
 **Method.** S3's reference cell, with S3's inputs value for value: one question, 512 tokens, 4
 options, every position attended, ids `1 + (i·7919) mod 997`. `BenchmarkForward` in
@@ -627,12 +627,12 @@ an 8 GB cap, `GOMAXPROCS` unset (12). Two sweeps, the second with each pair's or
 
 These are p50s **under uncontrolled, unequal load**. The 1-minute load average at the start of the
 before/after runs was 2.29/5.75, 5.86/5.13 and 5.40/4.64 in sweep 1, and 7.51/6.33, 8.74/9.35 and
-10.29/8.11 in sweep 2. **No speedup shows.** The pairs differ by −12% to +2%, about as much as the
-same binary differs between sweeps (`laya` before: 8453 and 9507 ms), and the largest gap, `laya` in
-sweep 1, has the least-loaded "before" run of all. `laya-multilingual` is 3–4% slower in both
-sweeps, which this setup cannot tell from noise. In the profile above `MatMulTransB` took 5% of the
-CPU time and `Linear` 87%, so the parallel attention products had little to win; B.20's GEMM is
-where the time is. The outputs are the same bits (`TestForwardDigest`).
+10.29/8.11 in sweep 2. **No speedup shows.** The "after" runs took 2% less to 14% more time, about
+as much as the same binary differs between sweeps (`laya` before: 8453 and 9507 ms), and the largest
+gap, `laya` in sweep 1, has the least-loaded "before" run of all. `laya-multilingual` is 3–4% slower
+in both sweeps, which this setup cannot tell from noise. In the profile above `MatMulTransB` took 5%
+of the CPU time and `Linear` 87%, so the parallel attention products had little to win; B.20's GEMM
+is where the time is. The outputs are the same bits (`TestForwardDigest`).
 
 **Raw transcripts.**
 
