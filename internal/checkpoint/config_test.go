@@ -2,6 +2,7 @@ package checkpoint
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"maps"
 	"os"
@@ -108,6 +109,53 @@ func TestLoadConfigMissingFile(t *testing.T) {
 	}
 	if err != nil && !strings.Contains(err.Error(), ConfigFile) {
 		t.Errorf("error %q does not name %s", err, ConfigFile)
+	}
+}
+
+// TestLoadConfigNonFiniteLiterals pins D31 (backlog B.15): json.loads reads
+// the bare literals NaN, Infinity and -Infinity (agent.py:147), but Go's
+// decoder refuses the file, and go-laya keeps refusing it. Each field a
+// Config reader decodes as a number gets each literal: the temperature
+// tables divide the logits (agent.py:304-305), head_layers sizes the head
+// (common.py:137), and max_len and head_max_len cut the sequence
+// (agent.py:256-257). So do act_costs, whose entries ActWidth counts without
+// decoding, and cost_wrong_act, which nothing reads: the whole file is
+// refused, not one field. Every body loads with 2 in the
+// literal's place, so the literal alone is what LoadConfig refuses. It also
+// loads with ±1e999, the same infinities to json.loads but number literals
+// to Go, which the field's own reader then refuses or, for head_layers,
+// reads as D30 says.
+func TestLoadConfigNonFiniteLiterals(t *testing.T) {
+	const base = `"encoder":"x","head_layers":2`
+	fields := []struct {
+		name string
+		body string // %s is where the literal goes
+	}{
+		{"temperature", `{` + base + `,"temperature":[1.0,%s,1.0]}`},
+		{"temperature_by_options", `{` + base + `,"temperature_by_options":{"choice:2":%s}}`},
+		{"head_layers", `{"encoder":"x","head_layers":%s}`},
+		{"act_costs", `{` + base + `,"act_costs":{"escalate":%s}}`},
+		{"max_len", `{` + base + `,"max_len":%s}`},
+		{"head_max_len", `{` + base + `,"head_max_len":%s}`},
+		{"cost_wrong_act", `{` + base + `,"cost_wrong_act":%s}`},
+	}
+	for _, f := range fields {
+		t.Run(f.name, func(t *testing.T) {
+			for _, ok := range []string{"2", "1e999", "-1e999"} {
+				if _, err := LoadConfig(writeConfig(t, fmt.Sprintf(f.body, ok))); err != nil {
+					t.Fatalf("LoadConfig with %s = %v, want nil", ok, err)
+				}
+			}
+			for _, lit := range []string{"NaN", "Infinity", "-Infinity"} {
+				cfg, err := LoadConfig(writeConfig(t, fmt.Sprintf(f.body, lit)))
+				if cfg != nil {
+					t.Errorf("LoadConfig with %s returned a *Config", lit)
+				}
+				if !errors.Is(err, backend.ErrIncompatibleCheckpoint) || !strings.Contains(err.Error(), ConfigFile) {
+					t.Errorf("LoadConfig with %s = %v; want ErrIncompatibleCheckpoint naming %s", lit, err, ConfigFile)
+				}
+			}
+		})
 	}
 }
 
