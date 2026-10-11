@@ -84,7 +84,10 @@ file, so this section is the record of where the code came from.
    zero-sized operands no longer divide by zero; `Narrow` bounds `start`
    before comparing `length` with what is left; and the approximate
    comparison test helpers reject NaN. Their tests are in the new
-   `robustness_test.go` in each package.
+   `robustness_test.go` in each package. `tensor.FromOwned` is added, a
+   constructor that takes its data over instead of copying it, and
+   validates through `checkData`, which `New` now shares; its tests are
+   in the new `owned_test.go`.
 
 Model weights
 -------------

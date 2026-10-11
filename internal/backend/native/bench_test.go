@@ -185,11 +185,12 @@ func millis(d time.Duration) float64 {
 }
 
 // BenchmarkLoad measures Open, S3's BenchmarkSessionLoad for the native
-// backend: ns/op is the load time, and rss_MiB the resident growth across the
-// first load only. Later loads land in heap the Go runtime has not returned
-// to the OS yet and would report about zero, which is why `just
-// bench-native` runs one process per checkpoint. It needs the real
-// checkpoints and skips without them.
+// backend: ns/op is the load time, rss_MiB the resident growth across the
+// first load only, and peak_MiB the process's peak resident size right after
+// it (B.16). Later loads land in heap the Go runtime has not returned to the
+// OS yet and would report about zero, which is why `just bench-native` runs
+// one process per checkpoint. It needs the real checkpoints and skips
+// without them.
 func BenchmarkLoad(b *testing.B) {
 	root := golden.SkipWithoutModels(b)
 	for _, ck := range benchCheckpoints {
@@ -202,7 +203,7 @@ func BenchmarkLoad(b *testing.B) {
 // benchLoad opens and closes the checkpoint in dir once per iteration.
 func benchLoad(b *testing.B, dir string) {
 	b.Helper()
-	var growth int64
+	var growth, peak int64
 	first := true
 	for b.Loop() {
 		before := residentKB()
@@ -211,7 +212,7 @@ func benchLoad(b *testing.B, dir string) {
 			b.Fatalf("Open(%s): %v", dir, err)
 		}
 		if first {
-			growth, first = residentKB()-before, false
+			growth, peak, first = residentKB()-before, statusKB("VmHWM:"), false
 		}
 		if err := be.Close(); err != nil {
 			b.Fatalf("Close: %v", err)
@@ -220,12 +221,23 @@ func benchLoad(b *testing.B, dir string) {
 	if growth > 0 {
 		b.ReportMetric(float64(growth)/1024, "rss_MiB")
 	}
+	if peak > 0 {
+		b.ReportMetric(float64(peak)/1024, "peak_MiB")
+	}
 }
 
 // residentKB reads VmRSS from /proc/self/status, or 0 where that does not
 // exist; S3's helper of the same name. It is the whole process, so it means
 // something only as a delta around one allocation.
 func residentKB() int64 {
+	return statusKB("VmRSS:")
+}
+
+// statusKB reads the field of /proc/self/status that starts with prefix, in
+// kB, or 0 where the file or the field does not exist. VmHWM, the peak
+// resident size, covers the whole process since it started, so it means
+// something only for the first load in a fresh process.
+func statusKB(prefix string) int64 {
 	f, err := os.Open("/proc/self/status")
 	if err != nil {
 		return 0
@@ -233,7 +245,7 @@ func residentKB() int64 {
 	defer func() { _ = f.Close() }()
 	scan := bufio.NewScanner(f)
 	for scan.Scan() {
-		rest, ok := strings.CutPrefix(scan.Text(), "VmRSS:")
+		rest, ok := strings.CutPrefix(scan.Text(), prefix)
 		if !ok {
 			continue
 		}

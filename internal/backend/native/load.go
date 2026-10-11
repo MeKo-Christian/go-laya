@@ -263,7 +263,10 @@ func load(ctx context.Context, f *safetensors.File, path string, cfg encoderConf
 		if err != nil {
 			return nil, err // ctx's error alone, or one naming the tensor
 		}
-		if weights[name], err = tensor.New(data, shape); err != nil {
+		// Float32 decodes into a slice of its own and keeps nothing, so
+		// the tensor can take it over: New's copy would hold every weight
+		// twice for a moment, mmBERT's 786 MB tok_embeddings among them.
+		if weights[name], err = tensor.FromOwned(data, shape); err != nil {
 			return nil, fmt.Errorf("native backend: %s: tensor %q: %w: %w", path, name, err, backend.ErrIncompatibleCheckpoint)
 		}
 	}

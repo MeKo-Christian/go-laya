@@ -1,0 +1,34 @@
+# PLAN.md Backlog B.16, native BenchmarkLoad before and after load stopped copying each weight, 2026-10-11.
+# before = 2566863 (main + the peak_MiB metric), after = 753ad96 (load uses tensor.FromOwned).
+# One test binary per commit (go test -c), each run its own process under systemd-run MemoryMax=8G, MemorySwapMax=0,
+# -test.bench 'BenchmarkLoad/<checkpoint>$' -test.benchtime=5x, before and after interleaved per checkpoint, two rounds.
+# Other test sessions shared the machine: the uptime before each process shows the load. peak_MiB is VmHWM after the first load.
+#
+2026-10-11T16:13:23+02:00
+before=2566863 after=753ad96
+12
+go version go1.26.9 linux/amd64
+== round 1 before BenchmarkLoad/english:  16:13:23 up 16 days,  3:58,  1 user,  load average: 13,89, 15,13, 10,55
+BenchmarkLoad/english-12         	       5	2193079285 ns/op	      1972 peak_MiB	      1967 rss_MiB
+== round 1 after BenchmarkLoad/english:  16:13:34 up 16 days,  3:58,  1 user,  load average: 13,29, 14,96, 10,54
+BenchmarkLoad/english-12         	       5	1468255233 ns/op	      1676 peak_MiB	      1670 rss_MiB
+== round 1 before BenchmarkLoad/multilingual:  16:13:42 up 16 days,  3:58,  1 user,  load average: 12,24, 14,68, 10,50
+BenchmarkLoad/multilingual-12         	       5	1678072337 ns/op	      1581 peak_MiB	      1576 rss_MiB
+== round 1 after BenchmarkLoad/multilingual:  16:13:50 up 16 days,  3:58,  1 user,  load average: 11,82, 14,55, 10,48
+BenchmarkLoad/multilingual-12         	       5	1313836850 ns/op	      1334 peak_MiB	      1328 rss_MiB
+== round 1 before BenchmarkLoad/typed-decisions:  16:13:57 up 16 days,  3:59,  1 user,  load average: 11,16, 14,32, 10,45
+BenchmarkLoad/typed-decisions-12         	       5	1768207949 ns/op	      2006 peak_MiB	      2001 rss_MiB
+== round 1 after BenchmarkLoad/typed-decisions:  16:14:06 up 16 days,  3:59,  1 user,  load average: 10,14, 14,00, 10,38
+BenchmarkLoad/typed-decisions-12         	       5	1804420415 ns/op	      1676 peak_MiB	      1670 rss_MiB
+== round 2 before BenchmarkLoad/english:  16:14:15 up 16 days,  3:59,  1 user,  load average: 10,69, 14,05, 10,42
+BenchmarkLoad/english-12         	       5	2775627200 ns/op	      1984 peak_MiB	      1978 rss_MiB
+== round 2 after BenchmarkLoad/english:  16:14:29 up 16 days,  3:59,  1 user,  load average: 11,05, 13,96, 10,45
+BenchmarkLoad/english-12         	       5	1863950928 ns/op	      1676 peak_MiB	      1670 rss_MiB
+== round 2 before BenchmarkLoad/multilingual:  16:14:39 up 16 days,  3:59,  1 user,  load average: 11,31, 13,92, 10,47
+BenchmarkLoad/multilingual-12         	       5	1421524133 ns/op	      1589 peak_MiB	      1584 rss_MiB
+== round 2 after BenchmarkLoad/multilingual:  16:14:46 up 16 days,  3:59,  1 user,  load average: 10,79, 13,72, 10,45
+BenchmarkLoad/multilingual-12         	       5	1083252929 ns/op	      1334 peak_MiB	      1328 rss_MiB
+== round 2 before BenchmarkLoad/typed-decisions:  16:14:51 up 16 days,  3:59,  1 user,  load average: 10,65, 13,64, 10,44
+BenchmarkLoad/typed-decisions-12         	       5	1614320834 ns/op	      1971 peak_MiB	      1965 rss_MiB
+== round 2 after BenchmarkLoad/typed-decisions:  16:15:00 up 16 days,  4:00,  1 user,  load average: 10,20, 13,50, 10,41
+BenchmarkLoad/typed-decisions-12         	       5	1201886818 ns/op	      1676 peak_MiB	      1670 rss_MiB
