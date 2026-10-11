@@ -12,7 +12,8 @@ type Tensor struct {
 	data  []float32
 }
 
-// New creates a tensor from data and shape.
+// New creates a tensor from copies of data and shape; FromOwned is the
+// variant that does not copy data.
 func New(data []float32, shape []int64) (*Tensor, error) {
 	if err := checkData(data, shape); err != nil {
 		return nil, err
@@ -25,10 +26,11 @@ func New(data []float32, shape []int64) (*Tensor, error) {
 }
 
 // FromOwned creates a tensor that takes over data instead of copying it, and
-// rejects what New rejects, with the same error. The caller hands data over:
-// it must not keep, modify or pass data on afterwards, because the tensor and
-// every tensor sharing its storage would see the change. shape is copied, as
-// in New; it is a few int64s, and a caller may reuse it.
+// rejects what New rejects, with the same error. The caller hands data over,
+// its whole backing array included: it must not keep, modify or pass data on
+// afterwards, because the tensor and every tensor sharing its storage would
+// see the change. On an error nothing is taken over. shape is copied, as in
+// New; it is a few int64s, and a caller may reuse it.
 //
 // It is for data nothing else holds, such as a freshly decoded weight, where
 // New's copy would keep two of the same tensor alive at once.
