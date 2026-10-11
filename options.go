@@ -139,7 +139,9 @@ func WithMaxLoaded(n int) RouterOption {
 // WithLoader replaces the function that builds an agent for a checkpoint.
 //
 // Without it NewRouter installs the default loader, which downloads the
-// checkpoint's config and tokenizer and runs a local ONNX export (D24).
+// checkpoint's config and tokenizer and runs a local ONNX export (D24), or
+// with WithRouterRuntime(RuntimeNative) downloads the weights too and runs
+// them in pure Go (D30).
 // WithLoader(nil) leaves the Router with no loader at all, and Load then
 // returns ErrNoLoader. It is also the seam the upstream LRU tests need: they
 // monkeypatch Router.load to avoid building a real checkpoint
@@ -157,10 +159,30 @@ func WithLoader(fn func(context.Context, string, ModelSpec) (Predictor, error)) 
 // on: "cpu", "cuda", "cuda:N", "coreml", or "" / "auto" for the best one the
 // ONNX Runtime library offers (router.py:158). An unusable device falls back
 // to the CPU with a warning, and a name that is no device fails the load with
-// ErrUnknownDevice. A custom WithLoader ignores it.
+// ErrUnknownDevice. Beside WithRouterRuntime(RuntimeNative), any device but
+// "", "auto" and "cpu" fails NewRouter with ErrConflictingOptions. A custom
+// WithLoader ignores it.
 func WithRouterDevice(d string) RouterOption {
 	return func(c *routerConfig) error {
 		c.device = d
+		return nil
+	}
+}
+
+// WithRouterRuntime selects what runs the forward pass of every agent the
+// default loader builds, as WithRuntime does for Open (D30). With
+// RuntimeNative the loader downloads each checkpoint's weights too and needs
+// no export. Beside WithONNXDir, or a WithRouterDevice other than "", "auto"
+// and "cpu", RuntimeNative fails NewRouter with ErrConflictingOptions; a
+// value that is neither runtime fails it with ErrUnknownRuntime. A custom
+// WithLoader ignores the runtime, as it ignores every setting of the default
+// loader, but NewRouter still refuses the conflicting pairs.
+func WithRouterRuntime(rt Runtime) RouterOption {
+	return func(c *routerConfig) error {
+		if err := rt.check(); err != nil {
+			return err
+		}
+		c.runtime = rt
 		return nil
 	}
 }
@@ -180,7 +202,9 @@ func WithRouterToken(tok string) RouterOption {
 // laya-<name>.onnx for the checkpoint the Router calls name, which is what
 // `scripts/export_onnx.py --out dir` writes. Without it the loader uses
 // $LAYA_ONNX_DIR, else onnx/ under the laya cache (WithRouterCacheDir, else
-// $LAYA_CACHE, else the user cache directory). A custom WithLoader ignores it.
+// $LAYA_CACHE, else the user cache directory). RuntimeNative runs no export,
+// so beside WithRouterRuntime(RuntimeNative) it fails NewRouter with
+// ErrConflictingOptions. A custom WithLoader ignores it.
 func WithONNXDir(dir string) RouterOption {
 	return func(c *routerConfig) error {
 		c.onnxDir = dir

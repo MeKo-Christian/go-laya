@@ -316,6 +316,9 @@ func NewRouter(opts ...RouterOption) (*Router, error) {
 			return nil, err
 		}
 	}
+	if err := cfg.checkNative(cfg.onnxDir != "", "WithONNXDir", "WithRouterDevice"); err != nil {
+		return nil, err
+	}
 
 	models := DefaultModels()
 	if cfg.standaloneRepos {

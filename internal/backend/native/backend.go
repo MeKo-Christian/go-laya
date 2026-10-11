@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
 
 	"github.com/MeKo-Christian/go-laya/backend"
 	"github.com/MeKo-Christian/go-laya/internal/head"
 	"github.com/MeKo-Christian/go-laya/internal/modernbert"
+	"github.com/MeKo-Christian/go-laya/internal/safetensors"
 )
 
 var (
@@ -22,11 +24,18 @@ var (
 	ErrBadBatch = errors.New("native backend: malformed batch")
 )
 
-// Options configures Open. It is empty: the only tuning the kernels have is
-// tensor.SetWorkers, a process-wide setting that a per-backend option would
-// misrepresent, and internal/runtime/ops, whose worker loop takes its count
-// per call, is not on this backend's path.
-type Options struct{}
+// Options configures Open. It holds no tuning: the only tuning the kernels
+// have is tensor.SetWorkers, a process-wide setting that a per-backend
+// option would misrepresent, and internal/runtime/ops, whose worker loop
+// takes its count per call, is not on this backend's path.
+type Options struct {
+	// Head, if not nil, is the head the caller expects the file to fix.
+	// Open holds model.safetensors' head to it from the header of the file
+	// it then decodes, before a weight is decoded, and fails with a
+	// *HeadMismatchError otherwise. A check on a separate open would pass
+	// a file that is replaced before the load.
+	Head *HeadShape
+}
 
 // Backend runs a laya DecisionModel in pure Go: the ModernBERT or mmBERT
 // encoder of internal/modernbert, then the decision head of internal/head,
@@ -53,8 +62,8 @@ var _ backend.Backend = (*Backend)(nil)
 // many layers as the file has head.layers.N, and as many act logits as
 // act_head.2 has rows. Upstream takes both from rl_agent_config.json
 // (head_layers, len(act_costs)+1; common.py:137), which this does not read:
-// holding the file to them is the caller's part, as onnx.Options.ActWidth
-// is for the ONNX backend.
+// the caller passes them as opts.Head, as it passes onnx.Options.ActWidth
+// to the ONNX backend.
 //
 // Loading is strict, as upstream's load_state_dict(strict=True) is
 // (agent.py:184): a missing or unexpected tensor, a shape other than the
@@ -66,17 +75,32 @@ var _ backend.Backend = (*Backend)(nil)
 // is never decoded. The layer count is compared before the plan is resolved,
 // so a config cannot make Open allocate for more layers than the file has.
 //
+// With opts.Head set, the head is held to it from the header before
+// encoder/config.json is read or a weight decoded; see Options.Head.
+//
 // ctx is checked between tensors; a cancellation returns ctx's error alone.
-// opts is reserved; see Options.
-func Open(ctx context.Context, dir string, _ Options) (*Backend, error) {
+func Open(ctx context.Context, dir string, opts Options) (*Backend, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	path := filepath.Join(dir, weightsFile)
+	f, err := safetensors.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("native backend: %w", err)
+	}
+	defer f.Close()
+	// The header of the file load decodes, so the head checked is the head
+	// built: a file replaced after a separate check could not be.
+	if opts.Head != nil {
+		if err := checkHead(f, path, *opts.Head); err != nil {
+			return nil, err
+		}
 	}
 	cfg, err := readConfig(dir)
 	if err != nil {
 		return nil, err
 	}
-	m, err := load(ctx, dir, cfg)
+	m, err := load(ctx, f, path, cfg)
 	if err != nil {
 		return nil, err
 	}
