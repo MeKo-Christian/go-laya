@@ -52,10 +52,10 @@ Numbered checklist. Each item cites the line that defines it.
 
 **Model forward, if the head is reimplemented rather than exported (common.py:105-126)**
 
-35. The type embedding is added to **every** position, not just `[CLS]`: `h = h + type_emb(qtype)[:, None, :]` (L109).
-36. The head layers are run manually (`for layer in self.head.layers`, L112-113), which **bypasses** `nn.TransformerEncoder`'s optional final norm. Layers are `norm_first=True`, `nhead = max(1, d//64)`, `dim_feedforward = 4d` (L96-98).
-37. Masked positions get `-1e4`, not `-inf` (L117).
-38. `act_head` features are `[top1, top1−top2, normalised entropy, k/255.0]` where the entropy denominator is `ln(clamp(markerCount, min=2))` and the probabilities are **detached** (L119-123). Pooled input is `h[:, 0]` after the head layers (L124).
+35. The type embedding is added to **every** position, not just `[CLS]`: `h = h + type_emb(qtype)[:, None, :]` (L109). _Done (2026-10-10, Task 8.8): `head.Forward` adds it at every position. `TestHeadIntermediates/*/35_type_emb_every_position` (`internal/backend/native`, gated on `LAYA_MODELS`) holds h after the type embedding at `[CLS]` and every marker of a padded batch to `testdata/head_intermediates.jsonl` on all three checkpoints; `TestHeadMatchesTorch` (`internal/head`) does the same at d=8 in CI._
+36. The head layers are run manually (`for layer in self.head.layers`, L112-113), which **bypasses** `nn.TransformerEncoder`'s optional final norm. Layers are `norm_first=True`, `nhead = max(1, d//64)`, `dim_feedforward = 4d` (L96-98). _Done (2026-10-10, Task 8.8): `TestHeadIntermediates/*/36_head_layers_manual_loop` holds h after each head layer and the gathered marker rows to torch's fast path, the one the checkpoints' 16 and 12 heads run, on all three checkpoints; `TestHeadMatchesTorch` and `TestLayerMatchesTorch` cover both paths at d=8 in CI._
+37. Masked positions get `-1e4`, not `-inf` (L117). _Done (2026-10-10, Task 8.8): `head.MaskFill`. `TestHeadIntermediates/*/37_mask_fill` requires every fill column to be exactly -1e4 on both sides and the marker columns to match torch's, in all 33 recorded batches; `TestForwardGolden` compares the same logits from `logits.jsonl`._
+38. `act_head` features are `[top1, top1−top2, normalised entropy, k/255.0]` where the entropy denominator is `ln(clamp(markerCount, min=2))` and the probabilities are **detached** (L119-123). Pooled input is `h[:, 0]` after the head layers (L124). _Done (2026-10-10, Task 8.8): `TestHeadIntermediates/*/38_act_features` holds the four features and the act logits to torch's in every recorded batch, including one single-option batch per checkpoint, the only rows where the clamp decides the denominator. The dumper checks that act_head's pooled input is h[:, 0] after the last layer, bit for bit. Detaching is a no-op in inference._
 
 **`Router.route` (router.py:241-290)**
 

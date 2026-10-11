@@ -3,17 +3,22 @@ package laya
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
+	"runtime/debug"
 	"testing"
 
 	"github.com/MeKo-Christian/go-laya/backend"
+	"github.com/MeKo-Christian/go-laya/internal/backend/native"
 	"github.com/MeKo-Christian/go-laya/internal/backend/onnx"
 	"github.com/MeKo-Christian/go-laya/internal/calib"
 	"github.com/MeKo-Christian/go-laya/internal/checkpoint"
 	"github.com/MeKo-Christian/go-laya/internal/golden"
+	"github.com/MeKo-Christian/go-laya/internal/runtime/tensor"
 	"github.com/MeKo-Christian/go-laya/jsonx"
 	"github.com/MeKo-Christian/go-laya/question"
 	"github.com/MeKo-Christian/go-laya/tokenizer"
@@ -51,8 +56,54 @@ var e2eActTol = map[string]float64{
 	golden.TypedDecisions: 2.5e-6,
 }
 
-// e2eCeiling is Task 7.5.2's bound on any per-checkpoint tolerance.
+// e2eNativeTol is e2eTol for the pure-Go native backend (Task 8.8): the
+// largest per-option probability difference between SystemOne over the
+// native backend and the probabilities Python's recorded logits give, per
+// checkpoint.
+//
+// Measured over every logits.jsonl case (2026-10-10, amd64 with AVX2):
+// english 2.2e-06, multilingual 3.5e-06, typed-decisions 9.2e-07, with no
+// argmax flipping in any of the 30 rows of each. The logits are within
+// TestForwardGolden's 1.1e-5 of torch's, and the softmax shrinks that. Each
+// gets 2x headroom, as e2eTol does; TestE2EParity also holds every entry to
+// Task 8.8's 1e-4 (e2eCeiling).
+var e2eNativeTol = map[string]float64{
+	golden.English:        4.3e-6,
+	golden.Multilingual:   7.0e-6,
+	golden.TypedDecisions: 1.9e-6,
+}
+
+// e2eNativeActTol is e2eActTol for the native backend (Task 8.8), relative
+// for the reason given there.
+//
+// Measured over every logits.jsonl case (2026-10-10, amd64 with AVX2):
+// english 1.4e-06, multilingual 4.7e-07, typed-decisions 4.1e-07, with no
+// act argmax flipping. Each gets 2x headroom.
+var e2eNativeActTol = map[string]float64{
+	golden.English:        2.9e-6,
+	golden.Multilingual:   9.5e-7,
+	golden.TypedDecisions: 8.3e-7,
+}
+
+// e2eCeiling is Task 7.5.2's bound on any per-checkpoint tolerance, which
+// Task 8.8 holds the native backend to as well.
 const e2eCeiling = 1e-4
+
+// e2eBackend is one backend TestE2EParity gates: its name, which e2eAgent
+// opens it by, and its per-checkpoint bounds on the probabilities and the
+// relative act logits.
+type e2eBackend struct {
+	name        string
+	tol, actTol map[string]float64
+}
+
+// e2eBackends are the backends TestE2EParity runs: ONNX Runtime over the
+// exports in $LAYA_ONNX_DIR (Task 7.5), and the native backend over the
+// checkpoints' own weights (Task 8.8).
+var e2eBackends = []e2eBackend{
+	{name: "onnx", tol: e2eTol, actTol: e2eActTol},
+	{name: "native", tol: e2eNativeTol, actTol: e2eNativeActTol},
+}
 
 // roundStep is how far apart two values within e2eTol can land once both are
 // rounded to four places, plus room for the float64 representation.
@@ -74,22 +125,21 @@ func (b *teeBackend) Forward(ctx context.Context, in backend.Batch) (logits, act
 	return logits, act, err
 }
 
-// TestE2EParity is Task 7.5.1-7.5.3: every logits.jsonl case through SystemOne
-// with the real tokenizer and ONNX Runtime, for all three checkpoints. The
-// per-option probabilities must agree with the ones Python's recorded logits
-// give at the same temperature, and no row's argmax may flip.
+// TestE2EParity is Task 7.5.1-7.5.3 and Task 8.8: every logits.jsonl case
+// through SystemOne with the real tokenizer, for all three checkpoints, on
+// each backend of e2eBackends. The per-option probabilities must agree with
+// the ones Python's recorded logits give at the same temperature, and no
+// row's argmax may flip.
 //
 // TestSystemOneReplay already proves the batch equals the recorded one, so
 // what is left to differ here is the forward pass.
 func TestE2EParity(t *testing.T) {
 	root := golden.SkipWithoutModels(t)
-	exports := os.Getenv("LAYA_ONNX_DIR")
-	if exports == "" {
-		t.Skip("no exports (set LAYA_ONNX_DIR)")
-	}
-	for ck, tol := range e2eTol {
-		if tol > e2eCeiling {
-			t.Errorf("e2eTol[%s] = %g exceeds the 1e-4 ceiling", ck, tol)
+	for _, be := range e2eBackends {
+		for ck, tol := range be.tol {
+			if tol > e2eCeiling {
+				t.Errorf("%s tolerance[%s] = %g exceeds the 1e-4 ceiling", be.name, ck, tol)
+			}
 		}
 	}
 
@@ -105,96 +155,131 @@ func TestE2EParity(t *testing.T) {
 	}
 	cases := golden.Load(t, "logits")
 
-	for _, ck := range []string{golden.English, golden.Multilingual, golden.TypedDecisions} {
-		t.Run(ck, func(t *testing.T) {
-			graph, ok := findExport(exports, ck)
-			if !ok {
-				t.Skipf("no %s export in %s (run scripts/export_onnx.py --all --dynamo)", ck, exports)
-			}
-			tee, a := e2eAgent(t, golden.CheckpointDir(root, ck), graph)
+	for _, be := range e2eBackends {
+		t.Run(be.name, func(t *testing.T) {
+			for _, ck := range []string{golden.English, golden.Multilingual, golden.TypedDecisions} {
+				t.Run(ck, func(t *testing.T) {
+					tee, a := e2eAgent(t, be.name, root, ck)
 
-			worst, worstAct, n := 0.0, 0.0, 0
-			for _, rec := range cases {
-				var c logitsCase
-				rec.Unmarshal(t, &c)
-				if c.Checkpoint != ck {
-					continue
-				}
-				n++
+					worst, worstAct, n, rows, flips := 0.0, 0.0, 0, 0, 0
+					for _, rec := range cases {
+						var c logitsCase
+						rec.Unmarshal(t, &c)
+						if c.Checkpoint != ck {
+							continue
+						}
+						n++
 
-				state, err := jsonx.Decode(c.State)
-				if err != nil {
-					t.Fatal(err)
-				}
-				res, err := a.SystemOne(context.Background(), state, recordedQuestions(t, c.Questions))
-				if err != nil {
-					t.Fatalf("%s: SystemOne: %v", rec.Name, err)
-				}
-				want := golden.Matrix[float32](t, c.Logits, rec.Name+" logits")
-				if len(tee.logits) != len(want) || len(res.Answers) != len(c.QIDs) {
-					t.Fatalf("%s: %d logit rows and %d answers, recorded %d and %d",
-						rec.Name, len(tee.logits), len(res.Answers), len(want), len(c.QIDs))
-				}
+						state, err := jsonx.Decode(c.State)
+						if err != nil {
+							t.Fatal(err)
+						}
+						res, err := a.SystemOne(context.Background(), state, recordedQuestions(t, c.Questions))
+						if err != nil {
+							t.Fatalf("%s: SystemOne: %v", rec.Name, err)
+						}
+						want := golden.Matrix[float32](t, c.Logits, rec.Name+" logits")
+						if len(tee.logits) != len(want) || len(res.Answers) != len(c.QIDs) {
+							t.Fatalf("%s: %d logit rows and %d answers, recorded %d and %d",
+								rec.Name, len(tee.logits), len(res.Answers), len(want), len(c.QIDs))
+						}
 
-				// The action head is a separate output of the same graph, and
-				// the recorded act_probability is saturated at 1.0 in every
-				// case, so only its logits can expose a wrong act output.
-				wantAct := golden.Matrix[float32](t, c.ActLogits, rec.Name+" act_logits")
-				if len(tee.act) != len(wantAct) {
-					t.Fatalf("%s: %d act rows, recorded %d", rec.Name, len(tee.act), len(wantAct))
-				}
-				for r := range wantAct {
-					worstAct = max(worstAct, compareActRow(t, rec.Name, r, tee.act[r], wantAct[r], e2eActTol[ck]))
-				}
+						// The action head is a separate output of the same pass,
+						// and the recorded act_probability is saturated at 1.0
+						// in every case, so only its logits can expose a wrong
+						// act output.
+						wantAct := golden.Matrix[float32](t, c.ActLogits, rec.Name+" act_logits")
+						if len(tee.act) != len(wantAct) {
+							t.Fatalf("%s: %d act rows, recorded %d", rec.Name, len(tee.act), len(wantAct))
+						}
+						for r := range wantAct {
+							worstAct = max(worstAct, compareActRow(t, rec.Name, r, tee.act[r], wantAct[r], be.actTol[ck]))
+						}
 
-				var py struct {
-					Answers map[string]pyAnswer `json:"answers"`
-				}
-				if err := json.Unmarshal([]byte(c.ResultJSON), &py); err != nil {
-					t.Fatalf("%s: result_json: %v", rec.Name, err)
-				}
+						var py struct {
+							Answers map[string]pyAnswer `json:"answers"`
+						}
+						if err := json.Unmarshal([]byte(c.ResultJSON), &py); err != nil {
+							t.Fatalf("%s: result_json: %v", rec.Name, err)
+						}
 
-				for r, na := range res.Answers {
-					if na.ID != c.QIDs[r] {
-						t.Fatalf("%s: answer %d is %q, want %q", rec.Name, r, na.ID, c.QIDs[r])
-					}
-					k := countTrue(tee.batch.MarkerMask[r])
-					temp := a.temps.Scale(question.QType(c.QTypes[r]), k)
-					pGo := calib.Softmax(tee.logits[r], k, temp)
-					pPy := calib.Softmax(want[r], k, temp)
+						for r, na := range res.Answers {
+							if na.ID != c.QIDs[r] {
+								t.Fatalf("%s: answer %d is %q, want %q", rec.Name, r, na.ID, c.QIDs[r])
+							}
+							k := countTrue(tee.batch.MarkerMask[r])
+							temp := a.temps.Scale(question.QType(c.QTypes[r]), k)
+							pGo := calib.Softmax(tee.logits[r], k, temp)
+							pPy := calib.Softmax(want[r], k, temp)
 
-					for i := range pPy {
-						d := math.Abs(float64(pGo[i]) - float64(pPy[i]))
-						worst = max(worst, d)
-						if d > e2eTol[ck] {
-							t.Errorf("%s %s: p[%d] = %.8g, Python %.8g (diff %.3g > %g)",
-								rec.Name, na.ID, i, pGo[i], pPy[i], d, e2eTol[ck])
+							for i := range pPy {
+								d := absDiff(float64(pGo[i]), float64(pPy[i]))
+								worst = max(worst, d)
+								if d > be.tol[ck] {
+									t.Errorf("%s %s: p[%d] = %.8g, Python %.8g (diff %.3g > %g)",
+										rec.Name, na.ID, i, pGo[i], pPy[i], d, be.tol[ck])
+								}
+							}
+							rows++
+							if g, p := argmax(pGo), argmax(pPy); g != p {
+								flips++
+								t.Errorf("%s %s: argmax %d, Python %d\n got %v\nwant %v", rec.Name, na.ID, g, p, pGo, pPy)
+							}
+
+							pa, ok := py.Answers[na.ID]
+							if !ok {
+								t.Errorf("%s: Python has no answer %q", rec.Name, na.ID)
+								continue
+							}
+							compareFormatted(t, rec.Name+" "+na.ID, na.A, pa)
 						}
 					}
-					if g, p := argmax(pGo), argmax(pPy); g != p {
-						t.Errorf("%s %s: argmax %d, Python %d\n got %v\nwant %v", rec.Name, na.ID, g, p, pGo, pPy)
+					if n == 0 {
+						t.Fatalf("logits.jsonl has no cases for %s", ck)
 					}
-
-					pa, ok := py.Answers[na.ID]
-					if !ok {
-						t.Errorf("%s: Python has no answer %q", rec.Name, na.ID)
-						continue
-					}
-					compareFormatted(t, rec.Name+" "+na.ID, na.A, pa)
-				}
+					t.Logf("%s: %d cases; worst per-option probability diff vs PyTorch: %.3g (tolerance %g); argmax flips: %d of %d rows",
+						be.name, n, worst, be.tol[ck], flips, rows)
+					t.Logf("%s: worst relative act-logit diff vs PyTorch: %.3g (tolerance %g)", be.name, worstAct, be.actTol[ck])
+				})
 			}
-			if n == 0 {
-				t.Fatalf("logits.jsonl has no cases for %s", ck)
-			}
-			t.Logf("%d cases; worst per-option probability diff vs PyTorch: %.3g (tolerance %g)", n, worst, e2eTol[ck])
-			t.Logf("worst relative act-logit diff vs PyTorch: %.3g (tolerance %g)", worstAct, e2eActTol[ck])
 		})
 	}
 }
 
-// e2eAgent builds the checkpoint's agent over the export at graph, as the
+// e2eAgent builds the checkpoint's agent over the backend kind names, with
+// the backend wrapped so the test sees its output, or skips when the
+// backend's inputs are not there.
+//
+//   - "onnx" opens the export of ck in $LAYA_ONNX_DIR and builds the agent
+//     as the default loader does.
+//   - "native" opens the checkpoint's model.safetensors with native.Open and
+//     injects it with WithBackend, as a caller would; the native backend has
+//     no public option yet (Task 8.10). The agent owns it and closes it with
+//     the subtest, so one checkpoint's weights are in memory at a time.
+func e2eAgent(t *testing.T, kind, root, ck string) (*teeBackend, *Agent) {
+	t.Helper()
+	dir := golden.CheckpointDir(root, ck)
+	switch kind {
+	case "onnx":
+		exports := os.Getenv("LAYA_ONNX_DIR")
+		if exports == "" {
+			t.Skip("no exports (set LAYA_ONNX_DIR)")
+		}
+		graph, ok := findExport(exports, ck)
+		if !ok {
+			t.Skipf("no %s export in %s (run scripts/export_onnx.py --all --dynamo)", ck, exports)
+		}
+		return onnxE2EAgent(t, dir, graph)
+	case "native":
+		return nativeE2EAgent(t, dir)
+	}
+	t.Fatalf("unknown backend %q", kind)
+	return nil, nil
+}
+
+// onnxE2EAgent builds the checkpoint's agent over the export at graph, as the
 // default loader does, with the backend wrapped so the test sees its output.
-func e2eAgent(t *testing.T, dir, graph string) (*teeBackend, *Agent) {
+func onnxE2EAgent(t *testing.T, dir, graph string) (*teeBackend, *Agent) {
 	t.Helper()
 	cfg, err := checkpoint.LoadConfig(dir)
 	if err != nil {
@@ -225,6 +310,38 @@ func e2eAgent(t *testing.T, dir, graph string) (*teeBackend, *Agent) {
 	return tee, a
 }
 
+// nativeE2EAgent opens the checkpoint in dir on the native backend and the
+// agent over it through Open and WithBackend, the backend wrapped so the test
+// sees its output.
+func nativeE2EAgent(t *testing.T, dir string) (*teeBackend, *Agent) {
+	t.Helper()
+	// The kernels' worker count is process-wide (tensor.SetWorkers); the
+	// test sets it only to finish sooner, and restores it.
+	prev := tensor.Workers()
+	tensor.SetWorkers(runtime.NumCPU())
+	t.Cleanup(func() { tensor.SetWorkers(prev) })
+
+	be, err := native.Open(t.Context(), dir, native.Options{})
+	if err != nil {
+		t.Fatalf("native.Open(%q): %v", dir, err)
+	}
+	tee := &teeBackend{Backend: be}
+	a, err := Open(t.Context(), dir, WithBackend(tee))
+	if err != nil {
+		// A failed Open leaves the backend with its caller.
+		_ = be.Close()
+		t.Fatalf("Open(%q, WithBackend): %v", dir, err)
+	}
+	t.Cleanup(func() {
+		if err := a.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+		runtime.GC()
+		debug.FreeOSMemory()
+	})
+	return tee, a
+}
+
 // pyAnswer is one answer of Python's system_one result_json. Optional keys are
 // pointers, so a key missing from Python's answer fails rather than reading
 // as zero.
@@ -245,10 +362,10 @@ type pyAnswer struct {
 // places, sit at most one step apart. That is also what catches a wrong
 // temperature, which moves no argmax. Score, confidence and act_probability
 // are rounded the same way and get the same one-step bound.
-func compareFormatted(t *testing.T, name string, got Answer, pa pyAnswer) {
+func compareFormatted(t testing.TB, name string, got Answer, pa pyAnswer) {
 	t.Helper()
 	for _, e := range got.Probabilities {
-		if pp, ok := pa.Probabilities[e.Key]; !ok || math.Abs(e.P-pp) > roundStep {
+		if pp, ok := pa.Probabilities[e.Key]; !ok || absDiff(e.P, pp) > roundStep {
 			t.Errorf("%s: probability %s = %v, Python %v", name, e.Key, e.P, pp)
 		}
 	}
@@ -262,25 +379,25 @@ func compareFormatted(t *testing.T, name string, got Answer, pa pyAnswer) {
 		}
 	case "noul":
 		if pa.Noul == nil || (*got.Noul > 0.5) != (*pa.Noul > 0.5) ||
-			math.Abs(*got.Noul-*pa.Noul) > roundStep {
+			absDiff(*got.Noul, *pa.Noul) > roundStep {
 			t.Errorf("%s: noul %v, Python %v", name, *got.Noul, orMissing(pa.Noul))
 		}
 	case "score":
-		if got.Score == nil || pa.Score == nil || math.Abs(*got.Score-*pa.Score) > roundStep {
+		if got.Score == nil || pa.Score == nil || absDiff(*got.Score, *pa.Score) > roundStep {
 			t.Errorf("%s: score %v, Python %v", name, orMissing(got.Score), orMissing(pa.Score))
 		}
 		compareLegend(t, name, got.Legend, pa.Legend)
 	}
 	// Confidence is present for every type, and act_probability in every
 	// answer's action block.
-	if pa.Confidence == nil || math.Abs(got.Confidence-*pa.Confidence) > roundStep {
+	if pa.Confidence == nil || absDiff(got.Confidence, *pa.Confidence) > roundStep {
 		t.Errorf("%s: confidence %v, Python %v", name, got.Confidence, orMissing(pa.Confidence))
 	}
 	var pyAct *float64
 	if pa.Action != nil {
 		pyAct = pa.Action.ActProbability
 	}
-	if pyAct == nil || math.Abs(got.Action.ActProbability-*pyAct) > roundStep {
+	if pyAct == nil || absDiff(got.Action.ActProbability, *pyAct) > roundStep {
 		t.Errorf("%s: act_probability %v, Python %v", name, got.Action.ActProbability, orMissing(pyAct))
 	}
 }
@@ -289,7 +406,7 @@ func compareFormatted(t *testing.T, name string, got Answer, pa pyAnswer) {
 // the same width, every entry within the relative tolerance, and the same
 // argmax, which is what decides the act probability once it saturates. It
 // returns the row's worst relative difference.
-func compareActRow(t *testing.T, name string, r int, got, want []float32, tol float64) float64 {
+func compareActRow(t testing.TB, name string, r int, got, want []float32, tol float64) float64 {
 	t.Helper()
 	if len(got) != len(want) {
 		t.Errorf("%s: act row %d has %d logits, recorded %d", name, r, len(got), len(want))
@@ -297,7 +414,7 @@ func compareActRow(t *testing.T, name string, r int, got, want []float32, tol fl
 	}
 	worst := 0.0
 	for i := range want {
-		d := math.Abs(float64(got[i])-float64(want[i])) / max(math.Abs(float64(want[i])), 1)
+		d := relDiff(float64(got[i]), float64(want[i]))
 		worst = max(worst, d)
 		if d > tol {
 			t.Errorf("%s: act[%d][%d] = %.8g, Python %.8g (relative diff %.3g > %g)",
@@ -310,10 +427,30 @@ func compareActRow(t *testing.T, name string, r int, got, want []float32, tol fl
 	return worst
 }
 
+// absDiff is |got - want|, or +Inf when that is NaN. A NaN compares false
+// with every bound, so without this a NaN output would pass any tolerance.
+func absDiff(got, want float64) float64 {
+	return nanToInf(math.Abs(got - want))
+}
+
+// relDiff is |got - want| / max(|want|, 1), or +Inf when that is NaN, for
+// the reason absDiff gives.
+func relDiff(got, want float64) float64 {
+	return nanToInf(math.Abs(got-want) / max(math.Abs(want), 1))
+}
+
+// nanToInf is d, or +Inf when d is NaN.
+func nanToInf(d float64) float64 {
+	if math.IsNaN(d) {
+		return math.Inf(1)
+	}
+	return d
+}
+
 // compareLegend holds a score answer's legend to Python's. The legend is the
 // caller's criteria, not model output, so it has to match exactly; both sides
 // go through JSON so the comparison sees what Python would have serialized.
-func compareLegend(t *testing.T, name string, got Obj, want map[string]any) {
+func compareLegend(t testing.TB, name string, got Obj, want map[string]any) {
 	t.Helper()
 	if want == nil {
 		t.Errorf("%s: Python has no legend", name)
@@ -350,4 +487,45 @@ func argmax(p []float32) int {
 		}
 	}
 	return best
+}
+
+// errorRecorder is a testing.TB that records Errorf calls instead of failing,
+// so a test can assert that a comparison helper rejects its input.
+type errorRecorder struct {
+	testing.TB
+
+	errs []string
+}
+
+func (r *errorRecorder) Helper() {}
+
+func (r *errorRecorder) Errorf(format string, args ...any) {
+	r.errs = append(r.errs, fmt.Sprintf(format, args...))
+}
+
+// TestCompareRejectsNaN holds the act-logit and formatted comparisons of
+// TestE2EParity to failing on a NaN: it compares false with every bound, so a
+// plain |got-want| > tol passes it, and an argmax that skips it can still
+// land on the recorded index.
+func TestCompareRejectsNaN(t *testing.T) {
+	nan := float32(math.NaN())
+	t.Run("act row", func(t *testing.T) {
+		r := &errorRecorder{TB: t}
+		compareActRow(r, "nan", 0, []float32{1, nan}, []float32{1, 0.5}, 1e-6)
+		if len(r.errs) == 0 {
+			t.Error("compareActRow accepted a NaN act logit")
+		}
+	})
+	t.Run("act probability", func(t *testing.T) {
+		one := 1.0
+		pa := pyAnswer{Confidence: &one}
+		pa.Action = &struct {
+			ActProbability *float64 `json:"act_probability"`
+		}{&one}
+		r := &errorRecorder{TB: t}
+		compareFormatted(r, "nan", Answer{Confidence: 1, Action: Action{ActProbability: math.NaN()}}, pa)
+		if len(r.errs) == 0 {
+			t.Error("compareFormatted accepted a NaN act_probability")
+		}
+	})
 }
