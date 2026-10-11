@@ -1,0 +1,45 @@
+# PLAN.md Task 8.9, ORT reference cell, idle-machine rerun, 2026-10-10, right after bench-native-quiet-{a,b,c}.txt.
+#
+# bench-onnx's harness and go test invocation (internal/backend/onnx), filtered to -bench 'BenchmarkForward/<ck>$/threads=8$/b1_s512_k4$', -benchtime=5x, ORT 1.23.0, same 8 GB cap.
+#
+2026-10-10T21:47:05+02:00
+ 21:47:05 up 15 days,  9:32,  1 user,  load average: 3,95, 4,65, 5,15
+== english:  21:47:05 up 15 days,  9:32,  1 user,  load average: 3,95, 4,65, 5,15
+goos: linux
+goarch: amd64
+pkg: github.com/MeKo-Christian/go-laya/internal/backend/onnx
+cpu: 12th Gen Intel(R) Core(TM) i7-1255U
+BenchmarkForward
+    bench_test.go:230: ONNX Runtime 1.23.0 (C API 23) from /usr/local/lib/libonnxruntime.so, GOMAXPROCS=11
+BenchmarkForward/english
+BenchmarkForward/english/threads=8
+BenchmarkForward/english/threads=8/b1_s512_k4
+BenchmarkForward/english/threads=8/b1_s512_k4-11         	       5	1725619648 ns/op	      1729 p50_ms	      1866 p90_ms
+PASS
+ok  	github.com/MeKo-Christian/go-laya/internal/backend/onnx	14.382s
+== multilingual:  21:47:20 up 15 days,  9:32,  1 user,  load average: 6,00, 5,06, 5,28
+goos: linux
+goarch: amd64
+pkg: github.com/MeKo-Christian/go-laya/internal/backend/onnx
+cpu: 12th Gen Intel(R) Core(TM) i7-1255U
+BenchmarkForward
+    bench_test.go:230: ONNX Runtime 1.23.0 (C API 23) from /usr/local/lib/libonnxruntime.so, GOMAXPROCS=11
+BenchmarkForward/multilingual
+BenchmarkForward/multilingual/threads=8
+BenchmarkForward/multilingual/threads=8/b1_s512_k4
+BenchmarkForward/multilingual/threads=8/b1_s512_k4-11         	       5	 645270928 ns/op	       622.7 p50_ms	       723.6 p90_ms
+PASS
+ok  	github.com/MeKo-Christian/go-laya/internal/backend/onnx	5.664s
+== typed-decisions:  21:47:26 up 15 days,  9:32,  1 user,  load average: 6,32, 5,14, 5,30
+goos: linux
+goarch: amd64
+pkg: github.com/MeKo-Christian/go-laya/internal/backend/onnx
+cpu: 12th Gen Intel(R) Core(TM) i7-1255U
+BenchmarkForward
+    bench_test.go:230: ONNX Runtime 1.23.0 (C API 23) from /usr/local/lib/libonnxruntime.so, GOMAXPROCS=11
+BenchmarkForward/typed-decisions
+BenchmarkForward/typed-decisions/threads=8
+BenchmarkForward/typed-decisions/threads=8/b1_s512_k4
+BenchmarkForward/typed-decisions/threads=8/b1_s512_k4-11         	       5	1665106233 ns/op	      1662 p50_ms	      1740 p90_ms
+PASS
+ok  	github.com/MeKo-Christian/go-laya/internal/backend/onnx	14.557s

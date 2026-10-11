@@ -97,6 +97,24 @@ bench-onnx reps="5" out="build/bench-onnx.txt":
             -benchtime={{reps}}x -timeout 20m ./internal/backend/onnx/ 2>&1 | tee -a {{out}}; \
     done
 
+# Task 8.9: the native backend at S3's reference cell (1 question, 512 tokens, 4 options,
+# 8 workers), for the ratio against bench-onnx. An iteration costs tens of seconds, so
+# the count is fixed as there. Needs LAYA_MODELS. The checkpoints decode to float32, 1-2
+# GB each, so every process runs one checkpoint under an 8 GB cap: a runaway takes the
+# benchmark down, not the desktop. Load varies run to run, so uptime heads each one.
+bench-native reps="5" out="build/bench-native.txt":
+    @: "${LAYA_MODELS:?set LAYA_MODELS to the tree holding laya/, or every benchmark skips}"
+    mkdir -p build
+    { date -Is; uptime; echo "nproc: $(nproc)"; go version; } 2>&1 | tee {{out}}
+    for bench in BenchmarkForward BenchmarkLoad; do \
+        for ck in english multilingual typed-decisions; do \
+            echo "== $bench/$ck: $(uptime)" | tee -a {{out}}; \
+            systemd-run --user --scope -q -p MemoryMax=8G -p MemorySwapMax=0 \
+                go test -run '^$' -bench "$bench/$ck\$" -benchtime={{reps}}x \
+                -timeout 60m -v ./internal/backend/native/ 2>&1 | tee -a {{out}}; \
+        done; \
+    done
+
 # Task 4.5.3: assemble the tokenizer differential corpus into build/corpus.
 # ~157k lines across five streams -- Tatoeba sentences in 427 languages, generated
 # Unicode probes, the multilingual vocabulary, gettext catalogues, and every added
