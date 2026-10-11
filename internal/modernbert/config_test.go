@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"testing"
 
 	"github.com/MeKo-Christian/go-laya/internal/golden"
@@ -346,9 +347,9 @@ func TestConfigParseErrors(t *testing.T) {
 	if _, err := (Config{NumHiddenLayers: 1, NumAttentionHeads: 0, HiddenSize: 8}).Layers(); err == nil {
 		t.Error("Layers accepted 0 heads")
 	}
-	// head_dim * heads wraps to hidden_size: 4 * (2 + 2^62) is 8 mod 2^64,
-	// yet the head_dim is not 8 / 4.
-	wrapped := 2 + 1<<62
+	// head_dim * heads wraps to hidden_size: 4 * (2 + 2^(w-2)) is 8 mod 2^w
+	// for an int of w bits, yet the head_dim is not 8 / 4.
+	wrapped := 2 + 1<<(strconv.IntSize-2)
 	cfg := Config{NumHiddenLayers: 1, NumAttentionHeads: 4, HiddenSize: 8, HeadDim: Optional[int]{Present: true, Value: &wrapped}}
 	if _, err := cfg.Layers(); err == nil {
 		t.Errorf("Layers accepted head_dim %d for hidden_size 8 and 4 heads", wrapped)
