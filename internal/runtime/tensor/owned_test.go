@@ -19,8 +19,12 @@ func TestFromOwnedAliasesData(t *testing.T) {
 	}
 
 	raw := x.RawData()
-	if len(raw) != len(data) || &raw[0] != &data[0] {
-		t.Fatalf("RawData is %d elements at %p, want the %d passed in at %p", len(raw), &raw[0], len(data), &data[0])
+	if len(raw) != len(data) {
+		t.Fatalf("RawData has %d elements, want the %d passed in", len(raw), len(data))
+	}
+
+	if &raw[0] != &data[0] {
+		t.Fatalf("RawData is at %p, want the slice passed in, at %p", &raw[0], &data[0])
 	}
 
 	if shape := x.Shape(); !equalI64(shape, []int64{2, 3}) {

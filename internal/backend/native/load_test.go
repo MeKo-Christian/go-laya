@@ -82,12 +82,13 @@ func TestCheckNamesBoundedAllocs(t *testing.T) {
 }
 
 // TestLoadKeepsOneCopy: load hands each decoded weight to its tensor rather
-// than copying it (PLAN.md B.16). The checkpoint's embedding table is 4 MiB
+// than copying it (PLAN.md B.16). The checkpoint's embedding table is 16 MiB
 // and every other tensor together a few KiB, so what one load allocates is
-// that table, decoded once, plus Float32's read buffer of at most 1 MiB
-// (chunkBytes). A copy of the table would add 4 MiB more.
+// that table, decoded once, plus Float32's read buffer of at most chunkBytes,
+// 1 MiB. A copy of the table would add 16 MiB more. The table is large next
+// to the buffer, so the bound still holds if chunkBytes grows several times.
 func TestLoadKeepsOneCopy(t *testing.T) {
-	const vocab = 1 << 17
+	const vocab = 1 << 19
 	const table = vocab * tinyHidden * 4
 	s := newSynth(1)
 	s.config["vocab_size"] = vocab
@@ -110,16 +111,19 @@ func TestLoadKeepsOneCopy(t *testing.T) {
 	for range 3 {
 		var before, after runtime.MemStats
 		runtime.ReadMemStats(&before)
-		m, err := load(t.Context(), f, path, cfg)
+		_, err := load(t.Context(), f, path, cfg)
 		runtime.ReadMemStats(&after)
 		if err != nil {
 			t.Fatalf("load: %v", err)
 		}
-		runtime.KeepAlive(m)
 		least = min(least, after.TotalAlloc-before.TotalAlloc)
 	}
 	t.Logf("one load allocates %d bytes for a %d-byte embedding table", least, table)
-	if least >= table+table/2 {
+	switch {
+	case least < table:
+		t.Fatalf("one load allocates %d bytes, less than the %d-byte embedding table it decodes: the measurement is broken",
+			least, table)
+	case least >= table+table/2:
 		t.Errorf("one load allocates %d bytes for a %d-byte embedding table, over 1.5 tables: load holds a copy of each weight",
 			least, table)
 	}
