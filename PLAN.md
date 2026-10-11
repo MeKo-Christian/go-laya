@@ -858,7 +858,8 @@ zero-shared-library backend, not a speed play (D8). The facts it needs are in
       every tensor that is neither F16 nor F32 except `temperature`, which may have any dtype.
       A review fix opens the file `O_NONBLOCK` and type-checks the opened descriptor rather than
       the path, so a regular file swapped for a FIFO between the check and the open cannot block
-      (`TestOpenRegularFIFO`). `File.Float32` reads one tensor with `ReadAt` in 1 MiB chunks
+      (`TestOpenRegularFIFO`, since moved with the open to `internal/regularfile` as
+      `TestOpenFIFO`). `File.Float32` reads one tensor with `ReadAt` in 1 MiB chunks
       inside its validated span, checks the context per chunk, and decodes F16 exactly; BF16 is
       rejected (no checkpoint uses it), and `tensor/doc.go` now promises F16 and F32 only.
       `TestF16ToF32Exhaustive` checks all 65536 bit patterns against a decoder written from the

@@ -1,6 +1,6 @@
 //go:build unix
 
-package safetensors
+package regularfile
 
 import (
 	"path/filepath"
@@ -13,16 +13,16 @@ import (
 // Opening a named pipe without a writer must neither block nor succeed. The
 // type check runs on the opened descriptor, with no path-based check before
 // it, so a regular file swapped for a FIFO between a stat and the open is
-// refused too: openRegular is called on the FIFO directly.
-func TestOpenRegularFIFO(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "fifo.safetensors")
+// refused too: Open is called on the FIFO directly.
+func TestOpenFIFO(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fifo")
 	if err := syscall.Mkfifo(path, 0o600); err != nil {
 		t.Skipf("mkfifo: %v", err)
 	}
 
 	done := make(chan error, 1)
 	go func() {
-		f, err := openRegular(path)
+		f, err := Open(path)
 		if err == nil {
 			f.Close()
 		}
@@ -31,9 +31,9 @@ func TestOpenRegularFIFO(t *testing.T) {
 	select {
 	case err := <-done:
 		if err == nil || !strings.Contains(err.Error(), "not a regular file") {
-			t.Fatalf("openRegular(FIFO) = %v, want a not-a-regular-file error", err)
+			t.Fatalf("Open(FIFO) = %v, want a not-a-regular-file error", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("openRegular blocked on a FIFO with no writer")
+		t.Fatal("Open blocked on a FIFO with no writer")
 	}
 }
