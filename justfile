@@ -84,15 +84,18 @@ test-onnx-race count="200":
 
 # Spike S3: the ORT-CPU latency sweep. An iteration costs 0.3-20 s, so the count is
 # fixed rather than left to `go test` to calibrate against a wall-clock budget.
-bench-onnx reps="5" out="build/bench-onnx.txt":
+# suffix is the export file names' (laya-<name><suffix>.onnx): S1's "-dynamo" by
+# default, "" for the int8 exports of `export_onnx.py --int8` (B.5.2), with
+# LAYA_ONNX_DIR pointing at their directory.
+bench-onnx reps="5" out="build/bench-onnx.txt" suffix="-dynamo":
     mkdir -p build
-    LAYA_ONNX_DIR="${LAYA_ONNX_DIR:-{{justfile_directory()}}/build/onnx}" \
+    LAYA_ONNX_DIR="${LAYA_ONNX_DIR:-{{justfile_directory()}}/build/onnx}" LAYA_ONNX_SUFFIX="{{suffix}}" \
         CGO_ENABLED=0 go test -run '^$' -bench 'BenchmarkForward' \
         -benchtime={{reps}}x -timeout 120m -v ./internal/backend/onnx/ 2>&1 | tee {{out}}
     # One process per checkpoint: the reported RSS growth is only meaningful the first
     # time a session is built, and a shared process reports the second one as ~zero.
     for ck in english multilingual typed-decisions; do \
-        LAYA_ONNX_DIR="${LAYA_ONNX_DIR:-{{justfile_directory()}}/build/onnx}" \
+        LAYA_ONNX_DIR="${LAYA_ONNX_DIR:-{{justfile_directory()}}/build/onnx}" LAYA_ONNX_SUFFIX="{{suffix}}" \
         CGO_ENABLED=0 go test -run '^$' -bench "BenchmarkSessionLoad/$ck\$" \
             -benchtime={{reps}}x -timeout 20m ./internal/backend/onnx/ 2>&1 | tee -a {{out}}; \
     done
