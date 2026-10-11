@@ -61,6 +61,34 @@ Usage::
     .venv-ref/bin/python scripts/export_onnx.py --checkpoint english --out build/onnx
     .venv-ref/bin/python scripts/export_onnx.py --all --dynamo --attn sdpa \
         --out build/onnx-sdpa --suffix=-dynamo    # "=": argparse reads -dynamo as a flag
+
+int8 (PLAN.md B.5.1)
+--------------------
+
+``--int8`` does not export. It quantizes an fp32 export that already exists, so the int8
+graph is the fp32 graph that was measured, quantized, and not a fresh 20-minute torch
+re-export that might differ from it::
+
+    .venv-ref/bin/python scripts/export_onnx.py --all --int8 \
+        --from build/onnx --from-suffix=-dynamo --out build/onnx-int8
+
+It reads ``<from>/laya-<name><from-suffix>.onnx`` and writes ``<out>/laya-<name><suffix>.onnx``
+plus ``.onnx.data``: the name the loader looks for, so ``WithONNXDir(out)`` selects it. The
+recipe is ``onnxruntime.quantization.quantize_dynamic`` over ``MatMul`` only, int8
+weights per output channel, uint8 activations quantized at run time, ``MatMulConstBOnly``
+(the attention products of two activations stay fp32), no ``reduce_range``. ``Gather``
+is left alone, so the embedding table stays fp32; it costs no time, and leaving it keeps
+the change confined to the matmuls. The recipe is stamped into the graph's metadata under
+``laya.int8``.
+
+The weights stay in an external-data file even though they fit under the 2 GB protobuf
+limit: Go's header check caps the graph file at 64 MiB (``internal/onnxheader``). The
+source graph is handed to the quantizer loaded, not as a path, because given a path it
+writes a ``-inferred`` copy next to the source, and ``--from`` is read-only. The result
+must load in the Go side's pinned ORT 1.23, so it is held to IR <= 11 and opset <= 23.
+int8 is never the default (D6), and it is not shipped at all: it failed B.5.3's calibration
+thresholds on every checkpoint (BENCHMARKS.md, D33). The flag stays so that the measurement
+can be reproduced.
 """
 
 from __future__ import annotations
@@ -570,6 +598,176 @@ def run_one(
     return report
 
 
+# The int8 recipe (PLAN.md B.5.1). It is fixed here, not exposed as flags, so every int8
+# graph this script writes is the one B.5.3 measured.
+INT8_RECIPE: dict[str, Any] = {
+    "method": "onnxruntime.quantization.quantize_dynamic",
+    "op_types_to_quantize": ["MatMul"],
+    "weight_type": "QInt8",
+    "activation_type": "QUInt8 (dynamic)",
+    "per_channel": True,
+    "reduce_range": False,
+    "MatMulConstBOnly": True,
+}
+INT8_METADATA_KEY = "laya.int8"
+
+# What Go's pinned ORT 1.23.0 loads (internal/onnxheader: maxIRVersion, maxOpset).
+GO_MAX_IR_VERSION, GO_MAX_OPSET = 11, 23
+
+
+def _graph_summary(onnx_path: Path) -> dict[str, Any]:
+    """IR version, opsets, op counts and on-disk sizes of one graph, without its weights."""
+    import onnx
+
+    model = onnx.load(onnx_path.as_posix(), load_external_data=False)
+    ops: dict[str, int] = {}
+    for node in model.graph.node:
+        ops[node.op_type] = ops.get(node.op_type, 0) + 1
+    files = sorted(onnx_path.parent.glob(f"{onnx_path.name}*"))
+    return {
+        "ir_version": model.ir_version,
+        "opsets": {(o.domain or "ai.onnx"): o.version for o in model.opset_import},
+        "ops": dict(sorted(ops.items(), key=lambda kv: (-kv[1], kv[0]))),
+        "files": {p.name: p.stat().st_size for p in files},
+        "bytes": sum(p.stat().st_size for p in files),
+    }
+
+
+def _int8_probe_inputs(seq: int = 48, k: int = 4, batch: int = 2) -> dict[str, np.ndarray]:
+    """The five graph inputs, built without torch, for a quick fp32-vs-int8 comparison.
+
+    Ids 1..997 are inside every checkpoint's vocabulary, as BenchmarkForward's are.
+    """
+    ids = (1 + (np.arange(batch * seq) * 7919) % 997).reshape(batch, seq).astype(np.int64)
+    pos = np.tile(1 + 3 * np.arange(k, dtype=np.int64), (batch, 1))
+    return {
+        "input_ids": ids,
+        "attention_mask": np.ones((batch, seq), dtype=np.int64),
+        "marker_pos": pos,
+        "marker_mask": np.ones((batch, k), dtype=bool),
+        "qtype": np.zeros((batch,), dtype=np.int64),
+    }
+
+
+def _int8_vs_fp32(fp32_path: Path, int8_path: Path) -> dict[str, Any]:
+    """Run both graphs on one batch in this environment's ORT: a smoke check, not B.5.3."""
+    import onnxruntime as ort
+
+    feeds = _int8_probe_inputs()
+    out = {}
+    for label, path in (("fp32", fp32_path), ("int8", int8_path)):
+        sess = ort.InferenceSession(path.as_posix(), providers=["CPUExecutionProvider"])
+        out[label] = dict(zip(OUTPUT_NAMES, sess.run(OUTPUT_NAMES, feeds), strict=True))
+        del sess
+        gc.collect()
+    a, b = out["fp32"]["logits"], out["int8"]["logits"]
+    return {
+        "logits_max_abs_diff": float(np.abs(a - b).max()),
+        "act_logits_max_abs_diff": float(
+            np.abs(out["fp32"]["act_logits"] - out["int8"]["act_logits"]).max()
+        ),
+        "argmax_agree": int((a.argmax(-1) == b.argmax(-1)).sum()),
+        "rows": int(a.shape[0]),
+    }
+
+
+def _load_with_weights(onnx_path: Path) -> Any:
+    """Load a graph and inline its external data, reading it only from ``onnx_path``'s dir.
+
+    ``onnx.load`` refuses an external-data file with more than one hard link, as a guard
+    against a hard-link attack, and the test helpers that stage exports by hard-linking
+    them (``linkExports``) leave exactly that behind. The file is ours, so it is read
+    here directly: every location must be a plain file name beside the graph, and every
+    offset and length must lie inside it.
+    """
+    import onnx
+
+    model = onnx.load(onnx_path.as_posix(), load_external_data=False)
+    blobs: dict[str, bytes] = {}
+    for tensor in onnx.external_data_helper._get_all_tensors(model):
+        if tensor.data_location != onnx.TensorProto.EXTERNAL:
+            continue
+        info = {e.key: e.value for e in tensor.external_data}
+        loc = info["location"]
+        if Path(loc).name != loc or loc in ("", ".", ".."):
+            raise ValueError(f"{onnx_path}: external data {loc!r} is not a file beside the graph")
+        if loc not in blobs:
+            blobs[loc] = (onnx_path.parent / loc).read_bytes()
+        blob = blobs[loc]
+        off = int(info.get("offset", 0))
+        length = int(info.get("length", len(blob) - off))  # absent: to the end of the file
+        if off < 0 or length < 0 or off + length > len(blob):
+            raise ValueError(f"{onnx_path}: {tensor.name} reaches past the end of {loc}")
+        tensor.raw_data = blob[off : off + length]
+        tensor.data_location = onnx.TensorProto.DEFAULT
+        del tensor.external_data[:]
+    return model
+
+
+def quantize_int8(
+    ckpt: Checkpoint, from_dir: Path, from_suffix: str, out_dir: Path, suffix: str = ""
+) -> dict[str, Any]:
+    """B.5.1: quantize one existing fp32 export to int8 with INT8_RECIPE."""
+    import onnx
+    from onnxruntime.quantization import QuantType, quantize_dynamic
+
+    src = from_dir / f"laya-{ckpt.name}{from_suffix}.onnx"
+    dst = out_dir / f"laya-{ckpt.name}{suffix}.onnx"
+    print(f"\n=== {ckpt.name}: int8 {src} -> {dst} ===", flush=True)
+    if not src.exists():
+        raise FileNotFoundError(f"{src}: no fp32 export to quantize (see --from, --from-suffix)")
+    # Comparing resolved directories, not files: dst need not exist yet, and writing into
+    # --from at all would break the promise that it is only read.
+    if out_dir.resolve() == from_dir.resolve():
+        raise ValueError(f"--out {out_dir} is --from; the int8 graph goes into its own directory")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for stale in (dst, dst.with_name(dst.name + ".data")):
+        stale.unlink(missing_ok=True)
+
+    model = _load_with_weights(src)  # in memory, so no path reaches the quantizer
+    # The dynamo exporter's value_info carries shapes from the trace, and one of them (a
+    # RoPE cache slice) contradicts what onnx's shape inference derives: 256 against 1028.
+    # The quantizer re-runs inference and fails on the conflict, so start it from none.
+    # The weights it quantizes are initializers, whose shapes are not in value_info.
+    del model.graph.value_info[:]
+    quantize_dynamic(
+        model,
+        dst.as_posix(),
+        op_types_to_quantize=INT8_RECIPE["op_types_to_quantize"],
+        per_channel=INT8_RECIPE["per_channel"],
+        reduce_range=INT8_RECIPE["reduce_range"],
+        weight_type=QuantType.QInt8,
+        use_external_data_format=True,
+        extra_options={"MatMulConstBOnly": INT8_RECIPE["MatMulConstBOnly"]},
+    )
+    del model
+    gc.collect()
+
+    stamp = {**INT8_RECIPE, "source": src.name, "versions": versions()}
+    graph = onnx.load(dst.as_posix(), load_external_data=False)
+    onnx.helper.set_model_props(
+        graph,
+        {**{p.key: p.value for p in graph.metadata_props}, INT8_METADATA_KEY: json.dumps(stamp)},
+    )
+    onnx.save(graph, dst.as_posix())
+    del graph
+
+    report: dict[str, Any] = {"checkpoint": ckpt.name, "source": src.as_posix()}
+    report["onnx"] = dst.as_posix()
+    report["recipe"] = INT8_RECIPE
+    report["fp32"] = _graph_summary(src)
+    report["int8"] = _graph_summary(dst)
+    ir, opset = report["int8"]["ir_version"], report["int8"]["opsets"].get("ai.onnx", 0)
+    if ir > GO_MAX_IR_VERSION or opset > GO_MAX_OPSET:
+        raise ValueError(
+            f"{dst}: IR {ir} / opset {opset} is past what Go's ORT 1.23 loads "
+            f"(IR <= {GO_MAX_IR_VERSION}, opset <= {GO_MAX_OPSET})"
+        )
+    report["fp32_vs_int8"] = _int8_vs_fp32(src, dst)
+    print(json.dumps({k: report[k] for k in ("int8", "fp32_vs_int8")}, indent=2), flush=True)
+    return report
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -616,7 +814,24 @@ def main() -> int:
         help="write forward-<checkpoint>.json at each of S1's four shapes into this directory "
         "(PLAN.md Task 6.8.1)",
     )
+    ap.add_argument(
+        "--int8",
+        action="store_true",
+        help="quantize the existing fp32 export in --from to int8 instead of exporting "
+        "(PLAN.md B.5.1; never the default)",
+    )
+    ap.add_argument(
+        "--from", dest="from_dir", type=Path, default=None, help="--int8: the fp32 exports"
+    )
+    ap.add_argument(
+        "--from-suffix", default="", help="--int8: the suffix the fp32 file names carry"
+    )
     args = ap.parse_args()
+
+    if args.int8 and args.from_dir is None:
+        ap.error("--int8 quantizes an existing fp32 export; name its directory with --from")
+    if args.int8 and (args.fixture or args.fixture_matrix or args.dynamo or args.reuse):
+        ap.error("--int8 exports nothing, so --dynamo, --reuse and the fixtures do not apply")
 
     selected = (
         CHECKPOINTS
@@ -633,6 +848,11 @@ def main() -> int:
     reports, failures = [], []
     for ckpt in selected:
         try:
+            if args.int8:
+                reports.append(
+                    quantize_int8(ckpt, args.from_dir, args.from_suffix, args.out, args.suffix)
+                )
+                continue
             reports.append(
                 run_one(
                     ckpt,

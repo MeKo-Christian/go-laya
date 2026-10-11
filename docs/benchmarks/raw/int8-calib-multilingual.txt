@@ -1,0 +1,46 @@
+# PLAN.md B.5.3, int8 vs fp32 calibration, checkpoint multilingual. Rerun after PR #59's review: the harness now takes the fp32
+# side from the file the int8 graph's laya.int8 stamp names as its source (the log line below). The JSON results are
+# bit-identical to the first runs, so the baseline was already that graph. Other sessions shared the machine.
+#
+# LAYA_MODELS=<main>/models LAYA_ONNX_DIR=<main>/build/onnx LAYA_ONNX_INT8_DIR=<main>/build/onnx-int8 \
+#   LAYA_EVAL_DIR=<main>/build/eval LAYA_EVAL_CHECKPOINTS=multilingual CGO_ENABLED=0 \
+#   systemd-run --user --scope -q -p MemoryMax=8G -p MemorySwapMax=0 /usr/bin/time -v \
+#   go test -count=1 -run TestInt8Calibration -v -timeout 4h ./internal/evalset/
+#
+# Subsets: docs/benchmarks/eval-manifest.json (sha256-checked). ORT 1.23.0, CPU. The test fails on every cell
+# that misses a threshold of internal/evalset/metrics.go: that failure is B.5.4's verdict. The last line is
+# uptime after the run.
+#
+2026-10-11T12:44:23+02:00
+ 12:44:23 up 16 days, 29 min,  1 user,  load average: 11,61, 11,23, 8,16
+nproc: 12
+go version go1.26.9 linux/amd64
+=== RUN   TestInt8Calibration
+=== RUN   TestInt8Calibration/multilingual
+    int8_test.go:354: multilingual: fp32 baseline <main>/build/onnx/laya-multilingual-dynamo.onnx, the source <main>/build/onnx-int8/laya-multilingual.onnx's laya.int8 stamp records
+    int8_test.go:366: multilingual: 800 cases, both precisions, in 3m53s
+    int8_test.go:380: multilingual choice: int8 fails the thresholds: Brier +0.0281 > 0.02; flip rate 0.133 > 0.05
+    int8_test.go:380: multilingual score: int8 fails the thresholds: flip rate 0.090 > 0.05
+    int8_test.go:380: multilingual noul: int8 fails the thresholds: ECE +0.1637 > 0.02; Brier +0.2485 > 0.02; flip rate 0.135 > 0.05
+    int8_test.go:392: 
+        | checkpoint | set | n | ECE fp32 | ECE int8 | Brier fp32 | Brier int8 | acc fp32 | acc int8 | MAE fp32 | MAE int8 | flips | max Δp | verdict |
+        | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+        | multilingual | **choice** | 400 | 0.2084 | 0.2201 | 0.5084 | 0.5365 | 0.703 | 0.667 | — | — | 53 (13.2%) | 0.9769 | FAIL: Brier +0.0281 > 0.02; flip rate 0.133 > 0.05 |
+        | multilingual | **score** | 200 | 0.6030 | 0.4789 | 1.2714 | 1.1771 | 0.290 | 0.295 | 1.4144 | 1.4983 | 18 (9.0%) | 0.5873 | FAIL: flip rate 0.090 > 0.05 |
+        | multilingual | **noul** | 200 | 0.2549 | 0.4186 | 0.5431 | 0.7916 | 0.635 | 0.510 | — | — | 27 (13.5%) | 0.8336 | FAIL: ECE +0.1637 > 0.02; Brier +0.2485 > 0.02; flip rate 0.135 > 0.05 |
+        | multilingual | ag_news | 200 | 0.0489 | 0.0595 | 0.1209 | 0.1393 | 0.925 | 0.925 | — | — | 8 (4.0%) | 0.9769 |  |
+        | multilingual | emotion | 200 | 0.3887 | 0.4080 | 0.8959 | 0.9338 | 0.480 | 0.410 | — | — | 45 (22.5%) | 0.9221 |  |
+        | multilingual | sst2 | 200 | 0.2549 | 0.4186 | 0.5431 | 0.7916 | 0.635 | 0.510 | — | — | 27 (13.5%) | 0.8336 |  |
+        | multilingual | yelp | 200 | 0.6030 | 0.4789 | 1.2714 | 1.1771 | 0.290 | 0.295 | 1.4144 | 1.4983 | 18 (9.0%) | 0.5873 |  |
+        
+--- FAIL: TestInt8Calibration (233.10s)
+    --- FAIL: TestInt8Calibration/multilingual (233.10s)
+FAIL
+FAIL	github.com/MeKo-Christian/go-laya/internal/evalset	233.116s
+FAIL
+Command exited with non-zero status 1
+	Command being timed: "go test -count=1 -run TestInt8Calibration -v -timeout 4h ./internal/evalset/"
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 3:53.41
+	Maximum resident set size (kbytes): 1140060
+exit 1
+ 12:48:16 up 16 days, 33 min,  1 user,  load average: 14,71, 12,51, 9,33

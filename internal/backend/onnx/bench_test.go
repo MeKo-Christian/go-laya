@@ -31,14 +31,25 @@ import (
 // would happily produce a number, and that number would mean nothing.
 type benchCheckpoint struct {
 	name   string
-	onnx   string
 	maxSeq int
 }
 
 var benchCheckpoints = []benchCheckpoint{
-	{name: "english", onnx: "laya-english-dynamo.onnx", maxSeq: 512},
-	{name: "multilingual", onnx: "laya-multilingual-dynamo.onnx", maxSeq: 1024},
-	{name: "typed-decisions", onnx: "laya-typed-decisions-dynamo.onnx", maxSeq: 1024},
+	{name: "english", maxSeq: 512},
+	{name: "multilingual", maxSeq: 1024},
+	{name: "typed-decisions", maxSeq: 1024},
+}
+
+// benchExport is the file a checkpoint's export is read from in LAYA_ONNX_DIR:
+// laya-<name><LAYA_ONNX_SUFFIX>.onnx, the suffix being S1's "-dynamo" when the
+// variable is unset. `just bench-onnx suffix=` reads the int8 exports (B.5.2), which
+// carry the loader's plain laya-<name>.onnx.
+func benchExport(name string) string {
+	suffix, ok := os.LookupEnv("LAYA_ONNX_SUFFIX")
+	if !ok {
+		suffix = "-dynamo"
+	}
+	return "laya-" + name + suffix + ".onnx"
 }
 
 // benchShape is one (batch, seq, k) the sweep measures. batch is the number of questions
@@ -230,7 +241,7 @@ func BenchmarkForward(b *testing.B) {
 	rt, env := newBenchEnv(b)
 
 	for _, ck := range benchCheckpoints {
-		model, modelErr := findModel(ck.onnx)
+		model, modelErr := findModel(benchExport(ck.name))
 
 		b.Run(ck.name, func(b *testing.B) {
 			if modelErr != nil {
@@ -326,7 +337,7 @@ func BenchmarkSessionLoad(b *testing.B) {
 	rt, env := newBenchEnv(b)
 
 	for _, ck := range benchCheckpoints {
-		model, modelErr := findModel(ck.onnx)
+		model, modelErr := findModel(benchExport(ck.name))
 
 		b.Run(ck.name, func(b *testing.B) {
 			if modelErr != nil {
@@ -384,4 +395,24 @@ func residentKB() int64 {
 	}
 
 	return 0
+}
+
+// TestBenchExportName: the benchmarks read the S1 exports' -dynamo names unless
+// LAYA_ONNX_SUFFIX says otherwise. B.5.2 sets it to "" for the int8 exports,
+// which carry the loader's own laya-<name>.onnx.
+func TestBenchExportName(t *testing.T) {
+	t.Setenv("LAYA_ONNX_SUFFIX", "")
+	if got := benchExport("english"); got != "laya-english.onnx" {
+		t.Errorf(`LAYA_ONNX_SUFFIX="": %q`, got)
+	}
+	t.Setenv("LAYA_ONNX_SUFFIX", "-x")
+	if got := benchExport("multilingual"); got != "laya-multilingual-x.onnx" {
+		t.Errorf(`LAYA_ONNX_SUFFIX="-x": %q`, got)
+	}
+	if err := os.Unsetenv("LAYA_ONNX_SUFFIX"); err != nil {
+		t.Fatal(err)
+	}
+	if got := benchExport("typed-decisions"); got != "laya-typed-decisions-dynamo.onnx" {
+		t.Errorf("unset: %q", got)
+	}
 }

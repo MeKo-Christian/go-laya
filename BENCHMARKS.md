@@ -3,7 +3,9 @@
 Two kinds of numbers live here, and they have different standing.
 
 - **Latency and load costs are measured here**, on CPU, by this port, with their hardware, method
-  and raw transcripts: [Speed — CPU, measured here](#speed--cpu-measured-here).
+  and raw transcripts: [Speed — CPU, measured here](#speed--cpu-measured-here). So is the int8
+  versus fp32 calibration comparison:
+  [int8 dynamic quantization](#int8-dynamic-quantization-planmd-b5--measured-not-shipped).
 - **Accuracy, calibration and option-order figures are upstream's**, copied from upstream's
   `BENCHMARKS.md` at 0.3.4 and not re-measured. That is commit `d113dca`, the one `NOTICE` pins
   (`git show d113dca:BENCHMARKS.md`). Upstream ran them with the Python package and never published
@@ -297,6 +299,200 @@ The Python side is `scripts/bench_ort.py`, which builds `BenchmarkForward`'s exa
 transcripts are `docs/benchmarks/raw/ort-version-gap-balanced.txt` (the evidence) and
 `ort-version-gap.txt` (the first, fixed-order run).
 
+### int8 dynamic quantization (PLAN.md B.5) — measured, not shipped
+
+> **Verdict: int8 is not shipped.** It is faster, 2.0–2.3× per question at 512 tokens, but it fails the calibration
+> thresholds fixed before it was measured, on all three checkpoints. 9–19.5% of the choice and
+> score answers change their argmax. CPU stays fp32 (D6, D33). `scripts/export_onnx.py
+--int8` stays, so that anyone can reproduce the measurement.
+
+PLAN.md R4 makes calibration, not speed, the acceptance criterion: calibrated probabilities are the
+product. B.5 therefore measured both on the same int8 graphs, and the calibration verdict decided.
+
+**The artefact (B.5.1).** `scripts/export_onnx.py --int8 --from build/onnx --from-suffix=-dynamo
+--out build/onnx-int8` quantizes the fp32 dynamo exports above with ORT 1.30.0's `quantize_dynamic`
+in the pinned reference environment. The recipe quantizes every `MatMul` with a constant weight
+(int8 per output channel) and quantizes activations to uint8 at run time. The quantizer also
+rewrites the head's four `Gemm` nodes as `MatMul` and quantizes them. Attention's
+activation-by-activation products and the embedding `Gather` stay fp32. Every graph keeps IR 10 and
+opset 18, so Go's pinned ORT 1.23.0 loads it, and `TestInt8Exports` runs every batch of
+`testdata/logits.jsonl` through each one there.
+
+| checkpoint             | fp32 graph + data | int8 graph + data | quantized `MatMul` | fp32 `MatMul` left |
+| ---------------------- | ----------------- | ----------------- | ------------------ | ------------------ |
+| `laya` (english)       | 1688 MB           | 581 MB            | 124                | 62                 |
+| `laya-multilingual`    | 1290 MB           | 915 MB            | 100                | 49                 |
+| `laya-typed-decisions` | 1688 MB           | 581 MB            | 124                | 62                 |
+
+`laya-multilingual` shrinks least because about 197 M of its 322 M weights are the 256 000-token
+embedding table, which stays fp32.
+
+#### Calibration (B.5.3), the acceptance criterion
+
+**Data.** Fixed, seeded subsets of 200 rows each, drawn by `go run ./cmd/laya-evalfetch` from the
+Hugging Face datasets-server rows API on 2026-10-11 (seed 20261011). The subsets are not checked
+in. [`eval-manifest.json`](docs/benchmarks/eval-manifest.json) is: it records the dataset ids,
+splits, row offsets and each file's sha256, and the harness refuses a file whose sha differs.
+
+| set     | dataset                         | question                                                                    |
+| ------- | ------------------------------- | --------------------------------------------------------------------------- |
+| ag_news | `fancyzhx/ag_news`, test        | choice, 4 options: "What is the topic of this news article?"                |
+| emotion | `dair-ai/emotion` (split), test | choice, 6 options: "Which emotion does the author express?"                 |
+| sst2    | `stanfordnlp/sst2`, validation  | noul: "Is the sentiment of this movie review positive?"                     |
+| yelp    | `Yelp/yelp_review_full`, test   | score, 5 levels: "How many stars does this review give?", 1 star to 5 stars |
+
+**Method.** `TestInt8Calibration` (`internal/evalset`) asks every case through the public API, as a
+caller would opt in: a `Router` over the local checkpoint with `WithONNXDir` set to the fp32
+exports, then to the int8 exports. The inputs are the same for both. The fp32 side is the export
+each int8 graph was quantized from, as the graph's `laya.int8` stamp names it
+(`laya-<name>-dynamo.onnx`), so the two sides are one graph at two precisions; the test fails if
+`LAYA_ONNX_DIR` does not hold that file. It scores the answers as
+upstream's own evaluation notebook does
+(`original/notebooks/laya_finetune_typed_decisions_2xT4_kaggle.ipynb`). It reads the probabilities
+after the checkpoint's temperatures and the four-decimal rounding, exactly as a caller gets them,
+and renormalizes them. The ECE confidence is the largest probability for choice and score, and
+max(p, 1−p) for noul (`calib.ECE`, 15 bins). Brier is over the full distribution (`calib.Brier`).
+A score's prediction is its most probable level. A flip is a case whose prediction differs between
+fp32 and int8. Max Δp is the largest per-option probability difference over every case.
+
+**Thresholds**, fixed in `internal/evalset/metrics.go` and committed before the harness had
+produced a number. They apply per checkpoint and question type, and a cell passes only if all three
+hold:
+
+- int8's ECE is at most **0.02** worse than fp32's;
+- int8's Brier is at most **0.02** worse than fp32's;
+- at most **5%** of the argmaxes flip.
+
+Being better never fails.
+
+| checkpoint             | type (sets)                | n   | ECE fp32 → int8        | Brier fp32 → int8      | accuracy fp32 → int8 | flips      | max Δp | verdict                                               |
+| ---------------------- | -------------------------- | --- | ---------------------- | ---------------------- | -------------------- | ---------- | ------ | ----------------------------------------------------- |
+| `laya`                 | choice (AG News + Emotion) | 400 | 0.181 → 0.173 (-0.008) | 0.475 → 0.493 (+0.018) | 0.715 → 0.708        | 62 (15.5%) | 1.00   | **fail**: flip rate 0.155                             |
+| `laya`                 | score (Yelp)               | 200 | 0.549 → 0.527 (-0.022) | 1.174 → 1.128 (-0.046) | 0.300 → 0.280        | 21 (10.5%) | 0.69   | **fail**: flip rate 0.105                             |
+| `laya`                 | noul (SST-2)               | 200 | 0.500 → 0.478 (-0.022) | 1.000 → 0.953 (-0.046) | 0.500 → 0.515        | 3 (1.5%)   | 0.97   | pass                                                  |
+| `laya-multilingual`    | choice (AG News + Emotion) | 400 | 0.208 → 0.220 (+0.012) | 0.508 → 0.537 (+0.028) | 0.703 → 0.667        | 53 (13.2%) | 0.98   | **fail**: Brier +0.0281; flip rate 0.133              |
+| `laya-multilingual`    | score (Yelp)               | 200 | 0.603 → 0.479 (-0.124) | 1.271 → 1.177 (-0.094) | 0.290 → 0.295        | 18 (9.0%)  | 0.59   | **fail**: flip rate 0.090                             |
+| `laya-multilingual`    | noul (SST-2)               | 200 | 0.255 → 0.419 (+0.164) | 0.543 → 0.792 (+0.248) | 0.635 → 0.510        | 27 (13.5%) | 0.83   | **fail**: ECE +0.1637; Brier +0.2485; flip rate 0.135 |
+| `laya-typed-decisions` | choice (AG News + Emotion) | 400 | 0.091 → 0.099 (+0.008) | 0.422 → 0.424 (+0.002) | 0.725 → 0.723        | 52 (13.0%) | 0.90   | **fail**: flip rate 0.130                             |
+| `laya-typed-decisions` | score (Yelp)               | 200 | 0.337 → 0.406 (+0.069) | 0.910 → 0.947 (+0.037) | 0.375 → 0.285        | 39 (19.5%) | 0.64   | **fail**: ECE +0.0686; Brier +0.0367; flip rate 0.195 |
+| `laya-typed-decisions` | noul (SST-2)               | 200 | 0.487 → 0.448 (-0.039) | 0.966 → 0.860 (-0.105) | 0.500 → 0.505        | 1 (0.5%)   | 0.49   | pass                                                  |
+
+Per dataset:
+
+| checkpoint             | dataset | ECE fp32 → int8 | Brier fp32 → int8 | accuracy fp32 → int8 | score MAE fp32 → int8 | flips      |
+| ---------------------- | ------- | --------------- | ----------------- | -------------------- | --------------------- | ---------- |
+| `laya`                 | ag_news | 0.051 → 0.064   | 0.133 → 0.144     | 0.910 → 0.905        | —                     | 11 (5.5%)  |
+| `laya`                 | emotion | 0.361 → 0.369   | 0.818 → 0.842     | 0.520 → 0.510        | —                     | 51 (25.5%) |
+| `laya`                 | sst2    | 0.500 → 0.478   | 1.000 → 0.953     | 0.500 → 0.515        | —                     | 3 (1.5%)   |
+| `laya`                 | yelp    | 0.549 → 0.527   | 1.174 → 1.128     | 0.300 → 0.280        | 1.353 → 1.363         | 21 (10.5%) |
+| `laya-multilingual`    | ag_news | 0.049 → 0.059   | 0.121 → 0.139     | 0.925 → 0.925        | —                     | 8 (4.0%)   |
+| `laya-multilingual`    | emotion | 0.389 → 0.408   | 0.896 → 0.934     | 0.480 → 0.410        | —                     | 45 (22.5%) |
+| `laya-multilingual`    | sst2    | 0.255 → 0.419   | 0.543 → 0.792     | 0.635 → 0.510        | —                     | 27 (13.5%) |
+| `laya-multilingual`    | yelp    | 0.603 → 0.479   | 1.271 → 1.177     | 0.290 → 0.295        | 1.414 → 1.498         | 18 (9.0%)  |
+| `laya-typed-decisions` | ag_news | 0.143 → 0.143   | 0.152 → 0.154     | 0.915 → 0.910        | —                     | 9 (4.5%)   |
+| `laya-typed-decisions` | emotion | 0.246 → 0.212   | 0.692 → 0.694     | 0.535 → 0.535        | —                     | 43 (21.5%) |
+| `laya-typed-decisions` | sst2    | 0.487 → 0.448   | 0.966 → 0.860     | 0.500 → 0.505        | —                     | 1 (0.5%)   |
+| `laya-typed-decisions` | yelp    | 0.337 → 0.406   | 0.910 → 0.947     | 0.375 → 0.285        | 1.077 → 1.167         | 39 (19.5%) |
+
+What the numbers say:
+
+- **The aggregates hide the damage.** On `laya` and `laya-typed-decisions`, ECE and Brier for
+  choice move by at most 0.018. But 13–15.5% of the choice answers change, and on Emotion it is
+  21.5–25.5%. int8 moves probability mass between close options, and in aggregate the errors it
+  introduces and the errors it removes roughly cancel. A caller gating on a confidence threshold
+  sees different answers on one case in seven.
+- **`laya-multilingual` degrades outright.** Its SST-2 noul loses 0.125 accuracy, with ECE +0.164
+  and Brier +0.248.
+- **The two noul passes measure little.** On SST-2, `laya` and `laya-typed-decisions` already
+  answer P(true) ≈ 0 for almost every review in fp32, positive or not. Accuracy 0.500 is the share
+  of negative reviews. With nothing to lose, int8 cannot lose it. In a spot check on `laya`, eight
+  of these reviews asked as a two-option choice all came out right, while a reworded noul still
+  answered P(true) ≈ 0. So this is the checkpoint's noul head on sentiment, not the harness.
+- **The weight settings are not the cause.** Before B.5.3 ran, four `quantize_dynamic` variants
+  were scored against the fp32 export on the golden batches (`testdata/logits.jsonl`):
+  per-channel or per-tensor weights, with and without `reduce_range`. All four kept only 18–21 of
+  30 argmaxes on `laya` (`docs/benchmarks/raw/int8-recipe-variants-english.txt`). That points at
+  the dynamic quantization of these encoders' activations. Recovering the loss would take a
+  different method, such as static quantization calibrated on real data or keeping the sensitive
+  layers in fp32, and that method would have to pass the same harness.
+
+#### Speed (B.5.2)
+
+**Hardware and method.** These are the S3 laptop and harness above: `just bench-onnx` with five
+timed iterations per cell after one warm-up, ORT 1.23.0, `CGO_ENABLED=0`, one full sweep per
+precision. The int8 sweep ran first (05:49–05:55), and the fp32 sweep ran right after it
+(05:55–06:07). `nproc` was 12, and no other test session ran. The 1-minute load average was 3.6
+at the int8 sweep's start, and the sweeps' own threads raised it to 9–11. The "vs S3" column
+divides S3's idle fp32 p50 from the tables above by the int8 p50.
+
+One question, 512 tokens, 4 options, 8 threads:
+
+| checkpoint             | fp32 p50 | int8 p50 | speedup | vs S3 fp32 (idle) | session load, fp32 → int8 | resident after load, fp32 → int8 |
+| ---------------------- | -------- | -------- | ------- | ----------------- | ------------------------- | -------------------------------- |
+| `laya` (english)       | 1947 ms  | 844 ms   | 2.3×    | 1691 ms → 2.0×    | 1.32 s → 0.58 s           | 1423 → 371 MiB                   |
+| `laya-multilingual`    | 668 ms   | 318 ms   | 2.1×    | 645 ms → 2.0×     | 0.50 s → 0.25 s           | 488 → 133 MiB                    |
+| `laya-typed-decisions` | 1660 ms  | 825 ms   | 2.0×    | 1856 ms → 2.2×    | 1.24 s → 0.64 s           | 1423 → 371 MiB                   |
+
+Other cells of the same two sweeps:
+
+| cell                         | `laya`                | `laya-multilingual`  | `laya-typed-decisions` |
+| ---------------------------- | --------------------- | -------------------- | ---------------------- |
+| 1 thread, 512 tokens         | 3657 → 1512 ms, 2.4×  | 1394 → 637 ms, 2.2×  | 3811 → 1499 ms, 2.5×   |
+| 8 threads, 128 tokens        | 368 → 164 ms, 2.2×    | 225 → 64 ms, 3.5×    | 377 → 180 ms, 2.1×     |
+| 8 threads, 8 questions × 512 | 13668 → 6745 ms, 2.0× | 4924 → 2728 ms, 1.8× | 14067 → 7198 ms, 2.0×  |
+
+The 3.5× on `laya-multilingual` at 128 tokens is a slow fp32 cell (p90 302 ms); S3 measured it at
+143 ms, which gives 2.2×. "Resident after load" is the RSS growth across the first session
+build in a fresh process, before any forward pass, as in S3. ORT keeps the int8 graphs'
+external data mapped, so pages it has not touched yet, such as most of `laya-multilingual`'s fp32
+embedding table, do not count. Treat that column as load cost, not as the working set.
+
+**A first run under load** (04:54–05:14, while two other test sessions shared the machine) gave
+1.5–2.8×; the fp32 sweep ran under more load than the int8 one, which inflated the upper end. Its
+transcripts are kept as `docs/benchmarks/raw/bench-onnx-{int8,fp32}-load.txt`; the numbers above
+are from `bench-onnx-{int8,fp32}-quiet.txt`.
+
+**The speedup changes the throughput story, not the interactive one.** Even if int8 had passed,
+`laya` would still take about 840 ms per question at 512 tokens on this laptop. A batch workload
+would get through about twice as many questions per CPU-hour. Anything with a human waiting on
+it still wants a GPU (B.3).
+
+#### Reproduce
+
+```bash
+# B.5.1: the int8 graphs (reference environment, about 25 s and 7.3 GB peak per checkpoint)
+systemd-run --user --scope -q -p MemoryMax=10G -p MemorySwapMax=0 \
+    .venv-ref/bin/python -I scripts/export_onnx.py --all --int8 \
+    --from build/onnx --from-suffix=-dynamo --out build/onnx-int8
+LAYA_ONNX_INT8_DIR=build/onnx-int8 go test -run TestInt8Exports -v ./internal/backend/onnx/
+
+# B.5.3: the manifest's subsets (network, paced at one request a second), then one process per checkpoint
+go run ./cmd/laya-evalfetch -out build/eval
+LAYA_MODELS=$PWD/models LAYA_ONNX_DIR=build/onnx LAYA_ONNX_INT8_DIR=build/onnx-int8 \
+    LAYA_EVAL_CHECKPOINTS=english systemd-run --user --scope -q -p MemoryMax=8G -p MemorySwapMax=0 \
+    go test -run TestInt8Calibration -v -timeout 4h ./internal/evalset/
+
+# B.5.2: the same sweep over both
+LAYA_ONNX_DIR=build/onnx-int8 just bench-onnx 5 build/bench-onnx-int8.txt ""
+LAYA_ONNX_DIR=build/onnx      just bench-onnx 5 build/bench-onnx-fp32.txt
+```
+
+With the manifest present, `laya-evalfetch` reads the rows it records again, at its offsets, and
+fails if a file's sha256 differs. That would mean the Hub's rows changed and the numbers above no
+longer describe them. Only `-update` draws a new sample and rewrites the manifest.
+`TestInt8Calibration` fails on every cell that misses a threshold, so today it fails on all three
+checkpoints. That failure is B.5.4's verdict.
+
+**Raw transcripts** are in `docs/benchmarks/raw/`:
+
+- `int8-export.json`: the export reports, with op counts, sizes and versions.
+- `int8-go-load.txt`: `TestInt8Exports` on ORT 1.23.0.
+- `int8-calib-{english,multilingual,typed-decisions}.txt` and `int8-calib-results.json`: the
+  calibration runs.
+- `int8-recipe-variants-english.txt`: the recipe comparison.
+- `bench-onnx-int8-quiet.txt` and `bench-onnx-fp32-quiet.txt`: the two sweeps the speed tables
+  are from; `bench-onnx-int8-load.txt` and `bench-onnx-fp32-load.txt`: the first run, under load.
+
 ### Native backend (M8)
 
 > **Idle-machine rerun, 2026-10-10 21:38–21:47.** The headline table is from three sweeps run with
@@ -402,9 +598,11 @@ So, plainly:
   waiting on it wants a GPU execution provider.
 - **Set `IntraOpNumThreads` to the physical core count, not the thread count.** It is free, and it is
   worth 12–26%.
-- The levers left — int8 dynamic quantization, and offering the cheaper checkpoint deliberately — are
-  tracked as PLAN.md Tasks 6.9 and 3.4. Neither is applied by default, and int8 will not be until its
-  effect on ECE and Brier is measured: calibrated probabilities are the product.
+- **int8 dynamic quantization was measured and is not shipped** (PLAN.md B.5, D33). It is 2.0–2.3×
+  faster at 512 tokens, but 9–19.5% of the choice and score answers change, which fails the
+  calibration thresholds on every checkpoint
+  ([details](#int8-dynamic-quantization-planmd-b5--measured-not-shipped)). The lever left is
+  offering the cheaper checkpoint deliberately (Task 3.4), and it is not applied by default.
 
 ---
 
@@ -416,6 +614,8 @@ So, plainly:
 | `laya-multilingual` | 0.314      | **0.106**         |
 
 Both ship over-confident; `laya-multilingual` ships with no fitted temperatures at all. Refitting one temperature per (question type, option count) on held-out data is the single highest-value fix available, and takes ECE below Jev's measured 0.246.
+
+The table above is upstream's. This port's own calibration measurement, int8 against fp32 on public datasets, is under [int8 dynamic quantization](#int8-dynamic-quantization-planmd-b5--measured-not-shipped).
 
 ## Option-order robustness
 

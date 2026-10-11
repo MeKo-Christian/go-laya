@@ -1,0 +1,21 @@
+# PLAN.md B.5.1: each int8 graph opens and runs in Go's pinned ORT 1.23.0 (internal/backend/onnx).
+#
+# LAYA_ONNX_INT8_DIR=<main>/build/onnx-int8 CGO_ENABLED=0 systemd-run --user --scope -q -p MemoryMax=8G -p MemorySwapMax=0 \
+#   go test -count=1 -run TestInt8Exports -v ./internal/backend/onnx/
+#
+# Every batch of testdata/logits.jsonl; argmax and scaled diff are against the recorded fp32 PyTorch logits.
+#
+=== RUN   TestInt8Exports
+    int8_test.go:37: ONNX Runtime 1.23.0 (C API 23) from /usr/local/lib/libonnxruntime.so
+=== RUN   TestInt8Exports/english
+    int8_test.go:99: /mnt/projekte/Code/go-laya/build/onnx-int8/laya-english.onnx: 10 batches, 30 rows; argmax agrees with fp32 PyTorch on 20 of 30; worst max scaled diff: logits 3.13, act_logits 0.575
+=== RUN   TestInt8Exports/multilingual
+    int8_test.go:99: /mnt/projekte/Code/go-laya/build/onnx-int8/laya-multilingual.onnx: 10 batches, 30 rows; argmax agrees with fp32 PyTorch on 26 of 30; worst max scaled diff: logits 1.84, act_logits 0.119
+=== RUN   TestInt8Exports/typed-decisions
+    int8_test.go:99: /mnt/projekte/Code/go-laya/build/onnx-int8/laya-typed-decisions.onnx: 10 batches, 30 rows; argmax agrees with fp32 PyTorch on 22 of 30; worst max scaled diff: logits 1.89, act_logits 0.14
+--- PASS: TestInt8Exports (8.50s)
+    --- PASS: TestInt8Exports/english (3.89s)
+    --- PASS: TestInt8Exports/multilingual (1.55s)
+    --- PASS: TestInt8Exports/typed-decisions (3.05s)
+PASS
+ok  	github.com/MeKo-Christian/go-laya/internal/backend/onnx	8.516s
