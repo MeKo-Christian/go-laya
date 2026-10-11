@@ -258,6 +258,12 @@ checkpoint, and is `ErrNoGraph` otherwise.
   `head_layers`. `ActWidth` uses Python's `len` semantics.
 - **`internal/safetensors`**: the safetensors library's own header rules (≤ 100 MB JSON header,
   known dtypes, spans tiling the buffer exactly, overflow-checked).
+- **`internal/regularfile`**: every checkpoint file the loaders read (`rl_agent_config.json`,
+  `encoder/config.json`, the safetensors header and weights) is opened through `regularfile.Open`.
+  It opens without waiting for a writer and checks the type on the opened descriptor, not on the
+  path beforehand, so a named pipe, device or directory is refused at once instead of blocking in
+  a wait no context can end. Symlinks are followed, since a cache may link to its blobs (Backlog
+  B.13, B.14).
 - CI forbids `encoding/gob` and `os/exec` outside tests, and filesystem `replace` directives.
 
 ## 7. Numerics parity rules
