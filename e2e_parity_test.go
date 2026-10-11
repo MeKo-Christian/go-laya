@@ -3,6 +3,7 @@ package laya
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -212,11 +213,7 @@ func TestE2EParity(t *testing.T) {
 							pPy := calib.Softmax(want[r], k, temp)
 
 							for i := range pPy {
-								d := math.Abs(float64(pGo[i]) - float64(pPy[i]))
-								// A NaN compares false with every bound.
-								if math.IsNaN(d) {
-									d = math.Inf(1)
-								}
+								d := absDiff(float64(pGo[i]), float64(pPy[i]))
 								worst = max(worst, d)
 								if d > be.tol[ck] {
 									t.Errorf("%s %s: p[%d] = %.8g, Python %.8g (diff %.3g > %g)",
@@ -365,10 +362,10 @@ type pyAnswer struct {
 // places, sit at most one step apart. That is also what catches a wrong
 // temperature, which moves no argmax. Score, confidence and act_probability
 // are rounded the same way and get the same one-step bound.
-func compareFormatted(t *testing.T, name string, got Answer, pa pyAnswer) {
+func compareFormatted(t testing.TB, name string, got Answer, pa pyAnswer) {
 	t.Helper()
 	for _, e := range got.Probabilities {
-		if pp, ok := pa.Probabilities[e.Key]; !ok || math.Abs(e.P-pp) > roundStep {
+		if pp, ok := pa.Probabilities[e.Key]; !ok || absDiff(e.P, pp) > roundStep {
 			t.Errorf("%s: probability %s = %v, Python %v", name, e.Key, e.P, pp)
 		}
 	}
@@ -382,25 +379,25 @@ func compareFormatted(t *testing.T, name string, got Answer, pa pyAnswer) {
 		}
 	case "noul":
 		if pa.Noul == nil || (*got.Noul > 0.5) != (*pa.Noul > 0.5) ||
-			math.Abs(*got.Noul-*pa.Noul) > roundStep {
+			absDiff(*got.Noul, *pa.Noul) > roundStep {
 			t.Errorf("%s: noul %v, Python %v", name, *got.Noul, orMissing(pa.Noul))
 		}
 	case "score":
-		if got.Score == nil || pa.Score == nil || math.Abs(*got.Score-*pa.Score) > roundStep {
+		if got.Score == nil || pa.Score == nil || absDiff(*got.Score, *pa.Score) > roundStep {
 			t.Errorf("%s: score %v, Python %v", name, orMissing(got.Score), orMissing(pa.Score))
 		}
 		compareLegend(t, name, got.Legend, pa.Legend)
 	}
 	// Confidence is present for every type, and act_probability in every
 	// answer's action block.
-	if pa.Confidence == nil || math.Abs(got.Confidence-*pa.Confidence) > roundStep {
+	if pa.Confidence == nil || absDiff(got.Confidence, *pa.Confidence) > roundStep {
 		t.Errorf("%s: confidence %v, Python %v", name, got.Confidence, orMissing(pa.Confidence))
 	}
 	var pyAct *float64
 	if pa.Action != nil {
 		pyAct = pa.Action.ActProbability
 	}
-	if pyAct == nil || math.Abs(got.Action.ActProbability-*pyAct) > roundStep {
+	if pyAct == nil || absDiff(got.Action.ActProbability, *pyAct) > roundStep {
 		t.Errorf("%s: act_probability %v, Python %v", name, got.Action.ActProbability, orMissing(pyAct))
 	}
 }
@@ -409,7 +406,7 @@ func compareFormatted(t *testing.T, name string, got Answer, pa pyAnswer) {
 // the same width, every entry within the relative tolerance, and the same
 // argmax, which is what decides the act probability once it saturates. It
 // returns the row's worst relative difference.
-func compareActRow(t *testing.T, name string, r int, got, want []float32, tol float64) float64 {
+func compareActRow(t testing.TB, name string, r int, got, want []float32, tol float64) float64 {
 	t.Helper()
 	if len(got) != len(want) {
 		t.Errorf("%s: act row %d has %d logits, recorded %d", name, r, len(got), len(want))
@@ -417,7 +414,7 @@ func compareActRow(t *testing.T, name string, r int, got, want []float32, tol fl
 	}
 	worst := 0.0
 	for i := range want {
-		d := math.Abs(float64(got[i])-float64(want[i])) / max(math.Abs(float64(want[i])), 1)
+		d := relDiff(float64(got[i]), float64(want[i]))
 		worst = max(worst, d)
 		if d > tol {
 			t.Errorf("%s: act[%d][%d] = %.8g, Python %.8g (relative diff %.3g > %g)",
@@ -430,10 +427,30 @@ func compareActRow(t *testing.T, name string, r int, got, want []float32, tol fl
 	return worst
 }
 
+// absDiff is |got - want|, or +Inf when that is NaN. A NaN compares false
+// with every bound, so without this a NaN output would pass any tolerance.
+func absDiff(got, want float64) float64 {
+	return nanToInf(math.Abs(got - want))
+}
+
+// relDiff is |got - want| / max(|want|, 1), or +Inf when that is NaN, for
+// the reason absDiff gives.
+func relDiff(got, want float64) float64 {
+	return nanToInf(math.Abs(got-want) / max(math.Abs(want), 1))
+}
+
+// nanToInf is d, or +Inf when d is NaN.
+func nanToInf(d float64) float64 {
+	if math.IsNaN(d) {
+		return math.Inf(1)
+	}
+	return d
+}
+
 // compareLegend holds a score answer's legend to Python's. The legend is the
 // caller's criteria, not model output, so it has to match exactly; both sides
 // go through JSON so the comparison sees what Python would have serialized.
-func compareLegend(t *testing.T, name string, got Obj, want map[string]any) {
+func compareLegend(t testing.TB, name string, got Obj, want map[string]any) {
 	t.Helper()
 	if want == nil {
 		t.Errorf("%s: Python has no legend", name)
@@ -470,4 +487,45 @@ func argmax(p []float32) int {
 		}
 	}
 	return best
+}
+
+// errorRecorder is a testing.TB that records Errorf calls instead of failing,
+// so a test can assert that a comparison helper rejects its input.
+type errorRecorder struct {
+	testing.TB
+
+	errs []string
+}
+
+func (r *errorRecorder) Helper() {}
+
+func (r *errorRecorder) Errorf(format string, args ...any) {
+	r.errs = append(r.errs, fmt.Sprintf(format, args...))
+}
+
+// TestCompareRejectsNaN holds the act-logit and formatted comparisons of
+// TestE2EParity to failing on a NaN: it compares false with every bound, so a
+// plain |got-want| > tol passes it, and an argmax that skips it can still
+// land on the recorded index.
+func TestCompareRejectsNaN(t *testing.T) {
+	nan := float32(math.NaN())
+	t.Run("act row", func(t *testing.T) {
+		r := &errorRecorder{TB: t}
+		compareActRow(r, "nan", 0, []float32{1, nan}, []float32{1, 0.5}, 1e-6)
+		if len(r.errs) == 0 {
+			t.Error("compareActRow accepted a NaN act logit")
+		}
+	})
+	t.Run("act probability", func(t *testing.T) {
+		one := 1.0
+		pa := pyAnswer{Confidence: &one}
+		pa.Action = &struct {
+			ActProbability *float64 `json:"act_probability"`
+		}{&one}
+		r := &errorRecorder{TB: t}
+		compareFormatted(r, "nan", Answer{Confidence: 1, Action: Action{ActProbability: math.NaN()}}, pa)
+		if len(r.errs) == 0 {
+			t.Error("compareFormatted accepted a NaN act_probability")
+		}
+	})
 }
