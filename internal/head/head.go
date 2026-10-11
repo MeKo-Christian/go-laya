@@ -159,10 +159,12 @@ func (h *Head) NHead() int {
 // upstream), a marker position at or past S (gather's out-of-bounds
 // RuntimeError) and fewer than two marker columns are errors. The last is
 // what upstream's p.topk(2, -1) (common.py:122) raises on ("selected index k
-// out of range", for kmax 1 and 0 alike); a batch of single-option choice
-// questions gets there. A negative marker position is clamped to 0, as
-// upstream clamps it (common.py:114), so a fill of -1 reads [CLS] exactly as
-// the collator's fill of 0 does, and its logit is MaskFill either way.
+// out of range", for kmax 1 and 0 alike). laya's SystemOne refuses such a
+// batch before any backend runs (ErrTooFewOptions, D32), so this check is
+// defence in depth for a caller that builds the batch itself. A negative
+// marker position is clamped to 0, as upstream clamps it (common.py:114), so
+// a fill of -1 reads [CLS] exactly as the collator's fill of 0 does, and its
+// logit is MaskFill either way.
 func (h *Head) Forward(x *tensor.Tensor, b backend.Batch) (logits, act [][]float32, err error) {
 	return h.forward(x, b, nil)
 }

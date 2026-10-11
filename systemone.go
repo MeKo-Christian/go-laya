@@ -3,6 +3,8 @@ package laya
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/MeKo-Christian/go-laya/internal/prompt"
 	"github.com/MeKo-Christian/go-laya/question"
@@ -19,8 +21,9 @@ const modelName = "laya-rl-agent"
 // back in question order.
 //
 // It fails before running the model on an empty or invalid question set, a
-// state that cannot be serialized, a question with no options, or options
-// that do not all fit into max_len (*OptionBudgetError).
+// state that cannot be serialized, a question with no options, options that
+// do not all fit into max_len (*OptionBudgetError), or a batch in which no
+// question has two or more options (ErrTooFewOptions).
 func (a *Agent) SystemOne(ctx context.Context, state any, qs Questions) (*Result, error) {
 	if err := qs.Validate(); err != nil {
 		// Validate's errors already carry the "laya:" prefix.
@@ -34,6 +37,7 @@ func (a *Agent) SystemOne(ctx context.Context, state any, qs Questions) (*Result
 	// rows of one batch different budgets.
 	maxLen, headMaxLen := a.limits()
 	items := make([]prompt.Item, len(qs))
+	kmax := 0 // the batch's option columns, as Collate pads them
 	for i, nq := range qs {
 		q := question.ToInternal(nq.Q)
 		if err := prompt.CheckCriteria(q); err != nil {
@@ -56,6 +60,12 @@ func (a *Agent) SystemOne(ctx context.Context, state any, qs Questions) (*Result
 			}
 		}
 		items[i] = prompt.Item{IDs: ids, Markers: markers, QType: int64(nq.Q.Type())}
+		kmax = max(kmax, len(markers))
+	}
+	// common.py:122 takes topk(2) over the batch's option columns, so it
+	// raises when no row has two. Refusing here keeps both backends alike.
+	if kmax < 2 {
+		return nil, fmt.Errorf("%w: %s", ErrTooFewOptions, quotedIDs(qs))
 	}
 
 	batch := prompt.Collate(items, a.tok.PADID())
@@ -86,6 +96,15 @@ func (a *Agent) SystemOne(ctx context.Context, state any, qs Questions) (*Result
 		}
 	}
 	return res, nil
+}
+
+// quotedIDs lists the question ids for an error message, each quoted.
+func quotedIDs(qs Questions) string {
+	ids := make([]string, len(qs))
+	for i, nq := range qs {
+		ids[i] = strconv.Quote(nq.ID)
+	}
+	return strings.Join(ids, ", ")
 }
 
 // Predict is SystemOne under upstream's other name (agent.py:345).

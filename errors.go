@@ -72,8 +72,21 @@ var (
 
 	// ErrNoOptions reports a question that renders no options at all: a
 	// choice question with an empty option list. Python gets as far as the
-	// softmax and fails on an empty array (agent.py:306).
+	// softmax and fails on an empty array (agent.py:306), or, when no other
+	// question in the batch has two options, fails earlier at the topk that
+	// ErrTooFewOptions stands for.
 	ErrNoOptions = errors.New("laya: question has no options")
+
+	// ErrTooFewOptions reports a batch in which no question has two or more
+	// options: every question is a choice with one option or a score with
+	// one level, since noul always has two. Upstream's act features take
+	// p.topk(2, -1) over the batch's option columns (common.py:122), which
+	// raises "selected index k out of range" inside the forward pass. SystemOne
+	// refuses it before any backend runs, so that the ONNX and the native
+	// backend fail alike (D32), and wraps it with the question ids. A
+	// one-option question beside one with two or more options still runs, as
+	// upstream's does, and answers its one option at probability 1.
+	ErrTooFewOptions = errors.New("laya: no question has two or more options")
 
 	// ErrInvalidLimits reports a max_len or head_max_len that is not
 	// positive, passed to SetLimits or WithLimits. Python accepts either.
