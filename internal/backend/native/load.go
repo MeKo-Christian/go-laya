@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -305,32 +304,36 @@ func checkNames(f *safetensors.File, cfg encoderConfig, nHead int) error {
 	}
 	want := expectedShapes(cfg, nHead, nAct)
 
-	var missing, unexpected, wrong []string
-	for _, name := range slices.Sorted(maps.Keys(want)) {
+	// Each list keeps only the names its error shows, so a header of a
+	// million names costs the error no more than one of eleven.
+	var missing, unexpected, wrong shortList
+	for name, shape := range want {
 		info, ok := f.Info(name)
 		switch {
 		case !ok:
-			missing = append(missing, name)
-		case !slices.Equal(info.Shape, want[name]):
-			wrong = append(wrong, fmt.Sprintf("%q has shape %v, want %v", name, info.Shape, want[name]))
+			missing.add(name)
+		case !slices.Equal(info.Shape, shape):
+			wrong.add(name)
 		}
 	}
 	for _, name := range names {
 		if _, ok := want[name]; !ok {
-			unexpected = append(unexpected, name)
+			unexpected.add(name)
 		}
 	}
-	slices.Sort(unexpected)
 
 	var errs []error
-	if len(missing) > 0 {
-		errs = append(errs, fmt.Errorf("missing tensors %s", firstFew(quoted(missing))))
+	if missing.n > 0 {
+		errs = append(errs, fmt.Errorf("missing tensors %s", missing.format(strconv.Quote)))
 	}
-	if len(unexpected) > 0 {
-		errs = append(errs, fmt.Errorf("unexpected tensors %s", firstFew(quoted(unexpected))))
+	if unexpected.n > 0 {
+		errs = append(errs, fmt.Errorf("unexpected tensors %s", unexpected.format(strconv.Quote)))
 	}
-	if len(wrong) > 0 {
-		errs = append(errs, fmt.Errorf("tensors of the wrong shape: %s", firstFew(wrong)))
+	if wrong.n > 0 {
+		errs = append(errs, fmt.Errorf("tensors of the wrong shape: %s", wrong.format(func(name string) string {
+			info, _ := f.Info(name)
+			return fmt.Sprintf("%q has shape %v, want %v", name, info.Shape, want[name])
+		})))
 	}
 	return errors.Join(errs...)
 }
@@ -339,21 +342,41 @@ func checkNames(f *safetensors.File, cfg encoderConfig, nHead int) error {
 // hostile header can hold a million names, and the error should not.
 const maxListed = 10
 
-// quoted is names, each %q-quoted.
-func quoted(names []string) []string {
-	out := make([]string, len(names))
-	for i, n := range names {
-		out[i] = strconv.Quote(n)
-	}
-	return out
+// shortList counts the names added to it and keeps the maxListed least of
+// them, in order. Keeping the least rather than the first makes the error
+// the same whatever order the names come in, without collecting and sorting
+// them all.
+type shortList struct {
+	n     int
+	least []string
 }
 
-// firstFew joins the first maxListed items and counts the rest.
-func firstFew(items []string) string {
-	if len(items) <= maxListed {
-		return strings.Join(items, ", ")
+// add counts name and keeps it if it is among the maxListed least so far.
+func (l *shortList) add(name string) {
+	l.n++
+	i, _ := slices.BinarySearch(l.least, name)
+	if i >= maxListed {
+		return
 	}
-	return fmt.Sprintf("%s and %d more", strings.Join(items[:maxListed], ", "), len(items)-maxListed)
+	if l.least == nil {
+		l.least = make([]string, 0, maxListed+1)
+	}
+	l.least = slices.Insert(l.least, i, name)
+	if len(l.least) > maxListed {
+		l.least = l.least[:maxListed]
+	}
+}
+
+// format joins the kept names, each through item, and counts the rest.
+func (l *shortList) format(item func(string) string) string {
+	items := make([]string, len(l.least))
+	for i, name := range l.least {
+		items[i] = item(name)
+	}
+	if rest := l.n - len(l.least); rest > 0 {
+		return fmt.Sprintf("%s and %d more", strings.Join(items, ", "), rest)
+	}
+	return strings.Join(items, ", ")
 }
 
 // layerIndices returns the layer numbers N that names hold under
