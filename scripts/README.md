@@ -235,3 +235,41 @@ For each checkpoint the script reports the parameter count, eager-vs-sdpa and
 fused-vs-reference-head differences, the activation op counts in the exported graph, and
 the max absolute difference between ONNX Runtime and PyTorch at each of the four shapes.
 Measured numbers live in `PLAN.md` under Spike S1.
+
+### int8 (PLAN.md B.5)
+
+`--int8` does not export. It quantizes an fp32 export that already exists, so the int8 graph is
+the measured fp32 graph, quantized, and not a fresh 20-minute torch export that might differ from
+it. Run it in the reference environment, under a memory cap: quantizing a ModernBERT-large export
+peaks at about 7.3 GB.
+
+```bash
+systemd-run --user --scope -q -p MemoryMax=10G -p MemorySwapMax=0 \
+    .venv-ref/bin/python -I scripts/export_onnx.py --all --int8 \
+    --from build/onnx --from-suffix=-dynamo --out build/onnx-int8
+```
+
+It reads `<from>/laya-<name><from-suffix>.onnx` and writes `<out>/laya-<name>.onnx` plus
+`laya-<name>.onnx.data`, the name the loader reads, so `WithONNXDir("build/onnx-int8")` (or
+`LAYA_ONNX_DIR`) selects it. `--out` must not be `--from`. The recipe is fixed in the script
+(`INT8_RECIPE`) and stamped into each graph's metadata under `laya.int8`:
+`quantize_dynamic` over `MatMul` only, int8 weights per output channel, uint8 activations
+quantized at run time, `MatMulConstBOnly` (the attention products of two activations stay fp32),
+no `reduce_range`. `Gather` is left alone, so the embedding table stays fp32.
+
+Three details are deliberate:
+
+- The weights stay in an external-data file even though they would fit under the 2 GB protobuf
+  limit: Go's header check (`internal/onnxheader`) caps the graph file at 64 MiB.
+- The source is handed to the quantizer loaded, not as a path. Given a path, `quantize_dynamic`
+  writes a `-inferred` copy next to its input, and `--from` is only read. The script also reads
+  the external data itself, because `onnx.load` refuses a data file with more than one hard link,
+  which is what the test helpers that stage exports by hard-linking leave behind.
+- The dynamo exporter's `value_info` holds a trace-time shape (256) that onnx's shape inference
+  contradicts (1028), and the quantizer re-runs inference, so `value_info` is cleared first. The
+  weights it quantizes are initializers, whose shapes are not in `value_info`.
+
+The result is held to what Go's ORT 1.23 loads (IR ≤ 11, opset ≤ 23), and a one-batch fp32
+versus int8 comparison in this environment's ORT goes into the report. That comparison is a smoke
+check; the calibration verdict is `BENCHMARKS.md`'s ("int8 dynamic quantization"), and int8 is
+never the default (D6, D33).
