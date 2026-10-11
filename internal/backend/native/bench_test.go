@@ -121,17 +121,34 @@ func BenchmarkForward(b *testing.B) {
 			be := benchOpen(b, golden.CheckpointDir(root, ck))
 			b.Run(fmt.Sprintf("workers=%d", benchRefWorkers), func(b *testing.B) {
 				b.Run(benchRefShape.String(), func(b *testing.B) {
-					benchForward(b, be, benchRefShape, benchIDSpan)
+					benchForward(b, be, benchRefShape, benchIDSpan, benchRefWorkers)
 				})
 			})
 		})
 	}
 }
 
-// benchForward times Forward on sh's batch at benchRefWorkers kernel workers
-// and reports p50 and p90, as S3's benchShapeRun does: the machine is a 15 W
-// part that throttles, so the spread is itself a result, and upstream quotes
-// p50.
+// BenchmarkForwardDefaultWorkers is BenchmarkForward at the kernels' default
+// worker count instead of S3's 8: the count every caller of laya.Open gets,
+// since tensor is internal and nothing outside the module can change it.
+func BenchmarkForwardDefaultWorkers(b *testing.B) {
+	root := golden.SkipWithoutModels(b)
+	for _, ck := range benchCheckpoints {
+		b.Run(ck, func(b *testing.B) {
+			be := benchOpen(b, golden.CheckpointDir(root, ck))
+			b.Run("workers=default", func(b *testing.B) {
+				b.Run(benchRefShape.String(), func(b *testing.B) {
+					benchForward(b, be, benchRefShape, benchIDSpan, 0)
+				})
+			})
+		})
+	}
+}
+
+// benchForward times Forward on sh's batch at workers kernel workers, or at
+// the default for 0, and reports p50 and p90, as S3's benchShapeRun does:
+// the machine is a 15 W part that throttles, so the spread is itself a
+// result, and upstream quotes p50.
 //
 // One untimed Forward goes first, as S3's does. The native backend has no
 // arena or graph optimisation to warm, but the first pass still faults in
@@ -139,11 +156,13 @@ func BenchmarkForward(b *testing.B) {
 // benchmark is called once with N=1 before the real run, which here is an
 // extra two passes of tens of seconds each, while b.Loop runs the function
 // once.
-func benchForward(b *testing.B, be *Backend, sh benchShape, span int) {
+func benchForward(b *testing.B, be *Backend, sh benchShape, span, workers int) {
 	b.Helper()
-	prev := tensor.Workers()
-	tensor.SetWorkers(benchRefWorkers)
-	b.Cleanup(func() { tensor.SetWorkers(prev) })
+	if workers > 0 {
+		prev := tensor.Workers()
+		tensor.SetWorkers(workers)
+		b.Cleanup(func() { tensor.SetWorkers(prev) })
+	}
 	b.Logf("GOMAXPROCS=%d, %d kernel workers", runtime.GOMAXPROCS(0), tensor.Workers())
 
 	in := newBenchBatch(sh, span)
@@ -307,7 +326,7 @@ func TestBenchHarness(t *testing.T) {
 
 	t.Run("forward", func(t *testing.T) {
 		r := testing.Benchmark(func(b *testing.B) {
-			benchForward(b, benchOpen(b, dir), smoke, tinyVocab-1)
+			benchForward(b, benchOpen(b, dir), smoke, tinyVocab-1, benchRefWorkers)
 		})
 		if r.N != 3 {
 			t.Fatalf("%d timed iterations, want 3: the harness failed", r.N)

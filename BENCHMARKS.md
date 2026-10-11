@@ -589,6 +589,28 @@ the runtime has not returned the freed copies to the OS when `Open` returns; the
 before B.16, counts them. Other test sessions shared the machine (1-minute load average 10–14), so
 the load times in that transcript, `docs/benchmarks/raw/bench-native-load-b16.txt`, do not compare.
 
+**The default worker count (PLAN.md B.18).** The table above runs at `tensor.SetWorkers(8)`, S3's
+setting. A caller of `laya.Open` cannot call it, since the package is internal, and the kernels
+used to default to one worker, so every real caller ran single-threaded. They now default to
+`GOMAXPROCS` at start-up (D34). `BenchmarkForwardDefaultWorkers` is the reference cell at whatever
+the default is. One test binary without the change and one with it, interleaved per checkpoint, three
+timed passes each under an 8 GB cap, `GOMAXPROCS=12`:
+
+| checkpoint             | default before: 1 worker | default after: 12 workers | speedup |
+| ---------------------- | ------------------------ | ------------------------- | ------- |
+| `laya`                 | 35254 ms                 | 10822 ms                  | 3.3×    |
+| `laya-multilingual`    | 10192 ms                 | 3939 ms                   | 2.6×    |
+| `laya-typed-decisions` | 31378 ms                 | 9076 ms                   | 3.5×    |
+
+These are p50s **under uncontrolled, unequal load**: other sessions shared the machine, and the
+1-minute load average at the start of the before/after runs was 10.18/4.11 for `laya`, 10.75/10.29
+for `laya-multilingual` and 7.60/3.48 for `laya-typed-decisions`. The ratio is indicative, not a
+bound either way: contention can slow a 12-worker run more than a 1-worker run, and the lighter
+load in the "after" runs favours them. `laya-multilingual`, where both runs started at about the
+same load, still shows 2.6×. The "after" column sits within 12% of the 8-worker idle table above.
+No result changes: every output of `Linear` and `MatMul` is one dot product however the work is
+split (`TestKernelsSameBitsAnyWorkers`).
+
 **Raw transcripts.**
 
 - **Idle rerun:**
@@ -600,6 +622,8 @@ the load times in that transcript, `docs/benchmarks/raw/bench-native-load-b16.tx
     fresh `BenchmarkSessionLoad`.
 - **B.16, peak memory at load:** `bench-native-load-b16.txt`, `BenchmarkLoad` before and after,
   interleaved.
+- **B.18, the default worker count:** `bench-native-default-workers-b18.txt`,
+  `BenchmarkForwardDefaultWorkers` before and after, interleaved.
 
 Every process is headed by its `uptime`.
 `bench-native-pprof-typed-decisions.txt` is the profile's top 15.

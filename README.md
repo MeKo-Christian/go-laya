@@ -69,7 +69,8 @@ checkpoint's own `model.safetensors` in pure Go on the CPU, and `Open` downloads
 agrees with PyTorch within 4e-6 on all golden cases (PLAN Task 8.8). In the one cell measured, one
 question of 512 tokens and four options on an i7-1255U with 8 workers, it took 5–6× as long as
 ONNX Runtime (Task 8.9, [BENCHMARKS.md](BENCHMARKS.md)); other lengths, batches and CPUs are
-unmeasured.
+unmeasured. The kernels use one worker per `GOMAXPROCS` by default; set that environment variable
+to use fewer cores ([D34][later]).
 
 ---
 

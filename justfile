@@ -113,7 +113,7 @@ bench-native reps="5" out="build/bench-native.txt":
         for ck in english multilingual typed-decisions; do \
             echo "== $bench/$ck: $(uptime)" | tee -a {{out}}; \
             systemd-run --user --scope -q -p MemoryMax=8G -p MemorySwapMax=0 \
-                go test -run '^$' -bench "$bench/$ck\$" -benchtime={{reps}}x \
+                go test -run '^$' -bench "^$bench\$/^$ck\$" -benchtime={{reps}}x \
                 -timeout 60m -v ./internal/backend/native/ 2>&1 | tee -a {{out}}; \
         done; \
     done

@@ -30,19 +30,19 @@ finished tasks cited in code comments refer to that history.
 Tick a box only when the work is committed and `just ci` is green. A milestone is done when every
 box under it is ticked.
 
-| Milestone                                                       | Delivers                                                | Status                     |
-| --------------------------------------------------------------- | ------------------------------------------------------- | -------------------------- |
-| [M0 — Scaffolding](#m0--scaffolding)                            | Go module, tooling, CI, frozen Python, `Version`        | ✅ done                    |
-| [Spikes S1–S3](#3-spikes)                                       | ONNX export, binding choice, latency floor              | ✅ done                    |
-| [M1 — Reference harness](#m1--the-python-reference-harness)     | `testdata/*.jsonl` golden vectors                       | ✅ done                    |
-| [M2 — Tier-1 core](#m2--tier-1-core)                            | `jsonx`, `lang`, `mailtext`, `presets`, render          | ✅ done                    |
-| [M3 — Router](#m3--router)                                      | `Route`, model registry, LRU                            | ✅ done                    |
-| [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done                    |
-| [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done                    |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                    |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | ✅ done                    |
-| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | 🟡 B.1, B.2, B.5–B.15 done |
-| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ✅ done                    |
+| Milestone                                                       | Delivers                                                | Status                           |
+| --------------------------------------------------------------- | ------------------------------------------------------- | -------------------------------- |
+| [M0 — Scaffolding](#m0--scaffolding)                            | Go module, tooling, CI, frozen Python, `Version`        | ✅ done                          |
+| [Spikes S1–S3](#3-spikes)                                       | ONNX export, binding choice, latency floor              | ✅ done                          |
+| [M1 — Reference harness](#m1--the-python-reference-harness)     | `testdata/*.jsonl` golden vectors                       | ✅ done                          |
+| [M2 — Tier-1 core](#m2--tier-1-core)                            | `jsonx`, `lang`, `mailtext`, `presets`, render          | ✅ done                          |
+| [M3 — Router](#m3--router)                                      | `Route`, model registry, LRU                            | ✅ done                          |
+| [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done                          |
+| [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done                          |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                          |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | ✅ done                          |
+| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | 🟡 B.1, B.2, B.5–B.15, B.18 done |
+| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ✅ done                          |
 
 **Critical path to 1.0:** M7 (loader → `SystemOne` → answer parity → e2e parity → README). The
 Backlog and M8 do not gate 1.0.
@@ -820,6 +820,35 @@ build/diff-tokenizer.txt` exits 0: en "mismatching: 85", "accepted (B.2 NFC devi
       `OpenFS` takes an `fs.FS`, so the check must work on an `fs.File`'s `Stat` or move to
       `tokenizer.Open`. A FIFO test per reader, modelled on `TestReadHeaderFIFO`. Found in PR
       #60's review (2026-10-11).
+- [x] **B.18** Run the native kernels on every core by default. `internal/runtime/tensor` came from
+      go-pocket-tts with one worker as the default, and `tensor.SetWorkers` is internal, so every
+      caller of `laya.Open` on the native backend ran single-threaded; Task 8.9's numbers were taken
+      at `SetWorkers(8)`. Default to `GOMAXPROCS` at start-up, as `github.com/cwbudde/algo-tensor`
+      does, without changing any result. Found while comparing the kernels with algo-tensor
+      (2026-10-11).
+      (2026-10-11) `tensor.Workers()` defaults to `GOMAXPROCS` at start-up (D34);
+      `SetWorkers(n ≤ 1)` still means one worker. `TestWorkersDefault` failed first
+      (`Workers() = 1 by default, want GOMAXPROCS 11`), then passed; `TestKernelsSameBitsAnyWorkers`
+      holds `Linear` (both split paths) and `MatMul` to the same bits at 1, 2, 3, 7 and
+      `GOMAXPROCS` workers. `BenchmarkForwardDefaultWorkers` at the 8.9 cell, before and after,
+      interleaved, under uncontrolled, unequal load (1-minute load 3.5–10.8): english
+      35254 → 10822 ms p50, multilingual 10192 → 3939 ms, typed-decisions 31378 → 9076 ms
+      (`BENCHMARKS.md`, `docs/benchmarks/raw/bench-native-default-workers-b18.txt`).
+- [ ] **B.19** Replace `internal/runtime/tensor` and `internal/runtime/ops` with
+      `github.com/cwbudde/algo-tensor`, the same kernels shared with go-whistle and go-pocket-tts.
+      Every identifier go-laya uses exists there with the same signature. Before the switch,
+      algo-tensor needs go-laya's `Narrow` overflow fix and `FromOwned` (B.16); after it,
+      algo-tensor's parallel `MatMulTransB` and shared worker budget come for free. Record the
+      dependency as a decision, keep `NOTICE` honest about what moved, and show the switch changes
+      no bit: the native goldens (`TestOpenNativeGolden`), `TestKernelsSameBitsAnyWorkers` and the
+      8.9 benchmark before and after. `ops.Attention` broadcasts differing leading dimensions there
+      where go-laya's errors; go-laya does not call it, so say so rather than port the difference.
+- [ ] **B.20** A cache-blocked AVX2 GEMM behind `tensor.Linear` on amd64, written in algo-tensor so
+      all three consumers gain. A profile puts 87% of native CPU time in `Linear`, which computes
+      one dot product per output and streams the whole weight matrix again for every token
+      (`BENCHMARKS.md`, Task 8.9). arm64 already has a 4×4 NEON block. It must keep every bit, or
+      be a recorded numerics change in algo-tensor and a new golden run here. Measure against
+      Task 8.9's cell. Depends on B.19.
 
 ### M8 — Pure-Go native backend (after 1.0)
 

@@ -305,13 +305,16 @@ func TestTemperatureAnyDType(t *testing.T) {
 // (backend.Backend). Under -race, eight goroutines run their own batches at
 // once, and each result must equal the same batch run alone.
 //
-// It runs twice: at the default single kernel worker, and with
+// It runs twice: at a single kernel worker, and with
 // tensor.SetWorkers(4) on batches long enough that tensor.Linear crosses its
 // parallel threshold of 2^18 multiply-adds (nn_ops.go) on Wqkv (1440 tokens
 // x 24 x 8) and the head's linear1, so the concurrent calls also fan out
 // through the kernels' own goroutines (runtime.go, parallelFor).
 func TestForwardConcurrent(t *testing.T) {
 	t.Run("one worker", func(t *testing.T) {
+		prev := tensor.Workers()
+		tensor.SetWorkers(1)
+		t.Cleanup(func() { tensor.SetWorkers(prev) })
 		forwardConcurrently(t, func(i int) backend.Batch {
 			b := tinyBatch()
 			b.QType = []int64{int64(i % 3), int64((i + 1) % 3)}

@@ -1,23 +1,24 @@
 package tensor
 
 import (
+	"runtime"
 	"sync"
 	"sync/atomic"
 )
 
 // workers controls goroutine parallelism for tensor math kernels such as
-// Linear and MatMul. Values <= 1 disable parallel execution.
-var workers = newDefaultWorkers()
+// Linear and MatMul. 0, the default, stands for defaultWorkers; 1 disables
+// parallel execution.
+var workers atomic.Int32
 
-func newDefaultWorkers() *atomic.Int32 {
-	w := new(atomic.Int32)
-	w.Store(1)
-
-	return w
-}
+// defaultWorkers is GOMAXPROCS at start-up, as in github.com/cwbudde/algo-tensor.
+// It is read once: GOMAXPROCS(0) takes the scheduler's lock, which every
+// kernel call would otherwise contend for.
+var defaultWorkers = max(1, runtime.GOMAXPROCS(0))
 
 // SetWorkers sets the maximum number of goroutines used by tensor kernels.
-// n <= 1 disables kernel parallelism.
+// n <= 1 disables kernel parallelism. The default is GOMAXPROCS at
+// start-up.
 func SetWorkers(n int) {
 	const maxInt32 = int(^uint32(0) >> 1)
 
@@ -35,7 +36,7 @@ func SetWorkers(n int) {
 func getWorkers() int {
 	n := int(workers.Load())
 	if n < 1 {
-		return 1
+		return defaultWorkers
 	}
 
 	return n
