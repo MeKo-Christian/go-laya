@@ -813,6 +813,13 @@ build/diff-tokenizer.txt` exits 0: en "mismatching: 85", "accepted (B.2 NFC devi
       `internal/runtime/tensor` already has the unexported `newOwned`, which takes ownership;
       expose an owning constructor and use it in `load`. Measure peak RSS at `Open` before and
       after. Found in PR #49's review, finding 5 (2026-10-11).
+- [ ] **B.17** Open the tokenizer files and the ONNX model as regular files only, as B.13 and B.14
+      did for the config and safetensors files. `tokenizer.OpenFS` reads `tokenizer.json` and
+      `tokenizer_config.json` with `fs.ReadFile`, and `internal/onnxheader.Read` reads the model
+      with `os.ReadFile` before ORT opens the path, so a named pipe at any of them blocks `Open`.
+      `OpenFS` takes an `fs.FS`, so the check must work on an `fs.File`'s `Stat` or move to
+      `tokenizer.Open`. A FIFO test per reader, modelled on `TestReadHeaderFIFO`. Found in PR
+      #60's review (2026-10-11).
 
 ### M8 — Pure-Go native backend (after 1.0)
 
