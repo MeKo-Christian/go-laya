@@ -66,7 +66,18 @@ func (m *Manifest) Entry(name string) (Entry, bool) {
 	return m.Datasets[i], true
 }
 
-// LoadManifest reads a manifest, refusing fields it does not know.
+// Path returns e's file inside the subset directory dir. The manifest must
+// name a plain file there: a path out of dir (../x, a/b, /x) is an error, so
+// neither reading nor writing a subset can reach a file outside it.
+func (e Entry) Path(dir string) (string, error) {
+	if e.File == "" || filepath.Base(e.File) != e.File || e.File == "." || e.File == ".." {
+		return "", fmt.Errorf("evalset: %s: file %q is not a plain name inside the subset directory", e.Name, e.File)
+	}
+	return filepath.Join(dir, e.File), nil
+}
+
+// LoadManifest reads a manifest, refusing fields it does not know and a
+// dataset whose file is not a plain name (see Entry.Path).
 func LoadManifest(path string) (*Manifest, error) {
 	// #nosec G304 -- a developer-supplied path to the committed manifest.
 	b, err := os.ReadFile(path)
@@ -78,6 +89,11 @@ func LoadManifest(path string) (*Manifest, error) {
 	var m Manifest
 	if err := dec.Decode(&m); err != nil {
 		return nil, fmt.Errorf("evalset: manifest %s: %w", path, err)
+	}
+	for _, e := range m.Datasets {
+		if _, err := e.Path(""); err != nil {
+			return nil, fmt.Errorf("evalset: manifest %s: %w", path, err)
+		}
 	}
 	return &m, nil
 }
@@ -115,14 +131,14 @@ func WriteSubset(path string, rows []Row) (string, error) {
 // before anything is parsed (ErrChecksum otherwise), and its rows must be
 // e.Offsets, in order.
 func ReadSubset(dir string, e Entry) ([]Row, error) {
-	if e.File == "" || filepath.Base(e.File) != e.File || e.File == "." || e.File == ".." {
-		return nil, fmt.Errorf("evalset: %s: file %q is not a plain name inside the subset directory", e.Name, e.File)
+	path, err := e.Path(dir)
+	if err != nil {
+		return nil, err
 	}
 	if e.SHA256 == "" {
 		return nil, fmt.Errorf("evalset: %s: the manifest records no sha256", e.Name)
 	}
-	path := filepath.Join(dir, e.File)
-	// #nosec G304 G703 -- e.File is checked above to be a plain name in dir.
+	// #nosec G304 G703 -- Path holds e.File to a plain name in dir.
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("evalset: %s: %w", e.Name, err)

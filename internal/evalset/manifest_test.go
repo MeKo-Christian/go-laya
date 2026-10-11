@@ -139,3 +139,38 @@ func TestWriteSubset(t *testing.T) {
 		t.Errorf("sha = %s, want %x", sum, want)
 	}
 }
+
+// TestEntryPath is the one check every reader and writer of a subset file
+// goes through: the manifest names a file inside the subset directory, never
+// a path out of it.
+func TestEntryPath(t *testing.T) {
+	dir := t.TempDir()
+	if got, err := (Entry{Name: "sst2", File: "sst2.jsonl"}).Path(dir); err != nil || got != filepath.Join(dir, "sst2.jsonl") {
+		t.Errorf("Path(sst2.jsonl) = %q, %v", got, err)
+	}
+	for _, file := range []string{"", ".", "..", "../x", "a/b", "/etc/passwd"} {
+		if got, err := (Entry{Name: "sst2", File: file}).Path(dir); err == nil {
+			t.Errorf("Path(%q) = %q, want an error", file, got)
+		}
+	}
+}
+
+// TestLoadManifestRejectsPaths: a manifest naming a file outside the subset
+// directory is refused when it is read, before laya-evalfetch fetches or
+// writes anything for it.
+func TestLoadManifestRejectsPaths(t *testing.T) {
+	for _, file := range []string{"../x.jsonl", "a/b.jsonl", "/tmp/x.jsonl", ""} {
+		t.Run(file, func(t *testing.T) {
+			dir := t.TempDir()
+			e := writeFixture(t, dir)
+			e.File = file
+			path := filepath.Join(dir, "manifest.json")
+			if err := WriteManifest(path, Manifest{Source: RowsAPI, Seed: 1, Datasets: []Entry{e}}); err != nil {
+				t.Fatal(err)
+			}
+			if m, err := LoadManifest(path); err == nil {
+				t.Fatalf("LoadManifest = %+v, want an error for file %q", m, file)
+			}
+		})
+	}
+}
