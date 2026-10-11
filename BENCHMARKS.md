@@ -301,7 +301,7 @@ transcripts are `docs/benchmarks/raw/ort-version-gap-balanced.txt` (the evidence
 
 ### int8 dynamic quantization (PLAN.md B.5) — measured, not shipped
 
-> **Verdict: int8 is not shipped.** It is faster, 1.5–2.8× per question at 512 tokens, but it fails the calibration
+> **Verdict: int8 is not shipped.** It is faster, 2.0–2.3× per question at 512 tokens, but it fails the calibration
 > thresholds fixed before it was measured, on all three checkpoints. 9–19.5% of the choice and
 > score answers change their argmax. CPU stays fp32 (D6, D33). `scripts/export_onnx.py
 --int8` stays, so that anyone can reproduce the measurement.
@@ -415,44 +415,44 @@ What the numbers say:
 
 #### Speed (B.5.2)
 
-> **Under load — a quiet rerun follows.** Two other test sessions shared the machine. Each run is
-> headed by its `uptime`.
-
 **Hardware and method.** These are the S3 laptop and harness above: `just bench-onnx` with five
 timed iterations per cell after one warm-up, ORT 1.23.0, `CGO_ENABLED=0`, one full sweep per
-precision. The int8 sweep ran first (04:54–05:00), and the fp32 sweep ran right after it
-(05:00–05:14). `nproc` was 12. The 1-minute load average was 9.7 at the int8 sweep's start and 9.9
-at its end, and the fp32 sweep's ran from 9.9 to 16.8. **The fp32 sweep therefore ran under more
-load, which inflates the speedup.** The "vs S3" column divides S3's idle fp32 p50 from the tables
-above by the int8 p50, which is a conservative bound.
+precision. The int8 sweep ran first (05:49–05:55), and the fp32 sweep ran right after it
+(05:55–06:07). `nproc` was 12, and no other test session ran. The 1-minute load average was 3.6
+at the int8 sweep's start, and the sweeps' own threads raised it to 9–11. The "vs S3" column
+divides S3's idle fp32 p50 from the tables above by the int8 p50.
 
 One question, 512 tokens, 4 options, 8 threads:
 
 | checkpoint             | fp32 p50 | int8 p50 | speedup | vs S3 fp32 (idle) | session load, fp32 → int8 | resident after load, fp32 → int8 |
 | ---------------------- | -------- | -------- | ------- | ----------------- | ------------------------- | -------------------------------- |
-| `laya` (english)       | 1960 ms  | 1161 ms  | 1.7×    | 1691 ms → 1.5×    | 1.57 s → 0.61 s           | 1423 → 371 MiB                   |
-| `laya-multilingual`    | 799 ms   | 375 ms   | 2.1×    | 645 ms → 1.7×     | 0.73 s → 0.31 s           | 488 → 12 MiB                     |
-| `laya-typed-decisions` | 2420 ms  | 853 ms   | 2.8×    | 1856 ms → 2.2×    | 1.66 s → 0.63 s           | 1423 → 371 MiB                   |
+| `laya` (english)       | 1947 ms  | 844 ms   | 2.3×    | 1691 ms → 2.0×    | 1.32 s → 0.58 s           | 1423 → 371 MiB                   |
+| `laya-multilingual`    | 668 ms   | 318 ms   | 2.1×    | 645 ms → 2.0×     | 0.50 s → 0.25 s           | 488 → 133 MiB                    |
+| `laya-typed-decisions` | 1660 ms  | 825 ms   | 2.0×    | 1856 ms → 2.2×    | 1.24 s → 0.64 s           | 1423 → 371 MiB                   |
 
 Other cells of the same two sweeps:
 
 | cell                         | `laya`                | `laya-multilingual`  | `laya-typed-decisions` |
 | ---------------------------- | --------------------- | -------------------- | ---------------------- |
-| 1 thread, 512 tokens         | 3775 → 1505 ms, 2.5×  | 1314 → 664 ms, 2.0×  | 3979 → 1535 ms, 2.6×   |
-| 8 threads, 128 tokens        | 385 → 180 ms, 2.1×    | 143 → 75 ms, 1.9×    | 497 → 204 ms, 2.4×     |
-| 8 threads, 8 questions × 512 | 14789 → 7726 ms, 1.9× | 4918 → 2894 ms, 1.7× | 26735 → 7284 ms, 3.7×  |
+| 1 thread, 512 tokens         | 3657 → 1512 ms, 2.4×  | 1394 → 637 ms, 2.2×  | 3811 → 1499 ms, 2.5×   |
+| 8 threads, 128 tokens        | 368 → 164 ms, 2.2×    | 225 → 64 ms, 3.5×    | 377 → 180 ms, 2.1×     |
+| 8 threads, 8 questions × 512 | 13668 → 6745 ms, 2.0× | 4924 → 2728 ms, 1.8× | 14067 → 7198 ms, 2.0×  |
 
-The 3.7× on `laya-typed-decisions` at 8 × 512 is mostly load: S3 measured that fp32 cell at
-15689 ms on an idle machine. "Resident after load" is the RSS growth across the first session
+The 3.5× on `laya-multilingual` at 128 tokens is a slow fp32 cell (p90 302 ms); S3 measured it at
+143 ms, which gives 2.2×. "Resident after load" is the RSS growth across the first session
 build in a fresh process, before any forward pass, as in S3. ORT keeps the int8 graphs'
 external data mapped, so pages it has not touched yet, such as most of `laya-multilingual`'s fp32
-embedding table, do not count; that is why multilingual shows 12 MiB. Treat that column as load
-cost, not as the working set.
+embedding table, do not count. Treat that column as load cost, not as the working set.
+
+**A first run under load** (04:54–05:14, while two other test sessions shared the machine) gave
+1.5–2.8×; the fp32 sweep ran under more load than the int8 one, which inflated the upper end. Its
+transcripts are kept as `docs/benchmarks/raw/bench-onnx-{int8,fp32}-load.txt`; the numbers above
+are from `bench-onnx-{int8,fp32}-quiet.txt`.
 
 **The speedup changes the throughput story, not the interactive one.** Even if int8 had passed,
-`laya` would still take about 1160 ms per question at 512 tokens on this laptop. A batch
-workload would get through 1.5–2.8 times as many questions per CPU-hour. Anything with a human
-waiting on it still wants a GPU (B.3).
+`laya` would still take about 840 ms per question at 512 tokens on this laptop. A batch workload
+would get through about twice as many questions per CPU-hour. Anything with a human waiting on
+it still wants a GPU (B.3).
 
 #### Reproduce
 
@@ -594,7 +594,7 @@ So, plainly:
   waiting on it wants a GPU execution provider.
 - **Set `IntraOpNumThreads` to the physical core count, not the thread count.** It is free, and it is
   worth 12–26%.
-- **int8 dynamic quantization was measured and is not shipped** (PLAN.md B.5, D33). It is 1.5–2.8×
+- **int8 dynamic quantization was measured and is not shipped** (PLAN.md B.5, D33). It is 2.0–2.3×
   faster at 512 tokens, but 9–19.5% of the choice and score answers change, which fails the
   calibration thresholds on every checkpoint
   ([details](#int8-dynamic-quantization-planmd-b5--measured-not-shipped)). The lever left is

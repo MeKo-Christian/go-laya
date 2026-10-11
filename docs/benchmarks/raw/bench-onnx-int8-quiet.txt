@@ -1,0 +1,138 @@
+# PLAN.md B.5.2, the quiet rerun of the S3 sweep over the int8 exports. No other test session ran;
+# the load averages in the uptime lines below are the sweep's own threads (up to 12).
+# The int8 sweep ran first (05:49-05:55), then this pair's fp32 sweep (05:55-06:07), back to back, ORT 1.23.0, CGO_ENABLED=0.
+#
+# LAYA_ONNX_DIR=<main>/build/onnx-int8 systemd-run --user --scope -q -p MemoryMax=8G -p MemorySwapMax=0 just bench-onnx 5 <out> ""
+#
+# Head: the run's start, uptime and nproc. Tail: its exit status, end and uptime.
+#
+== int8: LAYA_ONNX_DIR=/mnt/projekte/Code/go-laya/build/onnx-int8 suffix=''
+2026-10-11T05:49:17+02:00
+ 05:49:17 up 15 days, 17:34,  1 user,  load average: 3,61, 2,81, 5,80
+nproc: 12
+go version go1.26.9 linux/amd64
+
+goos: linux
+goarch: amd64
+pkg: github.com/MeKo-Christian/go-laya/internal/backend/onnx
+cpu: 12th Gen Intel(R) Core(TM) i7-1255U
+BenchmarkForward
+    bench_test.go:241: ONNX Runtime 1.23.0 (C API 23) from /usr/local/lib/libonnxruntime.so, GOMAXPROCS=11
+BenchmarkForward/english
+BenchmarkForward/english/threads=1
+BenchmarkForward/english/threads=1/b1_s512_k4
+BenchmarkForward/english/threads=1/b1_s512_k4-11         	       5	1513892658 ns/op	      1512 p50_ms	      1539 p90_ms
+BenchmarkForward/english/threads=2
+BenchmarkForward/english/threads=2/b1_s512_k4
+BenchmarkForward/english/threads=2/b1_s512_k4-11         	       5	 866310777 ns/op	       841.1 p50_ms	       924.0 p90_ms
+BenchmarkForward/english/threads=4
+BenchmarkForward/english/threads=4/b1_s512_k4
+BenchmarkForward/english/threads=4/b1_s512_k4-11         	       5	 902282786 ns/op	       892.7 p50_ms	       961.2 p90_ms
+BenchmarkForward/english/threads=6
+BenchmarkForward/english/threads=6/b1_s512_k4
+BenchmarkForward/english/threads=6/b1_s512_k4-11         	       5	 839612320 ns/op	       876.0 p50_ms	       888.1 p90_ms
+BenchmarkForward/english/threads=8
+BenchmarkForward/english/threads=8/b1_s128_k4
+BenchmarkForward/english/threads=8/b1_s128_k4-11         	       5	 165336892 ns/op	       164.2 p50_ms	       176.7 p90_ms
+BenchmarkForward/english/threads=8/b1_s256_k4
+BenchmarkForward/english/threads=8/b1_s256_k4-11         	       5	 350290564 ns/op	       345.5 p50_ms	       367.7 p90_ms
+BenchmarkForward/english/threads=8/b1_s512_k4
+BenchmarkForward/english/threads=8/b1_s512_k4-11         	       5	 852408399 ns/op	       844.2 p50_ms	       895.1 p90_ms
+BenchmarkForward/english/threads=8/b8_s128_k4
+BenchmarkForward/english/threads=8/b8_s128_k4-11         	       5	1392600764 ns/op	      1390 p50_ms	      1423 p90_ms
+BenchmarkForward/english/threads=8/b8_s512_k4
+BenchmarkForward/english/threads=8/b8_s512_k4-11         	       5	6681083817 ns/op	      6745 p50_ms	      6906 p90_ms
+BenchmarkForward/english/threads=8/b1_s512_k20
+BenchmarkForward/english/threads=8/b1_s512_k20-11        	       5	 803607425 ns/op	       801.4 p50_ms	       836.6 p90_ms
+BenchmarkForward/english/threads=12
+BenchmarkForward/english/threads=12/b1_s512_k4
+BenchmarkForward/english/threads=12/b1_s512_k4-11        	       5	1525740976 ns/op	      1621 p50_ms	      1889 p90_ms
+BenchmarkForward/multilingual
+BenchmarkForward/multilingual/threads=1
+BenchmarkForward/multilingual/threads=1/b1_s512_k4
+BenchmarkForward/multilingual/threads=1/b1_s512_k4-11    	       5	 641736351 ns/op	       637.4 p50_ms	       656.7 p90_ms
+BenchmarkForward/multilingual/threads=2
+BenchmarkForward/multilingual/threads=2/b1_s512_k4
+BenchmarkForward/multilingual/threads=2/b1_s512_k4-11    	       5	 367613166 ns/op	       367.4 p50_ms	       379.4 p90_ms
+BenchmarkForward/multilingual/threads=4
+BenchmarkForward/multilingual/threads=4/b1_s512_k4
+BenchmarkForward/multilingual/threads=4/b1_s512_k4-11    	       5	 394011443 ns/op	       391.6 p50_ms	       409.4 p90_ms
+BenchmarkForward/multilingual/threads=6
+BenchmarkForward/multilingual/threads=6/b1_s512_k4
+BenchmarkForward/multilingual/threads=6/b1_s512_k4-11    	       5	 386845391 ns/op	       385.0 p50_ms	       397.3 p90_ms
+BenchmarkForward/multilingual/threads=8
+BenchmarkForward/multilingual/threads=8/b1_s128_k4
+BenchmarkForward/multilingual/threads=8/b1_s128_k4-11    	       5	  64842601 ns/op	        63.59 p50_ms	        70.81 p90_ms
+BenchmarkForward/multilingual/threads=8/b1_s256_k4
+BenchmarkForward/multilingual/threads=8/b1_s256_k4-11    	       5	 144025624 ns/op	       142.8 p50_ms	       154.5 p90_ms
+BenchmarkForward/multilingual/threads=8/b1_s512_k4
+BenchmarkForward/multilingual/threads=8/b1_s512_k4-11    	       5	 319400434 ns/op	       317.9 p50_ms	       331.0 p90_ms
+BenchmarkForward/multilingual/threads=8/b1_s1024_k4
+BenchmarkForward/multilingual/threads=8/b1_s1024_k4-11   	       5	 903867534 ns/op	       884.4 p50_ms	       962.2 p90_ms
+BenchmarkForward/multilingual/threads=8/b8_s128_k4
+BenchmarkForward/multilingual/threads=8/b8_s128_k4-11    	       5	 514235331 ns/op	       514.1 p50_ms	       554.2 p90_ms
+BenchmarkForward/multilingual/threads=8/b8_s512_k4
+BenchmarkForward/multilingual/threads=8/b8_s512_k4-11    	       5	2695735097 ns/op	      2728 p50_ms	      2756 p90_ms
+BenchmarkForward/multilingual/threads=8/b1_s512_k20
+BenchmarkForward/multilingual/threads=8/b1_s512_k20-11   	       5	 354060766 ns/op	       353.4 p50_ms	       358.5 p90_ms
+BenchmarkForward/multilingual/threads=12
+BenchmarkForward/multilingual/threads=12/b1_s512_k4
+BenchmarkForward/multilingual/threads=12/b1_s512_k4-11   	       5	 468460861 ns/op	       468.2 p50_ms	       480.9 p90_ms
+BenchmarkForward/typed-decisions
+BenchmarkForward/typed-decisions/threads=1
+BenchmarkForward/typed-decisions/threads=1/b1_s512_k4
+BenchmarkForward/typed-decisions/threads=1/b1_s512_k4-11 	       5	1500001724 ns/op	      1499 p50_ms	      1519 p90_ms
+BenchmarkForward/typed-decisions/threads=2
+BenchmarkForward/typed-decisions/threads=2/b1_s512_k4
+BenchmarkForward/typed-decisions/threads=2/b1_s512_k4-11 	       5	 885334327 ns/op	       891.2 p50_ms	       948.1 p90_ms
+BenchmarkForward/typed-decisions/threads=4
+BenchmarkForward/typed-decisions/threads=4/b1_s512_k4
+BenchmarkForward/typed-decisions/threads=4/b1_s512_k4-11 	       5	1001631890 ns/op	       987.0 p50_ms	      1042 p90_ms
+BenchmarkForward/typed-decisions/threads=6
+BenchmarkForward/typed-decisions/threads=6/b1_s512_k4
+BenchmarkForward/typed-decisions/threads=6/b1_s512_k4-11 	       5	 901011268 ns/op	       854.1 p50_ms	      1163 p90_ms
+BenchmarkForward/typed-decisions/threads=8
+BenchmarkForward/typed-decisions/threads=8/b1_s128_k4
+BenchmarkForward/typed-decisions/threads=8/b1_s128_k4-11 	       5	 180806648 ns/op	       179.9 p50_ms	       186.5 p90_ms
+BenchmarkForward/typed-decisions/threads=8/b1_s256_k4
+BenchmarkForward/typed-decisions/threads=8/b1_s256_k4-11 	       5	 347397217 ns/op	       341.5 p50_ms	       371.8 p90_ms
+BenchmarkForward/typed-decisions/threads=8/b1_s512_k4
+BenchmarkForward/typed-decisions/threads=8/b1_s512_k4-11 	       5	 818718619 ns/op	       825.1 p50_ms	       864.9 p90_ms
+BenchmarkForward/typed-decisions/threads=8/b1_s1024_k4
+BenchmarkForward/typed-decisions/threads=8/b1_s1024_k4-11         	       5	2098257145 ns/op	      2026 p50_ms	      2421 p90_ms
+BenchmarkForward/typed-decisions/threads=8/b8_s128_k4
+BenchmarkForward/typed-decisions/threads=8/b8_s128_k4-11          	       5	1510456204 ns/op	      1492 p50_ms	      1738 p90_ms
+BenchmarkForward/typed-decisions/threads=8/b8_s512_k4
+BenchmarkForward/typed-decisions/threads=8/b8_s512_k4-11          	       5	7395798262 ns/op	      7198 p50_ms	      8272 p90_ms
+BenchmarkForward/typed-decisions/threads=8/b1_s512_k20
+BenchmarkForward/typed-decisions/threads=8/b1_s512_k20-11         	       5	 871492567 ns/op	       844.1 p50_ms	       994.6 p90_ms
+BenchmarkForward/typed-decisions/threads=12
+BenchmarkForward/typed-decisions/threads=12/b1_s512_k4
+BenchmarkForward/typed-decisions/threads=12/b1_s512_k4-11         	       5	1136383759 ns/op	      1138 p50_ms	      1180 p90_ms
+PASS
+ok  	github.com/MeKo-Christian/go-laya/internal/backend/onnx	348.896s
+goos: linux
+goarch: amd64
+pkg: github.com/MeKo-Christian/go-laya/internal/backend/onnx
+cpu: 12th Gen Intel(R) Core(TM) i7-1255U
+BenchmarkSessionLoad/english-11         	       5	 575442710 ns/op	       371.1 rss_MiB
+PASS
+ok  	github.com/MeKo-Christian/go-laya/internal/backend/onnx	3.542s
+goos: linux
+goarch: amd64
+pkg: github.com/MeKo-Christian/go-laya/internal/backend/onnx
+cpu: 12th Gen Intel(R) Core(TM) i7-1255U
+BenchmarkSessionLoad/multilingual-11         	       5	 246906145 ns/op	       133.3 rss_MiB
+PASS
+ok  	github.com/MeKo-Christian/go-laya/internal/backend/onnx	1.650s
+goos: linux
+goarch: amd64
+pkg: github.com/MeKo-Christian/go-laya/internal/backend/onnx
+cpu: 12th Gen Intel(R) Core(TM) i7-1255U
+BenchmarkSessionLoad/typed-decisions-11         	       5	 639812888 ns/op	       371.1 rss_MiB
+PASS
+ok  	github.com/MeKo-Christian/go-laya/internal/backend/onnx	3.867s
+
+exit 0
+2026-10-11T05:55:16+02:00
+ 05:55:16 up 15 days, 17:40,  1 user,  load average: 9,16, 7,07, 6,80
