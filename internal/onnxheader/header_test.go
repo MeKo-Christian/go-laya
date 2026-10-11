@@ -290,6 +290,34 @@ func TestReadFile(t *testing.T) {
 			t.Errorf("Read = %v, want ErrIncompatibleCheckpoint naming the size", err)
 		}
 	})
+	// The cap holds on what is read, not only on what the Lstat saw: a graph
+	// that grows past it between the two is refused too.
+	t.Run("grown after the stat", func(t *testing.T) {
+		path := writeModel(t, model(10, 18, exportIO()))
+		afterStat = func(p string) {
+			if err := os.Truncate(p, maxFileSize+1); err != nil {
+				t.Error(err)
+			}
+		}
+		t.Cleanup(func() { afterStat = nil })
+		_, err := Read(path)
+		if !errors.Is(err, backend.ErrIncompatibleCheckpoint) || !strings.Contains(err.Error(), "larger than") {
+			t.Errorf("Read = %v, want ErrIncompatibleCheckpoint naming the size", err)
+		}
+	})
+	// The graph is Lstat'ed before it is opened, and the open follows
+	// symlinks, so the Lstat is what refuses a symlinked graph.
+	t.Run("symlinked graph", func(t *testing.T) {
+		path := writeModel(t, model(10, 18, exportIO()))
+		link := filepath.Join(filepath.Dir(path), "link.onnx")
+		if err := os.Symlink(path, link); err != nil {
+			t.Skip(err)
+		}
+		_, err := Read(link)
+		if !errors.Is(err, backend.ErrIncompatibleCheckpoint) || !strings.Contains(err.Error(), "not a regular file") {
+			t.Errorf("Read = %v, want ErrIncompatibleCheckpoint for a symlink", err)
+		}
+	})
 	t.Run("symlinked data", func(t *testing.T) {
 		path := writeModel(t, model(10, 18, exportIO().bytes(5, external("w", []uint64{2}, "location", "link.data"))))
 		if err := os.Symlink(filepath.Join(filepath.Dir(path), dataFile), filepath.Join(filepath.Dir(path), "link.data")); err != nil {

@@ -72,6 +72,8 @@ func Open(modelPath string, opts Options) (*Backend, error) {
 	if _, err := os.Stat(modelPath); err != nil {
 		return nil, fmt.Errorf("onnx backend: model: %w", err)
 	}
+	// Read opens the graph as a regular file only, but ORT opens modelPath
+	// again for the session, so a path swapped after Read is not rechecked.
 	header, err := onnxheader.Read(modelPath)
 	if err != nil {
 		return nil, fmt.Errorf("onnx backend: %w", err)

@@ -3,10 +3,13 @@ package tokenizer
 import (
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/MeKo-Christian/go-laya/internal/golden"
 )
@@ -39,6 +42,52 @@ func TestOpenMiniFixtures(t *testing.T) {
 			}
 			if tok.fuseUnk != c.fuseUnk {
 				t.Errorf("fuseUnk = %v, want %v", tok.fuseUnk, c.fuseUnk)
+			}
+		})
+	}
+}
+
+// Open("") is an error, as os.DirFS("") makes it, not a read of whatever
+// tokenizer files sit in the working directory.
+func TestOpenEmptyDir(t *testing.T) {
+	t.Chdir(filepath.Join("testdata", "mini_en"))
+	if _, err := Open(""); err == nil {
+		t.Fatal(`Open("") loaded the working directory's tokenizer`)
+	}
+}
+
+// TestOpenFSRefusesNonRegular: OpenFS takes any fs.FS, so it checks the
+// opened file's Stat itself. A file that reports itself as a pipe, a device or
+// an irregular file is refused even though its bytes are a valid fixture.
+func TestOpenFSRefusesNonRegular(t *testing.T) {
+	for _, c := range []struct {
+		label string
+		name  string
+		mode  fs.FileMode
+	}{
+		{"pipe", fileTokenizerJSON, fs.ModeNamedPipe},
+		{"device", fileTokenizerConfig, fs.ModeDevice},
+		{"irregular", fileTokenizerJSON, fs.ModeIrregular},
+	} {
+		t.Run(c.label, func(t *testing.T) {
+			fsys := fstest.MapFS{}
+			for _, f := range []string{fileTokenizerJSON, fileTokenizerConfig} {
+				raw, err := os.ReadFile(filepath.Join("testdata", "mini_en", f))
+				if err != nil {
+					t.Fatal(err)
+				}
+				fsys[f] = &fstest.MapFile{Data: raw, Mode: 0o600}
+			}
+			if _, err := OpenFS(fsys); err != nil {
+				t.Fatalf("OpenFS over the regular fixture = %v", err)
+			}
+
+			fsys[c.name].Mode |= c.mode
+			_, err := OpenFS(fsys)
+			if err == nil ||
+				!strings.Contains(err.Error(), "tokenizer: read "+c.name) ||
+				!strings.Contains(err.Error(), "not a regular file") {
+				t.Fatalf("OpenFS = %v, want a read error naming %s as not a regular file", err, c.name)
 			}
 		})
 	}

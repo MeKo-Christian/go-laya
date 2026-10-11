@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
-	"os"
+	"path/filepath"
+
+	"github.com/MeKo-Christian/go-laya/internal/regularfile"
 )
 
 // ErrUnsupported reports a tokenizer.json this package cannot reproduce
@@ -81,17 +84,21 @@ func (byteLevel) preTokenize(segment string) []string { return preTokenizeByteLe
 
 // Open loads the tokenizer in dir, which must hold tokenizer.json and
 // tokenizer_config.json -- the layout every laya checkpoint ships under
-// tokenizer/.
+// tokenizer/. Each must be a regular file: a named pipe, device or directory
+// at either name is refused when it is opened, not waited on.
 func Open(dir string) (*HF, error) {
-	return OpenFS(os.DirFS(dir))
+	return OpenFS(regularDir(dir))
 }
 
 // OpenFS loads from any filesystem, which is what makes the synthetic fixtures
-// testable and what internal/hub will hand a cache directory in M6.
+// testable and what internal/hub will hand a cache directory in M6. Each file
+// must Stat as a regular file once opened; that cannot help with an fsys
+// whose own Open blocks, as os.DirFS's does on a named pipe, which is why Open
+// does not use os.DirFS.
 func OpenFS(fsys fs.FS) (*HF, error) {
-	raw, err := fs.ReadFile(fsys, fileTokenizerJSON)
+	raw, err := readRegular(fsys, fileTokenizerJSON)
 	if err != nil {
-		return nil, fmt.Errorf("tokenizer: read %s: %w", fileTokenizerJSON, err)
+		return nil, err
 	}
 	var doc tokenizerJSON
 	if err := json.Unmarshal(raw, &doc); err != nil {
@@ -104,9 +111,9 @@ func OpenFS(fsys fs.FS) (*HF, error) {
 		return nil, err
 	}
 
-	cfgRaw, err := fs.ReadFile(fsys, fileTokenizerConfig)
+	cfgRaw, err := readRegular(fsys, fileTokenizerConfig)
 	if err != nil {
-		return nil, fmt.Errorf("tokenizer: read %s: %w", fileTokenizerConfig, err)
+		return nil, err
 	}
 	var cfg tokenizerConfigJSON
 	if err := json.Unmarshal(cfgRaw, &cfg); err != nil {
@@ -114,6 +121,57 @@ func OpenFS(fsys fs.FS) (*HF, error) {
 	}
 
 	return build(&doc, vocab, &cfg)
+}
+
+// readRegular is fs.ReadFile that refuses a file whose Stat is not a regular
+// file, checked on the opened file rather than on the name beforehand. Its
+// errors read "tokenizer: read <name>: ...".
+func readRegular(fsys fs.FS, name string) ([]byte, error) {
+	f, err := fsys.Open(name)
+	if err != nil {
+		return nil, fmt.Errorf("tokenizer: read %s: %w", name, err)
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("tokenizer: read %s: %w", name, err)
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("tokenizer: read %s: %s is not a regular file", name, fi.Mode().Type())
+	}
+	b, err := io.ReadAll(f)
+	if err != nil {
+		return nil, fmt.Errorf("tokenizer: read %s: %w", name, err)
+	}
+	return b, nil
+}
+
+// regularDir is the minimal fs.FS over a directory that OpenFS needs: it
+// opens files only, each through regularfile.Open, so a named pipe is refused
+// at the open instead of blocking it, which no context could interrupt.
+// Wrapping the FS rather than reading the two files in Open keeps OpenFS the
+// one reader both entry points share.
+type regularDir string
+
+func (d regularDir) Open(name string) (fs.File, error) {
+	// Localize is fs.ValidPath plus what the OS cannot name, the check
+	// os.DirFS makes; like os.DirFS, an empty root is not the working
+	// directory.
+	local, err := filepath.Localize(name)
+	if err != nil || d == "" {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
+	}
+	f, err := regularfile.Open(filepath.Join(string(d), local))
+	if err != nil {
+		// As os.DirFS reports it: a PathError naming the file inside the
+		// FS, not the OS path. Also not a typed nil.
+		var pe *fs.PathError
+		if errors.As(err, &pe) {
+			err = pe.Err
+		}
+		return nil, &fs.PathError{Op: "open", Path: name, Err: err}
+	}
+	return f, nil
 }
 
 func build(doc *tokenizerJSON, vocab map[string]int32, cfg *tokenizerConfigJSON) (*HF, error) {
