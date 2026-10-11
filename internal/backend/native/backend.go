@@ -27,7 +27,9 @@ var (
 // Options configures Open. It holds no tuning: the only tuning the kernels
 // have is tensor.SetWorkers, a process-wide setting that a per-backend
 // option would misrepresent, and internal/runtime/ops, whose worker loop
-// takes its count per call, is not on this backend's path.
+// takes its count per call, is not on this backend's path. The kernels
+// default to one worker per GOMAXPROCS as read at start-up (D34), so a
+// process that wants fewer sets the GOMAXPROCS environment variable.
 type Options struct {
 	// Head, if not nil, is the head the caller expects the file to fix.
 	// Open holds model.safetensors' head to it from the header of the file
