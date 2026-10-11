@@ -14,9 +14,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cwbudde/algo-tensor/tensor"
+
 	"github.com/MeKo-Christian/go-laya/backend"
 	"github.com/MeKo-Christian/go-laya/internal/head"
-	"github.com/MeKo-Christian/go-laya/internal/runtime/tensor"
 )
 
 // open writes s and opens it, closing the Backend when the test ends.

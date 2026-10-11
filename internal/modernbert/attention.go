@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/MeKo-Christian/go-laya/internal/runtime/tensor"
+	"github.com/cwbudde/algo-tensor/tensor"
 )
 
 // LayerType is what config.layer_types decides for one encoder layer: the

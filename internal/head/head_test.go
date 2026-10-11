@@ -8,8 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cwbudde/algo-tensor/tensor"
+
 	"github.com/MeKo-Christian/go-laya/backend"
-	"github.com/MeKo-Christian/go-laya/internal/runtime/tensor"
 )
 
 // tolerance bounds |go - torch| for an element torch computed as want.

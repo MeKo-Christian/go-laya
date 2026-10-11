@@ -25,9 +25,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cwbudde/algo-tensor/tensor"
+
 	"github.com/MeKo-Christian/go-laya/backend"
 	"github.com/MeKo-Christian/go-laya/internal/golden"
-	"github.com/MeKo-Christian/go-laya/internal/runtime/tensor"
 )
 
 // benchCheckpoints are the three checkpoints S3 measured, in its order.

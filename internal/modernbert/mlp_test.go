@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MeKo-Christian/go-laya/internal/runtime/tensor"
+	"github.com/cwbudde/algo-tensor/tensor"
 )
 
 // mlpCase is one "mlp" record of testdata/ops.json: the real ModernBertMLP of

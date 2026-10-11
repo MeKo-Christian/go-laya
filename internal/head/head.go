@@ -14,9 +14,10 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/cwbudde/algo-tensor/tensor"
+
 	"github.com/MeKo-Christian/go-laya/backend"
 	"github.com/MeKo-Christian/go-laya/internal/calib"
-	"github.com/MeKo-Christian/go-laya/internal/runtime/tensor"
 )
 
 const (

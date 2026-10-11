@@ -9,11 +9,11 @@ import (
 	"runtime/debug"
 	"testing"
 
+	"github.com/cwbudde/algo-tensor/tensor"
 	"golang.org/x/sys/cpu"
 
 	"github.com/MeKo-Christian/go-laya/backend"
 	"github.com/MeKo-Christian/go-laya/internal/golden"
-	"github.com/MeKo-Christian/go-laya/internal/runtime/tensor"
 )
 
 // digestCases are the inputs TestForwardDigest hashes: Task 8.9's reference

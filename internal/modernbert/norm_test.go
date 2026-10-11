@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MeKo-Christian/go-laya/internal/runtime/tensor"
+	"github.com/cwbudde/algo-tensor/tensor"
 )
 
 // normCase is one "layernorm" record of testdata/ops.json. Weight stays raw so

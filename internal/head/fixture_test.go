@@ -10,9 +10,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cwbudde/algo-tensor/tensor"
+
 	"github.com/MeKo-Christian/go-laya/backend"
 	"github.com/MeKo-Christian/go-laya/internal/golden"
-	"github.com/MeKo-Christian/go-laya/internal/runtime/tensor"
 )
 
 // headFixture is testdata/head.json, written by scripts/dump_head_ops.py from

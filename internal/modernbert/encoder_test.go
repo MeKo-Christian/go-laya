@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MeKo-Christian/go-laya/internal/runtime/tensor"
+	"github.com/cwbudde/algo-tensor/tensor"
 )
 
 // encCase is the "encoder" record of testdata/ops.json: the real

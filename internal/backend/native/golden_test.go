@@ -8,8 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cwbudde/algo-tensor/tensor"
+
 	"github.com/MeKo-Christian/go-laya/internal/golden"
-	"github.com/MeKo-Christian/go-laya/internal/runtime/tensor"
 )
 
 // goldenTol is the largest maxScaledDiff TestForwardGolden accepts against the
