@@ -1,0 +1,9 @@
+# Exploratory, before B.5.3 ran: four quantize_dynamic recipes on english, scored on the golden logits batches
+# (testdata/logits.jsonl, 10 batches, 30 rows), not on the B.5.3 subsets. Python ORT 1.30.0, against the fp32 export.
+# pc = per_channel, pt = per-tensor, rr = reduce_range. The shipped recipe is pc_norr. max |dp| is over softmax at T=1.
+#
+english fp32-self: argmax agree 30/30, max |dp| (T=1) 0.0000
+english pc_norr: argmax agree 21/30, max |dp| (T=1) 0.7246
+english pc_rr: argmax agree 18/30, max |dp| (T=1) 0.8042
+english pt_norr: argmax agree 18/30, max |dp| (T=1) 0.6691
+english pt_rr: argmax agree 20/30, max |dp| (T=1) 0.7364
