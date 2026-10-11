@@ -47,9 +47,9 @@ func (s benchShape) String() string {
 
 // benchRefShape and benchRefWorkers are S3's reference cell: one question at
 // agent.py:256's default max_len with four options, at 8 threads, the setting
-// S3 found fastest on this hardware. tensor.SetWorkers is the native
-// backend's counterpart of IntraOpNumThreads. TestBenchHarness pins both to
-// internal/backend/onnx's values.
+// S3 found fastest on this hardware. algo-tensor's tensor.SetWorkers is the
+// native backend's counterpart of IntraOpNumThreads. TestBenchHarness pins
+// both to internal/backend/onnx's values.
 //
 // There is no sweep: 8.9's budget is stated at this one cell, and an
 // iteration here costs tens of seconds.
@@ -131,7 +131,7 @@ func BenchmarkForward(b *testing.B) {
 
 // BenchmarkForwardDefaultWorkers is BenchmarkForward at the kernels' default
 // worker count instead of S3's 8: the count every caller of laya.Open gets,
-// since tensor is internal and nothing outside the module can change it.
+// since go-laya offers no setting for it (D34, D35).
 func BenchmarkForwardDefaultWorkers(b *testing.B) {
 	root := golden.SkipWithoutModels(b)
 	for _, ck := range benchCheckpoints {

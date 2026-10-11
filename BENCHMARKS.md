@@ -508,8 +508,10 @@ the budget is a ceiling, not a target.
 
 **Stack.** go1.26.9, no cgo on the backend's path, `GOMAXPROCS=11` (Go's own choice here, the same as
 in every S3 transcript). The weights are decoded from the checkpoints' fp16 `model.safetensors` to
-float32. The kernels are pure Go, plus the repository's AVX2/FMA dot product, and run on 8 workers
-(`tensor.SetWorkers(8)`, the counterpart of S3's `IntraOpNumThreads=8`).
+float32. The kernels are pure Go, plus an AVX2/FMA dot product, and run on 8 workers
+(`tensor.SetWorkers(8)`, the counterpart of S3's `IntraOpNumThreads=8`). These measurements ran on
+the repository's own copy of the kernels; since B.19 they come from `github.com/cwbudde/algo-tensor`
+with every output bit unchanged (D35).
 
 **Method.** S3's reference cell, with S3's inputs value for value: one question, 512 tokens, 4
 options, every position attended, ids `1 + (i·7919) mod 997`. `BenchmarkForward` in
@@ -590,7 +592,7 @@ before B.16, counts them. Other test sessions shared the machine (1-minute load 
 the load times in that transcript, `docs/benchmarks/raw/bench-native-load-b16.txt`, do not compare.
 
 **The default worker count (PLAN.md B.18).** The table above runs at `tensor.SetWorkers(8)`, S3's
-setting. A caller of `laya.Open` cannot call it, since the package is internal, and the kernels
+setting. A caller of `laya.Open` could not call it, since the package was internal, and the kernels
 used to default to one worker, so every real caller ran single-threaded. They now default to
 `GOMAXPROCS` at start-up (D34). `BenchmarkForwardDefaultWorkers` is the reference cell at whatever
 the default is. One test binary without the change and one with it, interleaved per checkpoint, three
@@ -609,7 +611,7 @@ bound either way: contention can slow a 12-worker run more than a 1-worker run, 
 load in the "after" runs favours them. `laya-multilingual`, where both runs started at about the
 same load, still shows 2.6×. The "after" column sits within 12% of the 8-worker idle table above.
 No result changes: every output of `Linear` and `MatMul` is one dot product however the work is
-split (`TestKernelsSameBitsAnyWorkers`).
+split (`TestKernelsSameBitsAnyWorkers`, now in `internal/backend/native/kernels_test.go`).
 
 **Raw transcripts.**
 

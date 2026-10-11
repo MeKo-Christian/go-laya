@@ -316,8 +316,9 @@ func onnxE2EAgent(t *testing.T, dir, graph string) (*teeBackend, *Agent) {
 // sees its output.
 func nativeE2EAgent(t *testing.T, dir string) (*teeBackend, *Agent) {
 	t.Helper()
-	// The kernels' worker count is process-wide (tensor.SetWorkers); the
-	// test sets it only to finish sooner, and restores it.
+	// The kernels' worker count is process-wide (algo-tensor's
+	// tensor.SetWorkers) and defaults to GOMAXPROCS (D34); the test raises
+	// it to every CPU only to finish sooner, and restores it.
 	prev := tensor.Workers()
 	tensor.SetWorkers(runtime.NumCPU())
 	t.Cleanup(func() { tensor.SetWorkers(prev) })

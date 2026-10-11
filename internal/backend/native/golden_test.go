@@ -44,8 +44,9 @@ var goldenTol = map[string]float64{
 func TestForwardGolden(t *testing.T) {
 	root := golden.SkipWithoutModels(t)
 
-	// The kernels' worker count is process-wide (tensor.SetWorkers); the
-	// test sets it only to finish sooner, and restores it.
+	// The kernels' worker count is process-wide (algo-tensor's
+	// tensor.SetWorkers) and defaults to GOMAXPROCS (D34); the test raises
+	// it to every CPU only to finish sooner, and restores it.
 	prev := tensor.Workers()
 	tensor.SetWorkers(runtime.NumCPU())
 	t.Cleanup(func() { tensor.SetWorkers(prev) })

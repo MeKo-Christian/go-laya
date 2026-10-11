@@ -308,9 +308,9 @@ func TestTemperatureAnyDType(t *testing.T) {
 //
 // It runs twice: at a single kernel worker, and with
 // tensor.SetWorkers(4) on batches long enough that tensor.Linear crosses its
-// parallel threshold of 2^18 multiply-adds (nn_ops.go) on Wqkv (1440 tokens
-// x 24 x 8) and the head's linear1, so the concurrent calls also fan out
-// through the kernels' own goroutines (runtime.go, parallelFor).
+// parallel threshold of 2^18 multiply-adds (algo-tensor's nn_ops.go) on Wqkv
+// (1440 tokens x 24 x 8) and the head's linear1, so the concurrent calls also
+// fan out through the kernels' own goroutines (its runtime.go, parallelFor).
 func TestForwardConcurrent(t *testing.T) {
 	t.Run("one worker", func(t *testing.T) {
 		prev := tensor.Workers()
