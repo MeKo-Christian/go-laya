@@ -2,7 +2,9 @@ package native
 
 import (
 	"fmt"
+	"math"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -76,5 +78,49 @@ func TestCheckNamesBoundedAllocs(t *testing.T) {
 	// macOS race runner saw 255 against 273.
 	if many > 2*few {
 		t.Errorf("%v allocations for 20000 unexpected names, %v for 20: the error grows with the header", many, few)
+	}
+}
+
+// TestLoadKeepsOneCopy: load hands each decoded weight to its tensor rather
+// than copying it (PLAN.md B.16). The checkpoint's embedding table is 4 MiB
+// and every other tensor together a few KiB, so what one load allocates is
+// that table, decoded once, plus Float32's read buffer of at most 1 MiB
+// (chunkBytes). A copy of the table would add 4 MiB more.
+func TestLoadKeepsOneCopy(t *testing.T) {
+	const vocab = 1 << 17
+	const table = vocab * tinyHidden * 4
+	s := newSynth(1)
+	s.config["vocab_size"] = vocab
+	s.zeros("encoder.embeddings.tok_embeddings.weight", vocab, tinyHidden)
+	dir := s.write(t)
+	cfg, err := readConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, weightsFile)
+	f, err := safetensors.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	// The least of a few loads, so a goroutine allocating elsewhere can
+	// only make one load look larger, never pass the bound for it.
+	least := uint64(math.MaxUint64)
+	for range 3 {
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		m, err := load(t.Context(), f, path, cfg)
+		runtime.ReadMemStats(&after)
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		runtime.KeepAlive(m)
+		least = min(least, after.TotalAlloc-before.TotalAlloc)
+	}
+	t.Logf("one load allocates %d bytes for a %d-byte embedding table", least, table)
+	if least >= table+table/2 {
+		t.Errorf("one load allocates %d bytes for a %d-byte embedding table, over 1.5 tables: load holds a copy of each weight",
+			least, table)
 	}
 }
