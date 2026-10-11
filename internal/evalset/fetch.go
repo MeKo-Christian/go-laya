@@ -26,8 +26,11 @@ const maxAttempts = 6
 // SampleOffsets draws n distinct row offsets out of numRows, ascending. The
 // stream is a PCG seeded with seed and the dataset's name, so two datasets of
 // one size do not draw the same rows and the draw needs nothing but the
-// manifest to repeat. With n >= numRows every row is drawn.
+// manifest to repeat. With n >= numRows every row is drawn, with n <= 0 none.
 func SampleOffsets(name string, numRows, n int, seed uint64) []int {
+	if n <= 0 || numRows <= 0 {
+		return nil
+	}
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(name))
 	r := rand.New(rand.NewPCG(seed, h.Sum64())) // #nosec G404 -- a reproducible sample, not a secret
@@ -69,11 +72,15 @@ type pageRow struct {
 // Fetch draws n rows of s with SampleOffsets(s.Name, rows, n, seed). It
 // learns the row count from one request, then reads only the pages that hold
 // a drawn row; a row a page truncates is read again on its own. It refuses a
-// dataset whose label names are not s.ClassNames in order, an index the
-// server reports as partial, a row count that moves, and a row that is still
-// truncated or missing. The Entry it returns has everything but the SHA256,
-// which belongs to the file the caller writes.
+// sample of fewer than one row, a dataset whose label names are not
+// s.ClassNames in order, an index the server reports as partial, a row count
+// that moves, and a row that is still truncated or missing. The Entry it
+// returns has everything but the SHA256, which belongs to the file the caller
+// writes.
 func (f *Fetcher) Fetch(ctx context.Context, s Spec, n int, seed uint64) (Entry, []Row, error) {
+	if n < 1 {
+		return Entry{}, nil, fmt.Errorf("evalset: %s: a sample of %d rows; draw at least one", s.Name, n)
+	}
 	numRows, err := f.probe(ctx, s)
 	if err != nil {
 		return Entry{}, nil, err

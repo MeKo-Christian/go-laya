@@ -19,26 +19,62 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"time"
 
 	"github.com/MeKo-Christian/go-laya/internal/evalset"
 )
 
+// options are the command's flags.
+type options struct {
+	out, manifest string
+	update        bool
+	n             int
+	seed          uint64
+}
+
+// parseFlags reads the command line. -n must be at least 1: a negative
+// sample used to panic in evalset.SampleOffsets, and zero rows is no
+// evaluation set.
+func parseFlags(args []string, stderr io.Writer) (options, error) {
+	var o options
+	fs := flag.NewFlagSet("laya-evalfetch", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.StringVar(&o.out, "out", "build/eval", "directory the subsets are written to")
+	fs.StringVar(&o.manifest, "manifest", "docs/benchmarks/eval-manifest.json", "the manifest")
+	fs.BoolVar(&o.update, "update", false, "draw a new sample and rewrite the manifest")
+	fs.IntVar(&o.n, "n", 200, "rows per dataset, with -update (at least 1)")
+	fs.Uint64Var(&o.seed, "seed", 20261011, "the sampling seed, with -update")
+	if err := fs.Parse(args); err != nil {
+		return o, fmt.Errorf("flags: %w", err)
+	}
+	switch {
+	case fs.NArg() != 0:
+		err := fmt.Errorf("unexpected arguments %q", fs.Args())
+		fmt.Fprintln(stderr, err)
+		fs.Usage()
+		return o, err
+	case o.n < 1:
+		err := fmt.Errorf("-n %d: draw at least one row per dataset", o.n)
+		fmt.Fprintln(stderr, err)
+		fs.Usage()
+		return o, err
+	}
+	return o, nil
+}
+
 func main() {
-	out := flag.String("out", "build/eval", "directory the subsets are written to")
-	manifest := flag.String("manifest", "docs/benchmarks/eval-manifest.json", "the manifest")
-	update := flag.Bool("update", false, "draw a new sample and rewrite the manifest")
-	n := flag.Int("n", 200, "rows per dataset, with -update")
-	seed := flag.Uint64("seed", 20261011, "the sampling seed, with -update")
-	flag.Parse()
-	if flag.NArg() != 0 {
-		flag.Usage()
+	o, err := parseFlags(os.Args[1:], os.Stderr)
+	if errors.Is(err, flag.ErrHelp) {
+		os.Exit(0)
+	}
+	if err != nil {
 		os.Exit(2)
 	}
 
@@ -48,12 +84,12 @@ func main() {
 	// One request a second: the server answers a burst with 429s and does not
 	// say how long to wait.
 	f := &evalset.Fetcher{HTTP: &http.Client{Timeout: time.Minute}, Base: evalset.RowsAPI, Pace: time.Second}
-	err := os.MkdirAll(*out, 0o750)
+	err = os.MkdirAll(o.out, 0o750)
 	if err == nil {
-		if _, statErr := os.Stat(*manifest); statErr == nil && !*update {
-			err = verify(ctx, f, *out, *manifest)
+		if _, statErr := os.Stat(o.manifest); statErr == nil && !o.update {
+			err = verify(ctx, f, o.out, o.manifest)
 		} else {
-			err = draw(ctx, f, *out, *manifest, *n, *seed)
+			err = draw(ctx, f, o.out, o.manifest, o.n, o.seed)
 		}
 	}
 	if err != nil {
@@ -75,11 +111,15 @@ func verify(ctx context.Context, f *evalset.Fetcher, out, manifest string) error
 		if !ok {
 			return fmt.Errorf("%s records no %s; -update draws every dataset again", manifest, s.Name)
 		}
+		path, err := e.Path(out)
+		if err != nil {
+			return fmt.Errorf("manifest: %w", err)
+		}
 		rows, err := f.Refetch(ctx, s, e)
 		if err != nil {
 			return fmt.Errorf("fetch: %w", err)
 		}
-		sum, err := evalset.WriteSubset(filepath.Join(out, e.File), rows)
+		sum, err := evalset.WriteSubset(path, rows)
 		if err != nil {
 			return fmt.Errorf("write: %w", err)
 		}
@@ -104,7 +144,11 @@ func draw(ctx context.Context, f *evalset.Fetcher, out, manifest string, n int, 
 		if err != nil {
 			return fmt.Errorf("fetch: %w", err)
 		}
-		if e.SHA256, err = evalset.WriteSubset(filepath.Join(out, e.File), rows); err != nil {
+		path, err := e.Path(out)
+		if err != nil {
+			return fmt.Errorf("manifest: %w", err)
+		}
+		if e.SHA256, err = evalset.WriteSubset(path, rows); err != nil {
 			return fmt.Errorf("write: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "%s: %d of %d rows of %s %s/%s, sha256 %s\n",

@@ -229,3 +229,22 @@ func TestRefetch(t *testing.T) {
 		t.Error("Refetch accepted an entry for another split")
 	}
 }
+
+// TestFetchRejectsSampleSize: a sample of no rows is not an evaluation set,
+// and a negative one used to panic in SampleOffsets.
+func TestFetchRejectsSampleSize(t *testing.T) {
+	srv, calls := rowsServer(t, []string{"negative", "positive"}, nil)
+	f := &Fetcher{HTTP: srv.Client(), Base: srv.URL}
+	spec, _ := SpecByName("sst2")
+	for _, n := range []int{0, -1} {
+		if e, _, err := f.Fetch(context.Background(), spec, n, 1); err == nil {
+			t.Errorf("Fetch(n=%d) = %+v, want an error", n, e)
+		}
+	}
+	if c := calls.Load(); c != 0 {
+		t.Errorf("Fetch asked the server %d times for an invalid n", c)
+	}
+	if got := SampleOffsets("sst2", 10, -1, 1); len(got) != 0 {
+		t.Errorf("SampleOffsets(n=-1) = %v, want none", got)
+	}
+}
