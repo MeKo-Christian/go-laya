@@ -3,15 +3,19 @@ package tokenizer
 import (
 	"slices"
 	"strings"
+	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // staleCCC lists the codepoints whose canonical combining class the Rust
 // normaliser in tokenizers 0.23.2 lacks: combining marks assigned in Unicode
 // 10.0 through 15.0, which it treats as starters, so it never reorders them.
 // golang.org/x/text and CPython's unicodedata both do. PLAN.md B.2 keeps
-// go-laya Unicode-conformant, so an NFC mismatch on a line carrying one of
-// these is a documented deviation, and TestDifferentialCorpus accepts it
-// (B.11). Sorted, for hasStaleCCC's binary search.
+// go-laya Unicode-conformant, so an NFC mismatch that treating these as
+// starters fully explains (staleStarterNFC, explainedByStaleCCC) is a
+// documented deviation, and TestDifferentialCorpus accepts it (B.11). Sorted,
+// for isStaleCCC's binary search.
 //
 // Provenance: the 108 "codepoints" of build/ccc_disagreement.json, written by
 //
@@ -39,10 +43,39 @@ var staleCCC = [...]rune{
 	0x1E4EC, 0x1E4ED, 0x1E4EE, 0x1E4EF,
 }
 
+// isStaleCCC reports whether r is in staleCCC.
+func isStaleCCC(r rune) bool {
+	_, ok := slices.BinarySearch(staleCCC[:], r)
+	return ok
+}
+
 // hasStaleCCC reports whether s contains a codepoint from staleCCC.
 func hasStaleCCC(s string) bool {
-	return strings.ContainsFunc(s, func(r rune) bool {
-		_, ok := slices.BinarySearch(staleCCC[:], r)
-		return ok
-	})
+	return strings.ContainsFunc(s, isStaleCCC)
+}
+
+// staleStarterNFC is NFC as tokenizers 0.23.2 computes it: Unicode NFC, except
+// that every staleCCC codepoint is a starter. A starter ends the run of marks
+// canonical ordering sorts, and it becomes the last starter composition looks
+// back to, so nothing on one side of it reorders or composes with anything on
+// the other. NFC of the pieces between them, with the stale codepoints put back
+// unchanged, is therefore the whole of the difference -- given that none of
+// them decomposes or composes, which TestStaleCCCTable checks.
+//
+// It is the oracle B.11 measures a normalize mismatch against: a mismatch is
+// B.2's deviation only if this reproduces what Python produced.
+type staleStarterNFC struct{}
+
+func (staleStarterNFC) normalize(text string) string {
+	var b strings.Builder
+	start := 0
+	for i, r := range text {
+		if isStaleCCC(r) {
+			b.WriteString(norm.NFC.String(text[start:i]))
+			b.WriteRune(r)
+			start = i + utf8.RuneLen(r)
+		}
+	}
+	b.WriteString(norm.NFC.String(text[start:]))
+	return b.String()
 }

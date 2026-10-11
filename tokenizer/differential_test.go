@@ -71,9 +71,11 @@ type stageRecord struct {
 // it needs the checkpoints and a multi-hundred-megabyte dump, so it skips unless
 // both are present.
 //
-// It passes when every mismatch is PLAN.md B.2's documented deviation, an NFC
-// mismatch on a line carrying a codepoint from staleCCC (B.11). Any other
-// mismatch fails it. The report still counts the accepted ones per stage.
+// It passes when every mismatch is PLAN.md B.2's documented deviation (B.11):
+// an NFC mismatch that tokenizers 0.23.2's missing combining classes explain in
+// full, see explainedByStaleCCC. Any other mismatch fails it, including one on
+// a line that merely carries a staleCCC codepoint. The report still counts the
+// accepted ones per stage.
 //
 // Build its inputs with:
 //
@@ -106,7 +108,6 @@ func TestDifferentialCorpus(t *testing.T) {
 // per-stage table but do not fail the run, and their repros are kept apart so
 // they cannot crowd out a failing one.
 type findings struct {
-	nfc            bool
 	lines          int
 	checked        int
 	accepted       int
@@ -116,11 +117,9 @@ type findings struct {
 	seen           map[string]bool
 }
 
-// newFindings starts a run. nfc says whether the checkpoint's normalizer is
-// NFC; B.2's deviation lives there and nowhere else.
-func newFindings(nfc bool) *findings {
+// newFindings starts a run.
+func newFindings() *findings {
 	return &findings{
-		nfc:            nfc,
 		counts:         map[stage]int{},
 		repros:         map[stage][]string{},
 		acceptedRepros: map[stage][]string{},
@@ -128,22 +127,22 @@ func newFindings(nfc bool) *findings {
 	}
 }
 
-// acceptedDeviation reports whether a mismatch on the corpus line text is B.2's
-// decided deviation: attributed to an NFC normalizer, on a line that carries a
-// codepoint whose combining class tokenizers 0.23.2 lacks. Nothing else is: a
-// later stage, a normalizer other than NFC, or an NFC mismatch without such a
-// codepoint is a new divergence.
-func (f *findings) acceptedDeviation(s stage, text string) bool {
-	return f.nfc && s == stageNormalize && hasStaleCCC(text)
+// acceptedDeviation reports whether a mismatch is B.2's decided deviation:
+// attributed to the normalizer, and explained (explainedByStaleCCC says the
+// whole line agrees with the oracle once the stale combining classes are
+// emulated). Nothing else is: a mismatch first seen at a later stage is a new
+// divergence even when the emulation would account for it.
+func (f *findings) acceptedDeviation(s stage, explained bool) bool {
+	return s == stageNormalize && explained
 }
 
-// record files one mismatch on the corpus line text. Repros are kept
-// shortest-first and deduplicated on their own text, so a defect that fires on
-// 40 000 sentences is reported once.
-func (f *findings) record(s stage, text, repro string) {
+// record files one mismatch. explained is explainedByStaleCCC's verdict on the
+// line. Repros are kept shortest-first and deduplicated on their own text, so a
+// defect that fires on 40 000 sentences is reported once.
+func (f *findings) record(s stage, explained bool, repro string) {
 	f.counts[s]++
 	repros, tag := f.repros, "failing"
-	if f.acceptedDeviation(s, text) {
+	if f.acceptedDeviation(s, explained) {
 		f.accepted++
 		repros, tag = f.acceptedRepros, "accepted"
 	}
@@ -213,8 +212,7 @@ func runDifferential(t *testing.T, tok *HF, path string) {
 	}
 	defer func() { _ = zr.Close() }()
 
-	_, nfc := tok.norm.(nfcNormalizer)
-	f := newFindings(nfc)
+	f := newFindings()
 	sc := bufio.NewScanner(zr)
 	// Same 16 MiB ceiling internal/golden uses: one probe line can be long.
 	sc.Buffer(make([]byte, 0, 64*1024), 16<<20)
@@ -262,7 +260,43 @@ func compareOne(tok *HF, rec *stageRecord, f *findings) {
 		return
 	}
 	st, detail := attribute(tok, rec)
-	f.record(st, rec.Text, detail)
+	f.record(st, st == stageNormalize && explainedByStaleCCC(tok, rec), detail)
+}
+
+// explainedByStaleCCC reports whether B.2's deviation accounts for every
+// difference on the line: with this package's NFC swapped for staleStarterNFC,
+// tokenizers 0.23.2's, each unclaimed segment normalizes to exactly what the
+// oracle's did and the line encodes to exactly its ids and tokens.
+//
+// Carrying a staleCCC codepoint is not enough. A line can hold one that both
+// sides agree on and diverge somewhere else, or diverge on it in one segment
+// and for an unrelated reason in another, and attribute names only the first
+// segment that differs. Replaying the whole line under the emulation catches
+// both: any divergence it does not explain survives the swap.
+//
+// Only an NFC checkpoint can be explained this way: B.2 is about NFC, and
+// multilingual's normalizer is a Replace that never looks at combining classes.
+func explainedByStaleCCC(tok *HF, rec *stageRecord) bool {
+	if _, ok := tok.norm.(nfcNormalizer); !ok || !hasStaleCCC(rec.Text) {
+		return false
+	}
+	for _, seg := range rec.Segments {
+		if seg.Added == "" && (staleStarterNFC{}).normalize(seg.Raw) != seg.Norm {
+			return false
+		}
+	}
+	// The added-token patterns were normalized at load time with the real NFC,
+	// which agrees with the emulation on any pattern free of staleCCC.
+	for i := range tok.added {
+		if hasStaleCCC(tok.added[i].content) {
+			return false
+		}
+	}
+	// A shallow copy shares the vocabulary and merges, which Encode only reads.
+	rust := *tok
+	rust.norm = staleStarterNFC{}
+	ids := rust.Encode(rec.Text)
+	return slices.Equal(ids, rec.IDs) && slices.Equal(tokensOf(&rust, ids), rec.Tokens)
 }
 
 // attribute names the first stage whose output disagrees with the oracle's, and
@@ -407,66 +441,50 @@ func truncate(s string, n int) string {
 
 // TestFindingsAcceptOnlyDecidedClass checks the classifier behind
 // TestDifferentialCorpus on synthetic findings, so it runs without the corpus.
-// Only B.2's deviation is accepted: a normalize mismatch, on a checkpoint whose
-// normalizer is NFC, on a line carrying a codepoint whose combining class
-// tokenizers 0.23.2 lacks. Every other mismatch still fails the run.
+// Only B.2's deviation is accepted: a normalize mismatch that
+// explainedByStaleCCC explains. A mismatch first seen at any other stage still
+// fails the run, explained or not.
 func TestFindingsAcceptOnlyDecidedClass(t *testing.T) {
-	const (
-		stale = "a\u0301\u07fd\u0316" // U+07FD is in staleCCC
-		plain = "a\u0301\u0316"       // combining marks both tables agree on
-	)
 	for _, c := range []struct {
 		name              string
-		nfc               bool
 		stages            []stage
-		texts             []string
+		explained         []bool
 		accepted, failing int
 		normalizeCount    int
 	}{
 		{
-			name: "normalize with an allowlisted codepoint", nfc: true,
-			stages: []stage{stageNormalize}, texts: []string{stale},
+			name:   "explained normalize",
+			stages: []stage{stageNormalize}, explained: []bool{true},
 			accepted: 1, failing: 0, normalizeCount: 1,
 		},
 		{
-			name: "normalize without one", nfc: true,
-			stages: []stage{stageNormalize}, texts: []string{plain},
+			name:   "unexplained normalize",
+			stages: []stage{stageNormalize}, explained: []bool{false},
 			accepted: 0, failing: 1, normalizeCount: 1,
 		},
 		{
-			// Multilingual has no NFC step, so B.2 cannot explain a mismatch there.
-			name: "normalize with an allowlisted codepoint, no NFC", nfc: false,
-			stages: []stage{stageNormalize}, texts: []string{stale},
-			accepted: 0, failing: 1, normalizeCount: 1,
-		},
-		{
-			name: "bpe on a line with an allowlisted codepoint", nfc: true,
-			stages: []stage{stageBPE}, texts: []string{stale},
-			accepted: 0, failing: 1,
-		},
-		{
-			name: "every other stage on a line with an allowlisted codepoint", nfc: true,
+			name: "every other stage, explained",
 			stages: []stage{
 				stageAdded, stagePretokenize, stageBPE,
 				stageDropped, stageAmbiguous, stageUnattributed,
 			},
-			texts:    []string{stale, stale, stale, stale, stale, stale},
-			accepted: 0, failing: 6,
+			explained: []bool{true, true, true, true, true, true},
+			accepted:  0, failing: 6,
 		},
 		{
-			name: "mix", nfc: true,
+			name: "mix",
 			stages: []stage{
 				stageNormalize, stageNormalize, stageNormalize,
 				stagePretokenize, stageAdded, stageUnattributed,
 			},
-			texts:    []string{stale, "x\U0001e4ef\u0301", plain, stale, stale, stale},
-			accepted: 2, failing: 4, normalizeCount: 3,
+			explained: []bool{true, true, false, true, true, false},
+			accepted:  2, failing: 4, normalizeCount: 3,
 		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			f := newFindings(c.nfc)
+			f := newFindings()
 			for i, s := range c.stages {
-				f.record(s, c.texts[i], esc(c.texts[i]))
+				f.record(s, c.explained[i], fmt.Sprintf("repro %d", i))
 			}
 			if f.accepted != c.accepted || f.failing() != c.failing {
 				t.Errorf("accepted %d, failing %d; want %d, %d",
@@ -490,18 +508,106 @@ func TestFindingsAcceptOnlyDecidedClass(t *testing.T) {
 // the slots, which is exactly the run in which a new divergence must still be
 // printed, not only counted.
 func TestFindingsReportFailingRepro(t *testing.T) {
-	f := newFindings(true)
+	f := newFindings()
 	for i := range 2 * maxRepros {
-		text := strings.Repeat("a", i) + "\u07fd"
-		f.record(stageNormalize, text, esc(text))
+		f.record(stageNormalize, true, esc(strings.Repeat("a", i)+"\u07fd"))
 	}
-	failing := "a new and longer divergence\u0301\u0316"
-	f.record(stageNormalize, failing, esc(failing))
+	failing := esc("a new and longer divergence\u0301\u0316")
+	f.record(stageNormalize, false, failing)
 
 	if f.accepted != 2*maxRepros || f.failing() != 1 {
 		t.Fatalf("accepted %d, failing %d; want %d, 1", f.accepted, f.failing(), 2*maxRepros)
 	}
-	if r := f.report(); !strings.Contains(r, esc(failing)) {
-		t.Errorf("report omits the failing repro %q:\n%s", esc(failing), r)
+	if r := f.report(); !strings.Contains(r, failing) {
+		t.Errorf("report omits the failing repro %q:\n%s", failing, r)
+	}
+}
+
+// oracleRecord builds the record scripts/dump_stages.py would write for a line
+// whose unclaimed segments the oracle normalized to segs[i].Norm. Pre, IDs and
+// Tokens follow from Norm through this package's pre-tokenizer and BPE, which
+// TestGolden pins to the oracle's, so the only thing a test chooses is the
+// normalization.
+func oracleRecord(tok *HF, segs ...stageSegment) *stageRecord {
+	rec := &stageRecord{Derived: true, Segments: segs}
+	var text strings.Builder
+	for i := range rec.Segments {
+		seg := &rec.Segments[i]
+		text.WriteString(seg.Raw)
+		if seg.Added == "" {
+			seg.Pre = tok.pretok.preTokenize(seg.Norm)
+		}
+	}
+	rec.Text = text.String()
+	rec.IDs = replayIDs(tok, rec.Segments)
+	rec.Tokens = tokensOf(tok, rec.IDs)
+	return rec
+}
+
+// TestDifferentialAcceptsOnlyStaleCCCCause runs compareOne on synthetic oracle
+// records, so it needs no corpus. A normalize mismatch is accepted only when
+// tokenizers 0.23.2's missing combining classes explain all of it: a line that
+// merely carries a stale-CCC codepoint, with the divergence somewhere else,
+// must still fail the run (B.11).
+func TestDifferentialAcceptsOnlyStaleCCCCause(t *testing.T) {
+	tok := mustOpenMini(t, "mini_en")
+	for _, c := range []struct {
+		name     string
+		rec      *stageRecord
+		accepted int
+	}{
+		{
+			// Go reorders U+0334 (ccc 1) before U+07FD (ccc 220); Rust, which
+			// sees U+07FD as a starter, leaves the order alone.
+			name:     "reordering around a stale mark",
+			rec:      oracleRecord(tok, stageSegment{Raw: "x̴߽", Norm: "x̴߽"}),
+			accepted: 1,
+		},
+		{
+			// U+07FD (220) does not block U+0301 (230) from composing with e in
+			// Go; as a Rust starter it does.
+			name:     "composition blocked by a stale mark",
+			rec:      oracleRecord(tok, stageSegment{Raw: "é߽", Norm: "é߽"}),
+			accepted: 1,
+		},
+		{
+			name:     "stale mark present, divergence elsewhere in the segment",
+			rec:      oracleRecord(tok, stageSegment{Raw: "x߽ é", Norm: "x߽ é"}),
+			accepted: 0,
+		},
+		{
+			name: "stale divergence plus an unrelated one in the same segment",
+			rec: oracleRecord(tok,
+				stageSegment{Raw: "x̴߽ é", Norm: "x̴߽ é"}),
+			accepted: 0,
+		},
+		{
+			// attribute reports the first segment, which B.2 explains; the
+			// second diverges for a reason B.2 has nothing to do with.
+			name: "stale divergence plus an unrelated one in another segment",
+			rec: oracleRecord(tok,
+				stageSegment{Raw: "x̴߽", Norm: "x̴߽"},
+				stageSegment{Added: "[CLS]", Raw: "[CLS]"},
+				stageSegment{Raw: "é", Norm: "é"}),
+			accepted: 0,
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFindings()
+			compareOne(tok, c.rec, f)
+			if f.total() != 1 || f.counts[stageNormalize] != 1 {
+				t.Fatalf("want one normalize mismatch, got %v", f.counts)
+			}
+			if f.accepted != c.accepted || f.failing() != 1-c.accepted {
+				t.Errorf("accepted %d, failing %d; want %d, %d\n%s",
+					f.accepted, f.failing(), c.accepted, 1-c.accepted, f.report())
+			}
+		})
+	}
+	// Multilingual normalizes with a Replace, not NFC, so B.2 cannot explain
+	// anything there, whatever the line carries.
+	ml := mustOpenMini(t, "mini_ml")
+	if rec := oracleRecord(ml, stageSegment{Raw: "x\u07fd\u0334", Norm: "x\u07fd\u0334"}); explainedByStaleCCC(ml, rec) {
+		t.Error("explainedByStaleCCC accepted a line on a checkpoint without NFC")
 	}
 }

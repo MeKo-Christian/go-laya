@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode"
 
 	"golang.org/x/text/unicode/norm"
 )
@@ -49,6 +50,16 @@ func TestStaleCCCTable(t *testing.T) {
 	for _, r := range []rune{0x0334, 0x0340, 0x0341, 0x0343, 0x0344, 0x0301, 'a'} {
 		if hasStaleCCC(string(r)) {
 			t.Errorf("U+%04X is in staleCCC, but is not a disagreement the probe confirmed", r)
+		}
+	}
+
+	// staleStarterNFC splits at the members and puts them back unchanged, which
+	// is exact only if none of them decomposes or takes part in a composition.
+	// Every canonical composite is the inverse of a canonical decomposition, so
+	// it is enough that no codepoint decomposes to anything holding a member.
+	for r := rune(0); r <= unicode.MaxRune; r++ {
+		if d := norm.NFD.PropertiesString(string(r)).Decomposition(); d != nil && hasStaleCCC(string(d)) {
+			t.Errorf("U+%04X decomposes to %q, which holds a staleCCC codepoint", r, d)
 		}
 	}
 
