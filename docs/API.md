@@ -477,6 +477,7 @@ var (
 	ErrEmptyQuestions          = errors.New("laya: no questions")          // Python: TypeError from collate_items returning None
 	ErrDuplicateQuestionID     = errors.New("laya: duplicate question id") // Python: impossible in a dict
 	ErrNoOptions               = errors.New("laya: question has no options") // Python: ValueError from an empty softmax
+	ErrTooFewOptions           = errors.New("laya: no question has two or more options") // D32; Python: topk(2) raises in the forward pass (common.py:122)
 	ErrInvalidLimits           = errors.New("laya: max_len and head_max_len must be positive") // SetLimits, WithLimits
 	ErrInvalidRevision         = errors.New("laya: invalid revision")    // WithRevision / WithRouterRevision not safe in a URL and a cache path
 	ErrUnknownRuntime          = errors.New("laya: unknown runtime")     // WithRuntime / WithRouterRuntime neither RuntimeONNX nor RuntimeNative
