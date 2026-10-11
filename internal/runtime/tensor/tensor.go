@@ -14,19 +14,45 @@ type Tensor struct {
 
 // New creates a tensor from data and shape.
 func New(data []float32, shape []int64) (*Tensor, error) {
-	total, err := shapeElemCount(shape)
-	if err != nil {
+	if err := checkData(data, shape); err != nil {
 		return nil, err
-	}
-
-	if len(data) != total {
-		return nil, fmt.Errorf("tensor: data length %d does not match shape %v (%d elements)", len(data), shape, total)
 	}
 
 	s := append([]int64(nil), shape...)
 	d := append([]float32(nil), data...)
 
 	return &Tensor{shape: s, data: d}, nil
+}
+
+// FromOwned creates a tensor that takes over data instead of copying it, and
+// rejects what New rejects, with the same error. The caller hands data over:
+// it must not keep, modify or pass data on afterwards, because the tensor and
+// every tensor sharing its storage would see the change. shape is copied, as
+// in New; it is a few int64s, and a caller may reuse it.
+//
+// It is for data nothing else holds, such as a freshly decoded weight, where
+// New's copy would keep two of the same tensor alive at once.
+func FromOwned(data []float32, shape []int64) (*Tensor, error) {
+	if err := checkData(data, shape); err != nil {
+		return nil, err
+	}
+
+	return newOwned(data, append([]int64(nil), shape...)), nil
+}
+
+// checkData is New's and FromOwned's validation: shape must be valid and
+// data must hold exactly its elements.
+func checkData(data []float32, shape []int64) error {
+	total, err := shapeElemCount(shape)
+	if err != nil {
+		return err
+	}
+
+	if len(data) != total {
+		return fmt.Errorf("tensor: data length %d does not match shape %v (%d elements)", len(data), shape, total)
+	}
+
+	return nil
 }
 
 // newOwned creates a Tensor taking ownership of the provided data and shape
