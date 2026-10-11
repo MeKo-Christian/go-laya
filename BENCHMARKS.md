@@ -343,7 +343,10 @@ splits, row offsets and each file's sha256, and the harness refuses a file whose
 
 **Method.** `TestInt8Calibration` (`internal/evalset`) asks every case through the public API, as a
 caller would opt in: a `Router` over the local checkpoint with `WithONNXDir` set to the fp32
-exports, then to the int8 exports. The inputs are the same for both. It scores the answers as
+exports, then to the int8 exports. The inputs are the same for both. The fp32 side is the export
+each int8 graph was quantized from, as the graph's `laya.int8` stamp names it
+(`laya-<name>-dynamo.onnx`), so the two sides are one graph at two precisions; the test fails if
+`LAYA_ONNX_DIR` does not hold that file. It scores the answers as
 upstream's own evaluation notebook does
 (`original/notebooks/laya_finetune_typed_decisions_2xT4_kaggle.ipynb`). It reads the probabilities
 after the checkpoint's temperatures and the four-decimal rounding, exactly as a caller gets them,
@@ -487,7 +490,8 @@ checkpoints. That failure is B.5.4's verdict.
 - `int8-calib-{english,multilingual,typed-decisions}.txt` and `int8-calib-results.json`: the
   calibration runs.
 - `int8-recipe-variants-english.txt`: the recipe comparison.
-- `bench-onnx-int8-load.txt` and `bench-onnx-fp32-load.txt`: the two sweeps.
+- `bench-onnx-int8-quiet.txt` and `bench-onnx-fp32-quiet.txt`: the two sweeps the speed tables
+  are from; `bench-onnx-int8-load.txt` and `bench-onnx-fp32-load.txt`: the first run, under load.
 
 ### Native backend (M8)
 

@@ -1,4 +1,6 @@
-# PLAN.md B.5.3, int8 vs fp32 calibration, checkpoint typed-decisions. Under load: two other sessions shared the machine.
+# PLAN.md B.5.3, int8 vs fp32 calibration, checkpoint typed-decisions. Rerun after PR #59's review: the harness now takes the fp32
+# side from the file the int8 graph's laya.int8 stamp names as its source (the log line below). The JSON results are
+# bit-identical to the first runs, so the baseline was already that graph. Other sessions shared the machine.
 #
 # LAYA_MODELS=<main>/models LAYA_ONNX_DIR=<main>/build/onnx LAYA_ONNX_INT8_DIR=<main>/build/onnx-int8 \
 #   LAYA_EVAL_DIR=<main>/build/eval LAYA_EVAL_CHECKPOINTS=typed-decisions CGO_ENABLED=0 \
@@ -6,19 +8,20 @@
 #   go test -count=1 -run TestInt8Calibration -v -timeout 4h ./internal/evalset/
 #
 # Subsets: docs/benchmarks/eval-manifest.json (sha256-checked). ORT 1.23.0, CPU. The test fails on every cell
-# that misses a threshold of internal/evalset/metrics.go: that failure is B.5.4's verdict. A first run with the
-# harness before it enforced the thresholds gave identical numbers. The last line is uptime after the run.
+# that misses a threshold of internal/evalset/metrics.go: that failure is B.5.4's verdict. The last line is
+# uptime after the run.
 #
-2026-10-11T05:26:31+02:00
- 05:26:31 up 15 days, 17:11,  1 user,  load average: 11,70, 12,49, 11,72
+2026-10-11T12:48:16+02:00
+ 12:48:16 up 16 days, 33 min,  1 user,  load average: 14,71, 12,51, 9,33
 nproc: 12
 go version go1.26.9 linux/amd64
 === RUN   TestInt8Calibration
 === RUN   TestInt8Calibration/typed-decisions
-    int8_test.go:252: typed-decisions: 800 cases, both precisions, in 7m37s
-    int8_test.go:266: typed-decisions choice: int8 fails the thresholds: flip rate 0.130 > 0.05
-    int8_test.go:266: typed-decisions score: int8 fails the thresholds: ECE +0.0686 > 0.02; Brier +0.0367 > 0.02; flip rate 0.195 > 0.05
-    int8_test.go:278: 
+    int8_test.go:354: typed-decisions: fp32 baseline <main>/build/onnx/laya-typed-decisions-dynamo.onnx, the source <main>/build/onnx-int8/laya-typed-decisions.onnx's laya.int8 stamp records
+    int8_test.go:366: typed-decisions: 800 cases, both precisions, in 10m2s
+    int8_test.go:380: typed-decisions choice: int8 fails the thresholds: flip rate 0.130 > 0.05
+    int8_test.go:380: typed-decisions score: int8 fails the thresholds: ECE +0.0686 > 0.02; Brier +0.0367 > 0.02; flip rate 0.195 > 0.05
+    int8_test.go:392: 
         | checkpoint | set | n | ECE fp32 | ECE int8 | Brier fp32 | Brier int8 | acc fp32 | acc int8 | MAE fp32 | MAE int8 | flips | max Δp | verdict |
         | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
         | typed-decisions | **choice** | 400 | 0.0906 | 0.0991 | 0.4217 | 0.4239 | 0.725 | 0.723 | — | — | 52 (13.0%) | 0.9050 | FAIL: flip rate 0.130 > 0.05 |
@@ -29,14 +32,14 @@ go version go1.26.9 linux/amd64
         | typed-decisions | sst2 | 200 | 0.4871 | 0.4483 | 0.9657 | 0.8603 | 0.500 | 0.505 | — | — | 1 (0.5%) | 0.4863 |  |
         | typed-decisions | yelp | 200 | 0.3370 | 0.4056 | 0.9103 | 0.9471 | 0.375 | 0.285 | 1.0770 | 1.1666 | 39 (19.5%) | 0.6442 |  |
         
---- FAIL: TestInt8Calibration (457.47s)
-    --- FAIL: TestInt8Calibration/typed-decisions (457.46s)
+--- FAIL: TestInt8Calibration (602.12s)
+    --- FAIL: TestInt8Calibration/typed-decisions (602.12s)
 FAIL
-FAIL	github.com/MeKo-Christian/go-laya/internal/evalset	457.474s
+FAIL	github.com/MeKo-Christian/go-laya/internal/evalset	602.152s
 FAIL
 Command exited with non-zero status 1
 	Command being timed: "go test -count=1 -run TestInt8Calibration -v -timeout 4h ./internal/evalset/"
-	Elapsed (wall clock) time (h:mm:ss or m:ss): 7:37.72
-	Maximum resident set size (kbytes): 2008452
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 10:02.69
+	Maximum resident set size (kbytes): 2006932
 exit 1
- 05:34:08 up 15 days, 17:19,  1 user,  load average: 11,68, 12,22, 11,92
+ 12:58:19 up 16 days, 43 min,  1 user,  load average: 13,45, 14,19, 11,78

@@ -1,4 +1,6 @@
-# PLAN.md B.5.3, int8 vs fp32 calibration, checkpoint english. Under load: two other sessions shared the machine.
+# PLAN.md B.5.3, int8 vs fp32 calibration, checkpoint english. Rerun after PR #59's review: the harness now takes the fp32
+# side from the file the int8 graph's laya.int8 stamp names as its source (the log line below). The JSON results are
+# bit-identical to the first runs, so the baseline was already that graph. Other sessions shared the machine.
 #
 # LAYA_MODELS=<main>/models LAYA_ONNX_DIR=<main>/build/onnx LAYA_ONNX_INT8_DIR=<main>/build/onnx-int8 \
 #   LAYA_EVAL_DIR=<main>/build/eval LAYA_EVAL_CHECKPOINTS=english CGO_ENABLED=0 \
@@ -6,19 +8,20 @@
 #   go test -count=1 -run TestInt8Calibration -v -timeout 4h ./internal/evalset/
 #
 # Subsets: docs/benchmarks/eval-manifest.json (sha256-checked). ORT 1.23.0, CPU. The test fails on every cell
-# that misses a threshold of internal/evalset/metrics.go: that failure is B.5.4's verdict. A first run with the
-# harness before it enforced the thresholds gave identical numbers. The last line is uptime after the run.
+# that misses a threshold of internal/evalset/metrics.go: that failure is B.5.4's verdict. The last line is
+# uptime after the run.
 #
-2026-10-11T05:15:17+02:00
- 05:15:17 up 15 days, 17:00,  1 user,  load average: 9,90, 12,35, 10,51
+2026-10-11T12:35:49+02:00
+ 12:35:49 up 16 days, 20 min,  1 user,  load average: 11,35, 6,50, 4,72
 nproc: 12
 go version go1.26.9 linux/amd64
 === RUN   TestInt8Calibration
 === RUN   TestInt8Calibration/english
-    int8_test.go:252: english: 800 cases, both precisions, in 8m20s
-    int8_test.go:266: english choice: int8 fails the thresholds: flip rate 0.155 > 0.05
-    int8_test.go:266: english score: int8 fails the thresholds: flip rate 0.105 > 0.05
-    int8_test.go:278: 
+    int8_test.go:354: english: fp32 baseline <main>/build/onnx/laya-english-dynamo.onnx, the source <main>/build/onnx-int8/laya-english.onnx's laya.int8 stamp records
+    int8_test.go:366: english: 800 cases, both precisions, in 8m33s
+    int8_test.go:380: english choice: int8 fails the thresholds: flip rate 0.155 > 0.05
+    int8_test.go:380: english score: int8 fails the thresholds: flip rate 0.105 > 0.05
+    int8_test.go:392: 
         | checkpoint | set | n | ECE fp32 | ECE int8 | Brier fp32 | Brier int8 | acc fp32 | acc int8 | MAE fp32 | MAE int8 | flips | max Δp | verdict |
         | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
         | english | **choice** | 400 | 0.1811 | 0.1731 | 0.4755 | 0.4931 | 0.715 | 0.708 | — | — | 62 (15.5%) | 0.9973 | FAIL: flip rate 0.155 > 0.05 |
@@ -29,14 +32,14 @@ go version go1.26.9 linux/amd64
         | english | sst2 | 200 | 0.4999 | 0.4777 | 0.9997 | 0.9534 | 0.500 | 0.515 | — | — | 3 (1.5%) | 0.9656 |  |
         | english | yelp | 200 | 0.5493 | 0.5270 | 1.1741 | 1.1282 | 0.300 | 0.280 | 1.3529 | 1.3629 | 21 (10.5%) | 0.6863 |  |
         
---- FAIL: TestInt8Calibration (500.36s)
-    --- FAIL: TestInt8Calibration/english (500.36s)
+--- FAIL: TestInt8Calibration (512.99s)
+    --- FAIL: TestInt8Calibration/english (512.99s)
 FAIL
-FAIL	github.com/MeKo-Christian/go-laya/internal/evalset	500.385s
+FAIL	github.com/MeKo-Christian/go-laya/internal/evalset	513.026s
 FAIL
 Command exited with non-zero status 1
 	Command being timed: "go test -count=1 -run TestInt8Calibration -v -timeout 4h ./internal/evalset/"
-	Elapsed (wall clock) time (h:mm:ss or m:ss): 8:20.89
-	Maximum resident set size (kbytes): 1814932
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 8:33.76
+	Maximum resident set size (kbytes): 1812608
 exit 1
- 05:23:38 up 15 days, 17:08,  1 user,  load average: 13,66, 13,19, 11,75
+ 12:44:23 up 16 days, 29 min,  1 user,  load average: 11,61, 11,23, 8,16
