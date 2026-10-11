@@ -60,10 +60,15 @@ func NoulOutcome(p float64) Outcome {
 	return Outcome{Probs: []float64{1 - p, p}, Pred: pred, Conf: max(p, 1-p)}
 }
 
+// normalized divides probs by their sum. All zeros, which four-decimal
+// rounding cannot produce from a softmax, stays all zeros rather than NaN.
 func normalized(probs []float64) []float64 {
 	var sum float64
 	for _, v := range probs {
 		sum += v
+	}
+	if sum == 0 {
+		return slices.Clone(probs)
 	}
 	p := make([]float64, len(probs))
 	for i, v := range probs {

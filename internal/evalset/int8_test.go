@@ -3,8 +3,9 @@ package evalset
 // The int8 calibration harness, PLAN.md B.5.3. It is gated: it needs the
 // checkpoints (LAYA_MODELS), the fp32 exports (LAYA_ONNX_DIR), the int8 ones
 // (LAYA_ONNX_INT8_DIR, written by scripts/export_onnx.py --int8) and the
-// subsets cmd/laya-evalfetch draws (LAYA_EVAL_DIR, default build/eval). Run it
-// one checkpoint per process, under a memory cap:
+// subsets cmd/laya-evalfetch draws (LAYA_EVAL_DIR, default build/eval). It
+// fails where int8 misses a threshold of metrics.go, which is B.5.4's gate.
+// Run it one checkpoint per process, under a memory cap:
 //
 //	LAYA_EVAL_CHECKPOINTS=english systemd-run --user --scope -q -p MemoryMax=8G \
 //	    -p MemorySwapMax=0 go test -run TestInt8Calibration -v -timeout 4h ./internal/evalset/
@@ -25,6 +26,7 @@ import (
 
 	"github.com/MeKo-Christian/go-laya"
 	"github.com/MeKo-Christian/go-laya/internal/golden"
+	"github.com/MeKo-Christian/go-laya/question"
 )
 
 var checkpoints = []string{golden.English, golden.Multilingual, golden.TypedDecisions}
@@ -75,27 +77,41 @@ func answerAll(ctx context.Context, ck string, cases []Case, dir string, quantiz
 }
 
 // outcomeOf reads an answer as a caller gets it: after the checkpoint's
-// temperatures, rounded to four decimals.
+// temperatures, rounded to four decimals. The probabilities are looked up by
+// key, as the notebook's p_ans["probabilities"].get(k) does, so label i reads
+// option i whatever order they come back in.
 func outcomeOf(c Case, a laya.Answer) (Outcome, error) {
-	probs := make([]float64, len(a.Probabilities))
-	for i, e := range a.Probabilities {
-		probs[i] = e.P
+	if a.Type != c.Type.String() {
+		return Outcome{}, fmt.Errorf("a %s answer to a %v question", a.Type, c.Type)
 	}
-	switch {
-	case a.Type == "noul" && a.Noul != nil:
-		return NoulOutcome(*a.Noul), nil
-	case len(probs) != c.Classes:
-		return Outcome{}, fmt.Errorf("%s answer has %d probabilities for %d classes", a.Type, len(probs), c.Classes)
-	case a.Type == "score" && a.Score != nil:
-		return ScoreOutcome(probs, *a.Score), nil
-	case a.Type == "choice":
-		i := slices.IndexFunc(a.Probabilities, func(e laya.ProbEntry) bool { return e.Key == a.Choice })
-		if i < 0 {
-			return Outcome{}, fmt.Errorf("choice %q is not an option", a.Choice)
+	if c.Type == question.Noul {
+		if a.Noul == nil {
+			return Outcome{}, errors.New("a noul answer without P(true)")
 		}
-		return ChoiceOutcome(probs, i), nil
+		return NoulOutcome(*a.Noul), nil
 	}
-	return Outcome{}, fmt.Errorf("unexpected %s answer for a %v question", a.Type, c.Type)
+	if len(a.Probabilities) != len(c.Keys) {
+		return Outcome{}, fmt.Errorf("%s answer has %d probabilities for %d classes", a.Type, len(a.Probabilities), len(c.Keys))
+	}
+	probs := make([]float64, len(c.Keys))
+	for i, k := range c.Keys {
+		j := slices.IndexFunc(a.Probabilities, func(e laya.ProbEntry) bool { return e.Key == k })
+		if j < 0 {
+			return Outcome{}, fmt.Errorf("%s answer has no probability for %q", a.Type, k)
+		}
+		probs[i] = a.Probabilities[j].P
+	}
+	if c.Type == question.Score {
+		if a.Score == nil {
+			return Outcome{}, errors.New("a score answer without its score")
+		}
+		return ScoreOutcome(probs, *a.Score), nil
+	}
+	i := slices.Index(c.Keys, a.Choice)
+	if i < 0 {
+		return Outcome{}, fmt.Errorf("choice %q is not an option", a.Choice)
+	}
+	return ChoiceOutcome(probs, i), nil
 }
 
 // openRouter is the real opener: a Router over the local checkpoint, with
@@ -179,6 +195,10 @@ func loadCases(t *testing.T, manifest, dir string) map[string][]Case {
 		if !ok {
 			t.Fatalf("the manifest has no %s", s.Name)
 		}
+		if e.Dataset != s.Dataset || e.Config != s.Config || e.Split != s.Split {
+			t.Fatalf("the manifest's %s is %s %s/%s, the spec's %s %s/%s",
+				s.Name, e.Dataset, e.Config, e.Split, s.Dataset, s.Config, s.Split)
+		}
 		rows, err := ReadSubset(dir, e)
 		if err != nil {
 			t.Fatal(err)
@@ -206,7 +226,7 @@ func TestInt8Calibration(t *testing.T) {
 		evalDir = filepath.Join(root, "build", "eval")
 	}
 	if _, err := os.Stat(evalDir); err != nil {
-		t.Skipf("no subsets in %s (go run ./cmd/laya-evalfetch, or set LAYA_EVAL_DIR)", evalDir)
+		t.Skipf("no subsets in %s (go run ./cmd/laya-evalfetch -out %s, or set LAYA_EVAL_DIR)", evalDir, evalDir)
 	}
 	cases := loadCases(t, filepath.Join(root, "docs", "benchmarks", "eval-manifest.json"), evalDir)
 
@@ -240,7 +260,10 @@ func TestInt8Calibration(t *testing.T) {
 				ok, why := s.Verdict()
 				verdict := "pass"
 				if !ok {
+					// The gate of B.5.4 and D33: int8 holds up only where
+					// every cell passes.
 					verdict = "FAIL: " + strings.Join(why, "; ")
+					t.Errorf("%s %v: int8 fails the thresholds: %s", ck, s.Type, strings.Join(why, "; "))
 				}
 				out[s.Type.String()] = jsonSummary(s, verdict)
 				sb.WriteString(tableRow(ck, "**"+s.Type.String()+"**", s, verdict))

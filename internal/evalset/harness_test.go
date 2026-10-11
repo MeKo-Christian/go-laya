@@ -85,9 +85,21 @@ func TestOutcomeOf(t *testing.T) {
 	if err != nil || o.Pred != 2 || o.Conf != 0.6 {
 		t.Errorf("choice outcome = %+v, %v; want pred 2, conf 0.6", o, err)
 	}
+	// Looked up by key: the same answer with its entries reversed scores the
+	// same.
+	rev := slices.Clone(a.Probabilities)
+	slices.Reverse(rev)
+	if o2, err := outcomeOf(choice, laya.Answer{Type: "choice", Choice: "business", Probabilities: rev}); err != nil ||
+		!slices.Equal(o2.Probs, o.Probs) || o2.Pred != 2 {
+		t.Errorf("reversed entries: %+v, %v; want %+v", o2, err, o)
+	}
 	a.Probabilities = a.Probabilities[:3]
 	if _, err := outcomeOf(choice, a); err == nil {
 		t.Error("three probabilities for four options were accepted")
+	}
+	p0 := 0.5
+	if _, err := outcomeOf(choice, laya.Answer{Type: "noul", Noul: &p0}); err == nil {
+		t.Error("a noul answer to a choice question was accepted")
 	}
 
 	yelp, _ := SpecByName("yelp")

@@ -128,12 +128,16 @@ func (s Spec) Extract(offset int, raw json.RawMessage) (Row, error) {
 }
 
 // Case is one row as the model is asked it: the state, its one question, and
-// the index of the right answer among the question's Classes answers.
+// the index of the right answer among the question's Classes answers. Keys
+// are the keys an answer's probabilities come back under, in label order: the
+// option keys of a choice, "0" to "k-1" for a score, none for a noul, whose
+// answer is P(true).
 type Case struct {
 	State     jsonx.Obj
 	Questions question.Questions
 	Type      question.QType
 	Classes   int
+	Keys      []string
 	Label     int
 }
 
@@ -147,6 +151,7 @@ func (s Spec) Case(r Row) (Case, error) {
 		Questions: question.Questions{{ID: QuestionID, Q: s.Question}},
 		Type:      s.Question.Type(),
 		Classes:   s.classes(),
+		Keys:      s.keys(),
 		Label:     r.Label,
 	}, nil
 }
@@ -161,6 +166,26 @@ func (s Spec) classes() int {
 		return len(q.Levels)
 	default:
 		return 2 // a noul is always false, true
+	}
+}
+
+// keys are the probability keys of s's answers, in label order.
+func (s Spec) keys() []string {
+	switch q := s.Question.(type) {
+	case question.ChoiceQuestion:
+		keys := make([]string, len(q.Opts))
+		for i, o := range q.Opts {
+			keys[i] = o.Key
+		}
+		return keys
+	case question.ScoreQuestion:
+		keys := make([]string, len(q.Levels))
+		for i := range keys {
+			keys[i] = strconv.Itoa(i)
+		}
+		return keys
+	default:
+		return nil
 	}
 }
 

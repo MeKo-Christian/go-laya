@@ -20,7 +20,7 @@ import (
 const maxPage = 8 << 20
 
 // maxAttempts is how often one request is tried before Fetch gives up. With
-// the backoff doubling from 5 s, the last wait is 160 s.
+// the backoff doubling from 5 s, the longest wait is 80 s.
 const maxAttempts = 6
 
 // SampleOffsets draws n distinct row offsets out of numRows, ascending. The
@@ -74,42 +74,82 @@ type pageRow struct {
 // truncated or missing. The Entry it returns has everything but the SHA256,
 // which belongs to the file the caller writes.
 func (f *Fetcher) Fetch(ctx context.Context, s Spec, n int, seed uint64) (Entry, []Row, error) {
-	probe, err := f.get(ctx, s, 0, 1)
+	numRows, err := f.probe(ctx, s)
 	if err != nil {
-		return Entry{}, nil, err
-	}
-	if err := checkFeatures(s, probe); err != nil {
 		return Entry{}, nil, err
 	}
 	e := Entry{
 		Name: s.Name, Dataset: s.Dataset, Config: s.Config, Split: s.Split,
-		NumRows: probe.NumRowsTotal, File: s.Name + ".jsonl",
-		Offsets: SampleOffsets(s.Name, probe.NumRowsTotal, n, seed),
+		NumRows: numRows, File: s.Name + ".jsonl",
+		Offsets: SampleOffsets(s.Name, numRows, n, seed),
 	}
+	rows, err := f.rows(ctx, s, numRows, e.Offsets)
+	if err != nil {
+		return Entry{}, nil, err
+	}
+	return e, rows, nil
+}
+
+// Refetch reads the rows a manifest entry records again, at its offsets,
+// with Fetch's checks. The dataset must still have e.NumRows rows, or the
+// offsets would name other ones.
+func (f *Fetcher) Refetch(ctx context.Context, s Spec, e Entry) ([]Row, error) {
+	if e.Dataset != s.Dataset || e.Config != s.Config || e.Split != s.Split {
+		return nil, fmt.Errorf("evalset: %s: the manifest records %s %s/%s, the spec is %s %s/%s",
+			s.Name, e.Dataset, e.Config, e.Split, s.Dataset, s.Config, s.Split)
+	}
+	numRows, err := f.probe(ctx, s)
+	if err != nil {
+		return nil, err
+	}
+	if numRows != e.NumRows {
+		return nil, fmt.Errorf("evalset: %s: the row count moved from the manifest's %d to %d", s.Name, e.NumRows, numRows)
+	}
+	return f.rows(ctx, s, numRows, e.Offsets)
+}
+
+// probe learns s's row count and checks its features.
+func (f *Fetcher) probe(ctx context.Context, s Spec) (int, error) {
+	p, err := f.get(ctx, s, 0, 1)
+	if err != nil {
+		return 0, err
+	}
+	if err := checkFeatures(s, p); err != nil {
+		return 0, err
+	}
+	return p.NumRowsTotal, nil
+}
+
+// rows reads the rows at offsets, ascending, page by page.
+func (f *Fetcher) rows(ctx context.Context, s Spec, numRows int, offsets []int) ([]Row, error) {
 	size := f.PageSize
 	if size <= 0 {
 		size = 100
 	}
-	rows := make([]Row, 0, len(e.Offsets))
+	rows := make([]Row, 0, len(offsets))
 	var p *page
-	for _, off := range e.Offsets {
+	for _, off := range offsets {
+		if off < 0 || off >= numRows {
+			return nil, fmt.Errorf("evalset: %s: offset %d outside %d rows", s.Name, off, numRows)
+		}
 		start := off - off%size
 		if p == nil || len(p.Rows) == 0 || p.Rows[0].RowIdx != start {
-			if p, err = f.page(ctx, s, start, min(size, e.NumRows-start), e.NumRows); err != nil {
-				return Entry{}, nil, err
+			var err error
+			if p, err = f.page(ctx, s, start, min(size, numRows-start), numRows); err != nil {
+				return nil, err
 			}
 		}
-		raw, err := f.row(ctx, s, p, off, e.NumRows)
+		raw, err := f.row(ctx, s, p, off, numRows)
 		if err != nil {
-			return Entry{}, nil, err
+			return nil, err
 		}
 		r, err := s.Extract(off, raw)
 		if err != nil {
-			return Entry{}, nil, err
+			return nil, err
 		}
 		rows = append(rows, r)
 	}
-	return e, rows, nil
+	return rows, nil
 }
 
 // page reads length rows from offset, holding the row count to numRows.
@@ -119,7 +159,10 @@ func (f *Fetcher) page(ctx context.Context, s Spec, offset, length, numRows int)
 		return nil, err
 	}
 	if p.NumRowsTotal != numRows {
-		return nil, fmt.Errorf("evalset: %s: the row count moved from %d to %d mid-fetch", s.Name, numRows, p.NumRowsTotal)
+		return nil, fmt.Errorf("evalset: %s: the row count moved from %d to %d", s.Name, numRows, p.NumRowsTotal)
+	}
+	if p.Partial {
+		return nil, fmt.Errorf("evalset: %s: the server's index went partial", s.Name)
 	}
 	return p, nil
 }

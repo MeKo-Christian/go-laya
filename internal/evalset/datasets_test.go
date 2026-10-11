@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strconv"
 	"testing"
 
 	"github.com/MeKo-Christian/go-laya/jsonx"
@@ -109,8 +110,23 @@ func TestSpecsMapRows(t *testing.T) {
 			if got := meaningOf(t, q, c.Label); got != tt.meaning {
 				t.Errorf("label %d means %q, want %q", c.Label, got, tt.meaning)
 			}
+			if tt.qtype != question.Noul && (len(c.Keys) != tt.k || c.Keys[c.Label] != keyOf(q, c.Label)) {
+				t.Errorf("keys = %q, want %d with %q at the label", c.Keys, tt.k, keyOf(q, c.Label))
+			}
+			if tt.qtype == question.Noul && c.Keys != nil {
+				t.Errorf("a noul has keys %q", c.Keys)
+			}
 		})
 	}
+}
+
+// keyOf is the probability key of answer i: the option key of a choice, the
+// level index of a score.
+func keyOf(q question.Question, i int) string {
+	if c, ok := q.(question.ChoiceQuestion); ok {
+		return c.Opts[i].Key
+	}
+	return strconv.Itoa(i)
 }
 
 // meaningOf is what index i stands for in q: the option key of a choice, the

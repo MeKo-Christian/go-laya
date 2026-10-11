@@ -196,3 +196,36 @@ func TestFetchRetries(t *testing.T) {
 		t.Fatalf("Fetch after two 429s: %v", err)
 	}
 }
+
+// TestRefetch reads a manifest's rows again from its recorded offsets, not
+// from a new draw, and refuses a dataset whose row count moved: the offsets
+// would then name other rows.
+func TestRefetch(t *testing.T) {
+	srv, _ := rowsServer(t, []string{"negative", "positive"}, nil)
+	f := &Fetcher{HTTP: srv.Client(), Base: srv.URL, PageSize: 3}
+	spec, _ := SpecByName("sst2")
+	e := Entry{
+		Name: "sst2", Dataset: spec.Dataset, Config: spec.Config, Split: spec.Split,
+		NumRows: 10, Offsets: []int{1, 7, 8}, File: "sst2.jsonl",
+	}
+
+	rows, err := f.Refetch(context.Background(), spec, e)
+	if err != nil {
+		t.Fatalf("Refetch: %v", err)
+	}
+	want := []Row{{Offset: 1, Text: "row 1", Label: 1}, {Offset: 7, Text: "row 7", Label: 1}, {Offset: 8, Text: "row 8", Label: 0}}
+	if !slices.Equal(rows, want) {
+		t.Errorf("Refetch = %+v, want %+v", rows, want)
+	}
+
+	moved := e
+	moved.NumRows = 11
+	if _, err := f.Refetch(context.Background(), spec, moved); err == nil || !strings.Contains(err.Error(), "row count") {
+		t.Errorf("Refetch with 11 recorded rows of 10: err = %v", err)
+	}
+	other := e
+	other.Split = "test"
+	if _, err := f.Refetch(context.Background(), spec, other); err == nil {
+		t.Error("Refetch accepted an entry for another split")
+	}
+}
