@@ -41,7 +41,7 @@ box under it is ticked.
 | [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done                    |
 | [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                    |
 | [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | ✅ done                    |
-| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | 🟡 B.1, B.2, B.6–B.10 done |
+| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | 🟡 B.1, B.2, B.5–B.15 done |
 | [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ✅ done                    |
 
 **Critical path to 1.0:** M7 (loader → `SystemOne` → answer parity → e2e parity → README). The
@@ -84,6 +84,10 @@ Full rationale is in [`docs/DECISIONS.md`](docs/DECISIONS.md). Index:
 | D27 | `Predict` leases its agent; a dropped agent closes after its lease    |
 | D28 | The exported struct is `Agent`; the Router's interface is `Predictor` |
 | D29 | Revision opt-in, backend ownership and cache reach                    |
+| D30 | `WithRuntime` selects the native backend                              |
+| D31 | `NaN`, `Infinity` and `-Infinity` in the config are refused           |
+| D32 | A batch with no question of two options is refused before the backend |
+| D33 | int8 not shipped; an opt-in only, via `--int8` and `WithONNXDir`      |
 
 ## 1. What we are porting — verified facts
 
@@ -638,7 +642,7 @@ the ECE/Brier inputs.
       checkout's `models` and `build/corpus`, reports en "compared: 157281, mismatching: 85", all
       85 in the `normalize` class, and ml "mismatching: 0". The divergence stays, now as a
       documented deviation: README "Differences from Python laya", `docs/ARCHITECTURE.md` §3 and
-      R1 say so. The recipe still exits 1 on en; B.11 is the follow-up.
+      R1 say so. Since B.11 (2026-10-11) the recipe accepts exactly this class and passes.
 - [ ] **B.3** Enable CUDA. Device selection works for `cpu`/`auto`/`coreml`, while `cuda` falls
       back (D22). ORT's generic `SessionOptionsAppendExecutionProvider` rejects `CUDA`, and the
       binding at D5's pin neither registers `SessionOptionsAppendExecutionProvider_CUDA_V2` nor
@@ -648,16 +652,54 @@ the ECE/Brier inputs.
 - [ ] **B.4** Establish whether `purego.Dlopen` works on Windows with ORT 1.23, or only that
       nobody has tried. If it works, widen D21's platform list.
 - **B.5 int8 dynamic quantization**, with latency and calibration measured together:
-  - [ ] **B.5.1** `onnxruntime.quantization.quantize_dynamic` over all three exports in the
+  - [x] **B.5.1** `onnxruntime.quantization.quantize_dynamic` over all three exports in the
         pinned reference environment, as a `scripts/` flag, so the artefact is reproducible.
-  - [ ] **B.5.2** Re-run `just bench-onnx` on the quantized graphs and record the speedup in
+        (2026-10-11, PR #59) `scripts/export_onnx.py --int8 --from build/onnx --from-suffix=-dynamo
+--out build/onnx-int8` quantizes the existing dynamo exports with ORT 1.30.0's
+        `quantize_dynamic` in the reference environment (`INT8_RECIPE`: `MatMul` only, per-channel
+        int8 weights, dynamic uint8 activations, `MatMulConstBOnly`, stamped as `laya.int8` with
+        its source file). About 25 s and ≤ 7.3 GB peak per checkpoint. All three keep IR 10 and
+        opset 18: 124/100/124 `MatMulInteger` + `DynamicQuantizeLinear`, with 62/49/62 activation
+        `MatMul` left in fp32. Sizes: english 1688 → 581 MB, multilingual 1290 → 915 MB (its
+        embedding stays fp32), typed-decisions 1688 → 581 MB. `TestInt8Exports` opens each in Go's
+        ORT 1.23.0 and runs all ten `logits.jsonl` batches per checkpoint: PASS. Transcripts are
+        `docs/benchmarks/raw/int8-export.json` and `int8-go-load.txt`.
+  - [x] **B.5.2** Re-run `just bench-onnx` on the quantized graphs and record the speedup in
         `BENCHMARKS.md` beside fp32. At 2–4× it changes the throughput story, **not** the
         "interactive needs a GPU" one. Say so.
-  - [ ] **B.5.3** Measure **ECE and Brier** (`calib.ECE`, `calib.Brier`) against fp32 on the same
+        (2026-10-11, PR #59) `LAYA_ONNX_DIR=build/onnx-int8 just bench-onnx 5 <out> ""`, then fp32
+        the same way, back to back on a quiet machine. At 512 tokens and 8 threads, fp32 → int8:
+        english 1947 → 844 ms (2.3×), multilingual 668 → 318 ms (2.1×), typed-decisions
+        1660 → 825 ms (2.0×). Against S3's idle fp32: 2.0×, 2.0×, 2.2×. Session load is
+        1.32/0.50/1.24 s → 0.58/0.25/0.64 s. A first run under load gave 1.5–2.8× and is kept as a
+        record. `BENCHMARKS.md` says plainly that this changes throughput, not the interactive
+        story. Transcripts are `docs/benchmarks/raw/bench-onnx-{int8,fp32}-quiet.txt` (and
+        `-load.txt` for the first run).
+  - [x] **B.5.3** Measure **ECE and Brier** (`calib.ECE`, `calib.Brier`) against fp32 on the same
         inputs, per checkpoint and per question type. This is the acceptance criterion, not a
         follow-up (R4).
-  - [ ] **B.5.4** **int8 is never the default.** Ship it, if at all, as an explicit opt-in whose
+        (2026-10-11, PR #59) `cmd/laya-evalfetch` drew 200-row seeded subsets of AG News, DAIR
+        Emotion, SST-2 and Yelp into `build/eval/`. The manifest is committed as
+        `docs/benchmarks/eval-manifest.json`; with a manifest present the tool re-reads its offsets
+        and fails on a changed sha. `TestInt8Calibration` (one checkpoint per process, 8G cap)
+        compares each int8 graph with the fp32 file its `laya.int8` stamp names as its source.
+        fp32 → int8, past a threshold in bold. english: choice ECE −0.008, Brier +0.018,
+        **15.5% flips**; score **10.5% flips**; noul passes on a degenerate baseline. multilingual:
+        choice Brier **+0.028**, **13.2% flips**; score **9.0% flips**; noul ECE **+0.164**, Brier
+        **+0.248**, **13.5% flips**. typed-decisions: choice **13.0% flips**; score ECE **+0.069**,
+        Brier **+0.037**, **19.5% flips**; noul passes on a degenerate baseline. The full table is
+        in `BENCHMARKS.md`, and the transcripts are `docs/benchmarks/raw/int8-calib-*.txt` and
+        `int8-calib-results.json`. Three runs gave byte-identical results: before the harness
+        enforced the thresholds, after, and after the review pinned the baseline to the stamped
+        source.
+  - [x] **B.5.4** **int8 is never the default.** Ship it, if at all, as an explicit opt-in whose
         documentation carries B.5.3's numbers.
+        (2026-10-11, PR #59) Decided against the thresholds fixed in `internal/evalset/metrics.go`
+        before B.5.3 ran (ECE and Brier at most 0.02 worse, flips ≤ 5%): **int8 fails on all three
+        checkpoints and is not shipped.** `BENCHMARKS.md`, D6 (amended) and D33 record it; D33 also
+        records the user's decision that int8 would only ever be an opt-in via the export flag and
+        `WithONNXDir`, never the default. The README says it in one sentence. `--int8` stays for
+        reproducibility. The default runtime and download set are unchanged.
 - [x] **B.6** Lint the workflows, TOML and YAML. `actionlint` would earn its place, because
       `ci.yml` is hand-edited on every formatter pin. Add it to `just ci` deliberately.
       (2026-10-09) `just lint-config` runs actionlint (with shellcheck over the `run:` blocks),
@@ -698,29 +740,86 @@ the ECE/Brier inputs.
       (common.py:70-75).
       I checked both against `original/laya/common.py:60-86` and `agent.py:255-265`.
       `git show --stat 732ee92` touches only comments; `just ci` passes.
-- [ ] **B.11** Let `TestDifferentialCorpus` accept B.2's decided NFC class and nothing else. The
+- [x] **B.11** Let `TestDifferentialCorpus` accept B.2's decided NFC class and nothing else. The
       85 en lines are a documented deviation since B.2, yet `just diff-tokenizer` still fails on
       them, so a new divergence would show only as a different count inside an expected failure.
       The 108 codepoints from `scripts/probe_ccc.py` are the natural allowlist. Found while
       settling B.2 (2026-10-10).
-- [ ] **B.12** Decide where a batch whose every choice question has a single option is refused. It
+      (2026-10-11, PR #56) A mismatch is accepted only when the stale tables explain all of it:
+      `explainedByStaleCCC` re-runs the line with `staleStarterNFC`, which emulates `tokenizers`
+      0.23.2's NFC by treating the 108 codepoints as starters, and the result must equal the
+      oracle's ids and tokens exactly. Any other stage, a `normalize` mismatch the emulation does
+      not reproduce, and any multilingual mismatch fail. The codepoints are `staleCCC` in
+      `tokenizer/staleccc_table_test.go`, regenerated with tokenizers 0.23.2 / transformers 5.17.0
+      and identical to the 2026-09-20 output. `TestStaleCCCTable` pins its size, a SHA-256 of the
+      list and known members, and checks that no codepoint decomposes to a member.
+      `TestDifferentialAcceptsOnlyStaleCCCCause` covers a stale mark on a line whose mismatch lies
+      elsewhere, a mixed cause in one segment, and a second segment after an added token; all three
+      failed before the review fix (8c46b0f). `LAYA_MODELS=… LAYA_CORPUS=… just diff-tokenizer
+build/diff-tokenizer.txt` exits 0: en "mismatching: 85", "accepted (B.2 NFC deviation): 85,
+      failing: 0"; ml "mismatching: 0". The same on merged main (199a8ff).
+- [x] **B.12** Decide where a batch whose every choice question has a single option is refused. It
       reaches the backend with kmax = 1, because `systemone.go` rejects only zero options. The
       native head errors there, matching upstream's `topk(2)`, which raises
       (`internal/head/head.go`, `checkMarkers`); the ONNX path has no check, and its failure is
       untested. Decide whether to reject this before the backend, and test both backends. Found
       while ticking 8.6 (2026-10-10).
-- [ ] **B.13** Route `safetensors.ReadHeader` through `internal/regularfile.Open`, the
+      (2026-10-11, PR #58) Refused before the backend (D32, user decision 2026-10-11): `SystemOne`
+      returns `ErrTooFewOptions`, wrapped with the question ids, when the largest option count in
+      the batch is below 2, after every question is built and before any backend call. Every path
+      into the backend (`Agent.Predict`, `Router.Predict`, `Router.SystemOne`) goes through it. A
+      one-option question beside a 2+-option one still runs, at probability 1 and confidence 1,
+      and a noul in that batch stays inside (0, 1). The head's `checkMarkers` stays as defence in
+      depth. Before the fix, ONNX failed at the graph's `TopK` node ("k argument [2] should not be
+      greater than specified axis dim value [1]"), wrapping no sentinel.
+      `TestSystemOneTooFewOptions`, `TestPredictTooFewOptions` and
+      `TestSystemOneSingleOptionInMixedBatch` (offline, with a backend that fails the test when
+      called) and `TestTooFewOptionsRealBackends` (english, ONNX and native, 8G cap):
+      `--- PASS: TestTooFewOptionsRealBackends/onnx (1.38s)`,
+      `--- PASS: TestTooFewOptionsRealBackends/native (5.31s)`. Mutations killed: a per-question
+      count, the check after the backend call, and `< 1`. `just ci` exit 0.
+- [x] **B.13** Route `safetensors.ReadHeader` through `internal/regularfile.Open`, the
       regular-file open that `safetensors.Open` and the native backend's `encoder/config.json` read
       use. It still uses a plain `os.Open`, so a FIFO path blocks it. Found while ticking 8.7
       against PR #46's review fix (2026-10-10).
-- [ ] **B.14** Route `checkpoint.LoadConfig`'s read of `rl_agent_config.json` through
+      (2026-10-11, PR #57) `ReadHeader` opens through `regularfile.Open`; it has no non-test
+      caller. `TestReadHeaderFIFO` (`header_unix_test.go`) gets `ErrIncompatibleCheckpoint` naming
+      the path as not a regular file. With `os.Open` back, it fails through its 5 s guard
+      ("ReadHeader blocked on a FIFO with no writer") instead of hanging. `just ci` passes.
+- [x] **B.14** Route `checkpoint.LoadConfig`'s read of `rl_agent_config.json` through
       `internal/regularfile.Open`. It still uses a plain `os.Open`, so a FIFO there blocks `Open`
       on either backend in a wait no context can end. Found while fixing the same for
       `encoder/config.json` in PR #49's review (2026-10-11).
-- [ ] **B.15** Decide whether `checkpoint.LoadConfig` accepts the JSON literals `NaN`, `Infinity`
+      (2026-10-11, PR #57) `LoadConfig` opens `rl_agent_config.json` through `regularfile.Open`
+      and keeps `ErrIncompatibleCheckpoint`, `fs.ErrNotExist` and the 1 MiB cap.
+      `TestLoadConfigFIFO` and the root `TestOpenConfigFIFO` (ONNX and native runtime, stubbed
+      backends) refuse a FIFO at once. With `os.Open` back, all three fail through their 5 s guard
+      ("Open blocked on a FIFO at rl_agent_config.json with no writer"). Gated
+      `TestOpenNativeGolden/multilingual` and `TestDefaultLoaderReal` pass. `just ci` passes.
+- [x] **B.15** Decide whether `checkpoint.LoadConfig` accepts the JSON literals `NaN`, `Infinity`
       and `-Infinity`, which Python's `json` parses. It refuses the whole file today. Each field
       that could carry one needs its own parity check: an infinite temperature changes what the
       logits are divided by. Found in PR #50's review (2026-10-11).
+      (2026-10-11, PR #57, user decision: keep refusing) D31. No shipped checkpoint carries one
+      (`TestLoadConfigShipped`, `LAYA_MODELS`). In a temperature `Infinity` makes every answer
+      uniform, and `NaN` and `-Infinity` become 1e-3 (`agent.py:305`).
+      `TestLoadConfigNonFiniteLiterals` puts each literal in `temperature`,
+      `temperature_by_options`, `head_layers`, `act_costs`, `max_len`, `head_max_len` and an unread
+      field; each must fail, and each must load with `2` and `±1e999`. A pre-decode step mapping
+      the literals to 0 fails all 21 cases. README "Differences from Python laya" has a row.
+- [ ] **B.16** Load the native weights without a second copy. `internal/backend/native/load.go`
+      decodes each tensor with `Float32`, then `tensor.New` copies the slice, so load briefly holds
+      two copies of one tensor, up to about 786 MB for mmBERT's `tok_embeddings`.
+      `internal/runtime/tensor` already has the unexported `newOwned`, which takes ownership;
+      expose an owning constructor and use it in `load`. Measure peak RSS at `Open` before and
+      after. Found in PR #49's review, finding 5 (2026-10-11).
+- [ ] **B.17** Open the tokenizer files and the ONNX model as regular files only, as B.13 and B.14
+      did for the config and safetensors files. `tokenizer.OpenFS` reads `tokenizer.json` and
+      `tokenizer_config.json` with `fs.ReadFile`, and `internal/onnxheader.Read` reads the model
+      with `os.ReadFile` before ORT opens the path, so a named pipe at any of them blocks `Open`.
+      `OpenFS` takes an `fs.FS`, so the check must work on an `fs.File`'s `Stat` or move to
+      `tokenizer.Open`. A FIFO test per reader, modelled on `TestReadHeaderFIFO`. Found in PR
+      #60's review (2026-10-11).
 
 ### M8 — Pure-Go native backend (after 1.0)
 
@@ -960,16 +1059,16 @@ These four cause silent wrong answers rather than loud failures:
 
 ## 6. Risks
 
-| #   | Risk                                                                                                     | Status and mitigation                                                                                                                                                                                                                                                                                    |
-| --- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| R1  | **Pure-Go tokenizer drift.** Marker positions are token indices; one off-by-one corrupts every decision. | Mitigated. Both corpora are 100 % green, a fuzz target runs, and a 157 281-line differential found one class (NFC tables, 85 lines, no natural text), kept as a documented deviation (Backlog B.2). The `Tokenizer` interface keeps `daulet/tokenizers` (CGO) as a one-day swap, which is not indicated. |
-| R2  | **ONNX export fails on ModernBERT-large** (transformers#35545).                                          | Retired by S1: all three export and validate.                                                                                                                                                                                                                                                            |
-| R3  | **CPU latency ≫ upstream's 33 ms on a T4.**                                                              | Confirmed: 0.6–1.9 s at 512 tokens (D6). Published in `BENCHMARKS.md`. The levers left are int8 (B.5, gated on calibration), a GPU provider (B.3) and the correct thread count (done).                                                                                                                   |
-| R4  | **int8 wrecks calibration.**                                                                             | B.5 measures ECE and Brier, not accuracy. int8 is never the default.                                                                                                                                                                                                                                     |
-| R5  | **`onnxruntime-purego` instability**: an untagged 31-star HEAD with a finalizer data race.               | Every `*Value` is closed (D5), and the reproduction stays behind `LAYA_ORT_FINALIZER=1`. `yalue/onnxruntime_go` is the fallback behind the `Backend` seam. CUDA needs a binding change (B.3), which is the likeliest reason the pin moves.                                                               |
-| R6  | **Upstream tokenizer/transformers drift** silently changes golden vectors.                               | Real: 4.57.6 moves multilingual by 6.96 (D7). `TestGoldenProvenance` checks every header, requirements are pinned, regeneration is byte-identical and reviewed, and `scripts/crosscheck_transformers.py` checks the next bump.                                                                           |
-| R7  | **Supply chain**: `laya.Open("someone/their-model")` must not be RCE.                                    | Mitigated in M6: hash-verified downloads that fail closed, ONNX and safetensors headers validated before the runtime sees them, pinned and verified ORT, no `os/exec`/`encoding/gob` (CI grep). See `docs/ARCHITECTURE.md` §6.                                                                           |
-| R8  | **Licensing**: derivative of an Apache-2.0 work.                                                         | `LICENSE` is kept and `NOTICE` records the derivation. Weights are Apache-2.0 and ungated. M8's lift from go-pocket-tts gets a `NOTICE` line.                                                                                                                                                            |
+| #   | Risk                                                                                                     | Status and mitigation                                                                                                                                                                                                                                                                                                                                                                       |
+| --- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R1  | **Pure-Go tokenizer drift.** Marker positions are token indices; one off-by-one corrupts every decision. | Mitigated. Both corpora are 100 % green, a fuzz target runs, and a 157 281-line differential found one class (NFC tables, 85 lines, no natural text), kept as a documented deviation (Backlog B.2); `just diff-tokenizer` accepts that class and fails on any other divergence (B.11). The `Tokenizer` interface keeps `daulet/tokenizers` (CGO) as a one-day swap, which is not indicated. |
+| R2  | **ONNX export fails on ModernBERT-large** (transformers#35545).                                          | Retired by S1: all three export and validate.                                                                                                                                                                                                                                                                                                                                               |
+| R3  | **CPU latency ≫ upstream's 33 ms on a T4.**                                                              | Confirmed: 0.6–1.9 s at 512 tokens (D6). Published in `BENCHMARKS.md`. int8 gave 2.0–2.3× but failed calibration and is not shipped (B.5, D33). The levers left are a GPU provider (B.3) and the correct thread count (done).                                                                                                                                                               |
+| R4  | **int8 wrecks calibration.**                                                                             | Realised: int8 failed B.5's calibration gate on all three checkpoints (up to 19.5 % argmax flips) and is not shipped (D33). int8 is never the default.                                                                                                                                                                                                                                      |
+| R5  | **`onnxruntime-purego` instability**: an untagged 31-star HEAD with a finalizer data race.               | Every `*Value` is closed (D5), and the reproduction stays behind `LAYA_ORT_FINALIZER=1`. `yalue/onnxruntime_go` is the fallback behind the `Backend` seam. CUDA needs a binding change (B.3), which is the likeliest reason the pin moves.                                                                                                                                                  |
+| R6  | **Upstream tokenizer/transformers drift** silently changes golden vectors.                               | Real: 4.57.6 moves multilingual by 6.96 (D7). `TestGoldenProvenance` checks every header, requirements are pinned, regeneration is byte-identical and reviewed, and `scripts/crosscheck_transformers.py` checks the next bump.                                                                                                                                                              |
+| R7  | **Supply chain**: `laya.Open("someone/their-model")` must not be RCE.                                    | Mitigated in M6: hash-verified downloads that fail closed, ONNX and safetensors headers validated before the runtime sees them, pinned and verified ORT, no `os/exec`/`encoding/gob` (CI grep). See `docs/ARCHITECTURE.md` §6.                                                                                                                                                              |
+| R8  | **Licensing**: derivative of an Apache-2.0 work.                                                         | `LICENSE` is kept and `NOTICE` records the derivation. Weights are Apache-2.0 and ungated. M8's lift from go-pocket-tts gets a `NOTICE` line.                                                                                                                                                                                                                                               |
 
 ---
 

@@ -258,6 +258,14 @@ checkpoint, and is `ErrNoGraph` otherwise.
   `head_layers`. `ActWidth` uses Python's `len` semantics.
 - **`internal/safetensors`**: the safetensors library's own header rules (≤ 100 MB JSON header,
   known dtypes, spans tiling the buffer exactly, overflow-checked).
+- **`internal/regularfile`**: `rl_agent_config.json`, `encoder/config.json` and the safetensors
+  files (header and weights) are opened through `regularfile.Open`. It opens without waiting for a
+  writer and checks the type on the opened descriptor, not on the path beforehand, so a named
+  pipe, device or directory is refused at once instead of blocking in a wait no context can end.
+  Symlinks are followed, since a cache may link to its blobs (Backlog B.13, B.14). Not yet
+  covered: `tokenizer/tokenizer.json` and `tokenizer_config.json` (`tokenizer.OpenFS` uses
+  `fs.ReadFile`) and the ONNX model (`onnxheader.Read` uses `os.ReadFile`, then ORT opens the
+  path). A named pipe at one of those paths still blocks `Open` (Backlog B.17).
 - CI forbids `encoding/gob` and `os/exec` outside tests, and filesystem `replace` directives.
 
 ## 7. Numerics parity rules
