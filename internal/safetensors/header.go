@@ -17,6 +17,7 @@ import (
 	"slices"
 
 	"github.com/MeKo-Christian/go-laya/backend"
+	"github.com/MeKo-Christian/go-laya/internal/regularfile"
 )
 
 // maxHeaderSize is the safetensors library's MAX_HEADER_SIZE.
@@ -55,8 +56,9 @@ type Header struct {
 // object. Each tensor needs a known dtype, a shape of non-negative dims and
 // data_offsets whose span is exactly its dtype's width times its element
 // count, and sorted by offset the tensors must tile the data buffer from its
-// first byte to the end of the file, with no gap and no overlap. Every failure
-// wraps backend.ErrIncompatibleCheckpoint and names path.
+// first byte to the end of the file, with no gap and no overlap. A path that
+// is not a regular file, a named pipe included, is refused without waiting on
+// it. Every failure wraps backend.ErrIncompatibleCheckpoint and names path.
 func ReadHeader(path string) (*Header, error) {
 	h, err := readHeader(path)
 	if err != nil {
@@ -66,9 +68,9 @@ func ReadHeader(path string) (*Header, error) {
 }
 
 func readHeader(path string) (*Header, error) {
-	// #nosec G304 -- path is the weights file the caller chose to load;
-	// validating it is the point.
-	f, err := os.Open(path)
+	// Opened as a regular file only: a named pipe there would otherwise
+	// block in an open nothing can interrupt.
+	f, err := regularfile.Open(path)
 	if err != nil {
 		return nil, err
 	}
