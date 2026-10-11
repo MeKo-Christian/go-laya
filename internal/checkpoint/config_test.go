@@ -387,8 +387,9 @@ func TestConfigBudgetsShipped(t *testing.T) {
 // any number that fails it, a float such as -0.5 or 0.0 included. Only a
 // positive value reaches range() in nn.TransformerEncoder, which refuses
 // anything but an int; null and a string fail the comparison itself.
-// Python's bool, an int subclass, is the one value Go reads differently, as
-// intField documents for max_len.
+// Python's bool is an int subclass, so true builds one layer and false none.
+// json.loads reads a number past float64's range as an infinity: -1e999 is
+// -inf, which fails head_layers > 0, and 1e999 is inf, which range() refuses.
 func TestConfigHeadLayers(t *testing.T) {
 	tests := []struct {
 		value string
@@ -402,14 +403,17 @@ func TestConfigHeadLayers(t *testing.T) {
 		{`-0.5`, 0},
 		{`-1.0`, 0},
 		{`-99999999999999999999999`, 0},
+		{`-1e999`, 0},
+		{`1e-999`, 0},
+		{`true`, 1},
+		{`false`, 0},
 		{`2.0`, -1},
 		{`0.5`, -1},
-		{`false`, -1},
 		{`"2"`, -1},
 		{`null`, -1},
-		{`true`, -1},
 		{`[2]`, -1},
 		{`99999999999999999999999`, -1},
+		{`1e999`, -1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.value, func(t *testing.T) {
