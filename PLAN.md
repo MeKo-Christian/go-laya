@@ -30,19 +30,19 @@ finished tasks cited in code comments refer to that history.
 Tick a box only when the work is committed and `just ci` is green. A milestone is done when every
 box under it is ticked.
 
-| Milestone                                                       | Delivers                                                | Status                           |
-| --------------------------------------------------------------- | ------------------------------------------------------- | -------------------------------- |
-| [M0 — Scaffolding](#m0--scaffolding)                            | Go module, tooling, CI, frozen Python, `Version`        | ✅ done                          |
-| [Spikes S1–S3](#3-spikes)                                       | ONNX export, binding choice, latency floor              | ✅ done                          |
-| [M1 — Reference harness](#m1--the-python-reference-harness)     | `testdata/*.jsonl` golden vectors                       | ✅ done                          |
-| [M2 — Tier-1 core](#m2--tier-1-core)                            | `jsonx`, `lang`, `mailtext`, `presets`, render          | ✅ done                          |
-| [M3 — Router](#m3--router)                                      | `Route`, model registry, LRU                            | ✅ done                          |
-| [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done                          |
-| [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done                          |
-| [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                          |
-| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | ✅ done                          |
-| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | 🟡 B.1, B.2, B.5–B.15, B.18 done |
-| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ✅ done                          |
+| Milestone                                                       | Delivers                                                | Status                     |
+| --------------------------------------------------------------- | ------------------------------------------------------- | -------------------------- |
+| [M0 — Scaffolding](#m0--scaffolding)                            | Go module, tooling, CI, frozen Python, `Version`        | ✅ done                    |
+| [Spikes S1–S3](#3-spikes)                                       | ONNX export, binding choice, latency floor              | ✅ done                    |
+| [M1 — Reference harness](#m1--the-python-reference-harness)     | `testdata/*.jsonl` golden vectors                       | ✅ done                    |
+| [M2 — Tier-1 core](#m2--tier-1-core)                            | `jsonx`, `lang`, `mailtext`, `presets`, render          | ✅ done                    |
+| [M3 — Router](#m3--router)                                      | `Route`, model registry, LRU                            | ✅ done                    |
+| [M4 — Tokenizer](#m4--pure-go-tokenizer)                        | pure-Go `tokenizer.json` loader                         | ✅ done                    |
+| [M5 — `build_sequence`](#m5--build_sequence)                    | prompt assembly, marker positions, collate              | ✅ done                    |
+| [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                    |
+| [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | ✅ done                    |
+| [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | 🟡 B.1, B.2, B.4–B.18 done |
+| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | ✅ done                    |
 
 **Critical path to 1.0:** M7 (loader → `SystemOne` → answer parity → e2e parity → README). The
 Backlog and M8 do not gate 1.0.
@@ -649,8 +649,22 @@ the ECE/Brier inputs.
       exposes `OrtSessionOptions`. It needs a binding change (upstream PR, or a fork via a module
       `replace`), which moves D5's pin. The T550 and `/opt/onnxruntime/gpu` on the dev box are
       enough to verify it. Update D22 and 7.6.3 when it lands.
-- [ ] **B.4** Establish whether `purego.Dlopen` works on Windows with ORT 1.23, or only that
+- [x] **B.4** Establish whether `purego.Dlopen` works on Windows with ORT 1.23, or only that
       nobody has tried. If it works, widen D21's platform list.
+      (2026-10-11, PR #63, cross-compiled on linux/amd64, user decision: answer it without a
+      Windows machine) **It does not build: purego has no `Dlopen` on Windows.** purego
+      v0.9.0's `dlfcn.go` (and v0.10.0–v0.11.0's) is `(darwin || freebsd || linux || netbsd)`
+      only, and the pinned binding calls `purego.Dlopen` unconditionally.
+      Building the binding package (`github.com/shota3506/onnxruntime-purego/onnxruntime`) with
+      `CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build` fails with
+      `runtime.go:65:31: undefined: purego.Dlopen` (plus `RTLD_NOW` and `RTLD_GLOBAL`). The module
+      itself builds and vets for windows/amd64 and windows/arm64 on the stub
+      (`CGO_ENABLED=0 GOOS=windows GOARCH={amd64,arm64} go build ./... && go vet ./...`). Beyond
+      compiling, the binding passes `CreateSession` a UTF-8 path where Windows' `ORTCHAR_T` is
+      `wchar_t`, and `internal/ortlib` has no Windows pin and no zip extraction. D21 records the
+      finding; its platform list stays as it is. PR #63 proposed a follow-up (a Windows loader in
+      the binding, then a `windows-latest` CI job); it is not on the backlog (user decision,
+      2026-10-11).
 - **B.5 int8 dynamic quantization**, with latency and calibration measured together:
   - [x] **B.5.1** `onnxruntime.quantization.quantize_dynamic` over all three exports in the
         pinned reference environment, as a `scripts/` flag, so the artefact is reproducible.
@@ -807,19 +821,45 @@ build/diff-tokenizer.txt` exits 0: en "mismatching: 85", "accepted (B.2 NFC devi
       `temperature_by_options`, `head_layers`, `act_costs`, `max_len`, `head_max_len` and an unread
       field; each must fail, and each must load with `2` and `±1e999`. A pre-decode step mapping
       the literals to 0 fails all 21 cases. README "Differences from Python laya" has a row.
-- [ ] **B.16** Load the native weights without a second copy. `internal/backend/native/load.go`
+- [x] **B.16** Load the native weights without a second copy. `internal/backend/native/load.go`
       decodes each tensor with `Float32`, then `tensor.New` copies the slice, so load briefly holds
       two copies of one tensor, up to about 786 MB for mmBERT's `tok_embeddings`.
       `internal/runtime/tensor` already has the unexported `newOwned`, which takes ownership;
       expose an owning constructor and use it in `load`. Measure peak RSS at `Open` before and
       after. Found in PR #49's review, finding 5 (2026-10-11).
-- [ ] **B.17** Open the tokenizer files and the ONNX model as regular files only, as B.13 and B.14
+      (2026-10-11, PR #62) `tensor.FromOwned` takes a decoded slice over instead of copying it,
+      validating through `checkData`, which `New` now shares, and `load` uses it: `Float32`
+      allocates its result per call and `safetensors.File` keeps no reference to it. The shape is
+      still copied. `TestFromOwned*` pin the aliasing, the shape copy and `New`'s errors;
+      `TestLoadKeepsOneCopy` holds one load over a synthetic checkpoint with a 16 MiB embedding
+      table to under 1.5 tables (17.9 MB; 34.7 MB with the copy).
+      `go test -count=1 -run 'FromOwned|TestLoadKeepsOneCopy' -v ./internal/runtime/tensor/ ./internal/backend/native/`
+      passes. The PR records three mutations (FromOwned copying, `load` back on `tensor.New`,
+      FromOwned without the length check), each failing a named test. Peak RSS at native `Open`
+      (`BenchmarkLoad`'s `peak_MiB`, VmHWM): english 1972–1984 → 1676 MiB, multilingual
+      1581–1589 → 1334 MiB, typed-decisions 1971–2006 → 1676 MiB (`BENCHMARKS.md`,
+      `docs/benchmarks/raw/bench-native-load-b16.txt`).
+- [x] **B.17** Open the tokenizer files and the ONNX model as regular files only, as B.13 and B.14
       did for the config and safetensors files. `tokenizer.OpenFS` reads `tokenizer.json` and
-      `tokenizer_config.json` with `fs.ReadFile`, and `internal/onnxheader.Read` reads the model
-      with `os.ReadFile` before ORT opens the path, so a named pipe at any of them blocks `Open`.
+      `tokenizer_config.json` with `fs.ReadFile` over `os.DirFS`, so a named pipe at either blocks
+      `Open`. `internal/onnxheader.Read` already refuses one at the model path with an `Lstat`, but
+      then reads it with `os.ReadFile`, so a pipe swapped in after the `Lstat` still blocks.
       `OpenFS` takes an `fs.FS`, so the check must work on an `fs.File`'s `Stat` or move to
       `tokenizer.Open`. A FIFO test per reader, modelled on `TestReadHeaderFIFO`. Found in PR
       #60's review (2026-10-11).
+      (2026-10-11, PR #61) `tokenizer.Open` opens both files through `regularfile.Open`, via an
+      unexported `fs.FS`, and `OpenFS` refuses any opened file whose `Stat` is not regular.
+      `onnxheader.read` keeps its `Lstat`, then reads through `regularfile.Open` with a 64 MiB
+      capped read. ORT still reopens the graph path and opens its external data itself; that
+      window is documented in `docs/ARCHITECTURE.md` §6. `TestOpenFIFO` (both tokenizer files),
+      `TestOpenTokenizerFIFO` (`laya.Open`, both runtimes, stubbed backends) and `TestReadFIFO`
+      (at the graph path, and swapped in after the `Lstat`) refuse a FIFO at once;
+      `TestOpenFSRefusesNonRegular` refuses a pipe, a device and an irregular file over
+      `fstest.MapFS`.
+      `go test -count=1 -v -run 'FIFO|NonRegular' . ./tokenizer/ ./internal/onnxheader/` passes.
+      The PR records three mutations (`os.DirFS` back, the `Stat` check dropped, `os.ReadFile`
+      back), each failing a named test through the 5 s guard rather than hanging. The audit of the
+      remaining opens became B.21.
 - [x] **B.18** Run the native kernels on every core by default. `internal/runtime/tensor` came from
       go-pocket-tts with one worker as the default, and `tensor.SetWorkers` is internal, so every
       caller of `laya.Open` on the native backend ran single-threaded; Task 8.9's numbers were taken
@@ -849,7 +889,6 @@ build/diff-tokenizer.txt` exits 0: en "mismatching: 85", "accepted (B.2 NFC devi
       (`BENCHMARKS.md`, Task 8.9). arm64 already has a 4×4 NEON block. It must keep every bit, or
       be a recorded numerics change in algo-tensor and a new golden run here. Measure against
       Task 8.9's cell. Depends on B.19.
-
 ### M8 — Pure-Go native backend (after 1.0)
 
 Same `backend.Backend` interface, no API change. It implements ModernBERT, mmBERT and the head over
