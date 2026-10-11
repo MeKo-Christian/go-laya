@@ -70,7 +70,11 @@ func TestCheckNamesBoundedAllocs(t *testing.T) {
 	}
 	few, many := allocs(20), allocs(20000)
 	t.Logf("%v allocations for 20 unexpected names, %v for 20000", few, many)
-	if many > few+maxListed {
+	// A list that grew with the header would cost at least one allocation
+	// per name, 20000 here. The bound leaves room for the few allocations
+	// the runtime makes on its own, which AllocsPerRun counts too: the
+	// macOS race runner saw 255 against 273.
+	if many > 2*few {
 		t.Errorf("%v allocations for 20000 unexpected names, %v for 20: the error grows with the header", many, few)
 	}
 }
