@@ -42,7 +42,7 @@ box under it is ticked.
 | [M6 — Backend](#m6--backend--checkpoint-loading)                | `Backend`, hub cache, ONNX impl, validation, pinned ORT | ✅ done                    |
 | [M7 — Agent + parity](#m7--agent-calibration-end-to-end-parity) | loader, `SystemOne`, calibration, e2e parity, README    | ✅ done                    |
 | [Backlog](#backlog--open-work-that-does-not-gate-10)            | tokenizer speed, NFC decision, CUDA, Windows, int8      | 🟡 B.1, B.2, B.6–B.10 done |
-| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | 🟡 8.1–8.7 done            |
+| [M8 — Native backend](#m8--pure-go-native-backend-after-10)     | safetensors ModernBERT/mmBERT (post-1.0)                | 🟡 8.1–8.8 done            |
 
 **Critical path to 1.0:** M7 (loader → `SystemOne` → answer parity → e2e parity → README). The
 Backlog and M8 do not gate 1.0.
@@ -875,9 +875,27 @@ zero-shared-library backend, not a speed play (D8). The facts it needs are in
       `temperature` F32/F32/F16. Mutations (PR #46): subnormals as 0 or as normals, rebias by
       127, big-endian F16 or F32, `Begin` without `DataOffset`, an F32-only or no `temperature`
       exemption, and a context check hoisted out of the chunk loop each fail at least one test.
-- [ ] **8.8** Gate promotion on the same golden vectors: probabilities within 1e-4 and zero argmax
+- [x] **8.8** Gate promotion on the same golden vectors: probabilities within 1e-4 and zero argmax
       flips. Head intermediates for invariants #35–38 are generated here, as a reviewed
       regeneration.
+      (2026-10-11) `TestE2EParity/native` runs every `logits.jsonl` case through `SystemOne` with
+      the real tokenizer over `native.Open`, injected with `WithBackend`: the golden vectors ONNX
+      Runtime's Task 7.5 gate uses. Per checkpoint it holds each probability to 2× the measured
+      worst case, each bound under the 1e-4 ceiling the test enforces, and each act logit to a
+      relative bound; the formatted answer must match Python's within one rounding step, and any
+      argmax flip fails. A review fix makes a NaN fail every one of these comparisons
+      (`TestCompareRejectsNaN`). On `3ddba48`,
+      `LAYA_MODELS=… LAYA_ONNX_DIR=… go test -count=1 -run TestE2EParity -v .` passes. Native
+      worst probability diffs: english 2.15e-06, multilingual 3.49e-06, typed-decisions
+      9.24e-07. Relative act-logit diffs: 1.43e-06, 4.74e-07, 4.13e-07. Argmax flips: 0 of 30
+      rows each. ONNX still passes at 4.29e-06, 2.8e-06 and 1.4e-06. The head intermediates are
+      `testdata/head_intermediates.jsonl`: 33 batches from `dump_python_parity.py --fixture head_intermediates`, with `logits.jsonl`
+      unchanged. A rerun in `.venv-ref` writes the file byte-identical (`cmp`).
+      `LAYA_MODELS=… go test -count=1 -run TestHeadIntermediates -v ./internal/backend/native/`
+      passes invariants #35–38 on all three checkpoints. Worst h after type_emb: 1.84e-06,
+      1.61e-06, 1.43e-06; after the head layers and gathered: 1.02e-06, 6.97e-07, 9.73e-07
+      (bounds 1e-5). Logits: 8.17e-06, 1.14e-05, 3.81e-06; act features: 5.54e-06, 6.97e-06,
+      2.71e-06 (bounds 5e-5). Every fill column is exactly -1e4.
 - [ ] **8.9** Latency within 10× of ORT-CPU at 512 tokens on the same hardware, recorded in
       `BENCHMARKS.md` beside the S3 numbers.
 - [ ] **8.10** The `backend` interface is unchanged. The native backend is selected by option, and
