@@ -687,12 +687,13 @@ def _load_with_weights(onnx_path: Path) -> Any:
             continue
         info = {e.key: e.value for e in tensor.external_data}
         loc = info["location"]
-        if Path(loc).name != loc:
-            raise ValueError(f"{onnx_path}: external data {loc!r} is not beside the graph")
+        if Path(loc).name != loc or loc in ("", ".", ".."):
+            raise ValueError(f"{onnx_path}: external data {loc!r} is not a file beside the graph")
         if loc not in blobs:
             blobs[loc] = (onnx_path.parent / loc).read_bytes()
         blob = blobs[loc]
-        off, length = int(info.get("offset", 0)), int(info.get("length", len(blob)))
+        off = int(info.get("offset", 0))
+        length = int(info.get("length", len(blob) - off))  # absent: to the end of the file
         if off < 0 or length < 0 or off + length > len(blob):
             raise ValueError(f"{onnx_path}: {tensor.name} reaches past the end of {loc}")
         tensor.raw_data = blob[off : off + length]
