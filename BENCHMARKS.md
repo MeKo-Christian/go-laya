@@ -613,6 +613,27 @@ same load, still shows 2.6×. The "after" column sits within 12% of the 8-worker
 No result changes: every output of `Linear` and `MatMul` is one dot product however the work is
 split (`TestKernelsSameBitsAnyWorkers`, now in `internal/backend/native/kernels_test.go`).
 
+**The kernels from algo-tensor (PLAN.md B.19).** The kernels now come from
+`github.com/cwbudde/algo-tensor` v0.2.0 (D35), whose `MatMulTransB`, the attention products, splits
+over the workers where go-laya's copy ran it on one. `BenchmarkForwardDefaultWorkers` without the
+switch and with it: one test binary each, interleaved per checkpoint, three timed passes each under
+an 8 GB cap, `GOMAXPROCS` unset (12). Two sweeps, the second with each pair's order reversed:
+
+| checkpoint             | sweep 1: before → after | speedup | sweep 2: before → after | speedup |
+| ---------------------- | ----------------------- | ------- | ----------------------- | ------- |
+| `laya`                 | 8453 → 9637 ms          | 0.88×   | 9507 → 9519 ms          | 1.00×   |
+| `laya-multilingual`    | 3482 → 3607 ms          | 0.97×   | 3486 → 3625 ms          | 0.96×   |
+| `laya-typed-decisions` | 9662 → 10136 ms         | 0.95×   | 9985 → 9828 ms          | 1.02×   |
+
+These are p50s **under uncontrolled, unequal load**. The 1-minute load average at the start of the
+before/after runs was 2.29/5.75, 5.86/5.13 and 5.40/4.64 in sweep 1, and 7.51/6.33, 8.74/9.35 and
+10.29/8.11 in sweep 2. **No speedup shows.** The pairs differ by −12% to +2%, about as much as the
+same binary differs between sweeps (`laya` before: 8453 and 9507 ms), and the largest gap, `laya` in
+sweep 1, has the least-loaded "before" run of all. `laya-multilingual` is 3–4% slower in both
+sweeps, which this setup cannot tell from noise. In the profile above `MatMulTransB` took 5% of the
+CPU time and `Linear` 87%, so the parallel attention products had little to win; B.20's GEMM is
+where the time is. The outputs are the same bits (`TestForwardDigest`).
+
 **Raw transcripts.**
 
 - **Idle rerun:**
@@ -626,6 +647,8 @@ split (`TestKernelsSameBitsAnyWorkers`, now in `internal/backend/native/kernels_
   interleaved.
 - **B.18, the default worker count:** `bench-native-default-workers-b18.txt`,
   `BenchmarkForwardDefaultWorkers` before and after, interleaved.
+- **B.19, the kernels from algo-tensor:** `bench-native-algo-tensor-b19.txt`,
+  `BenchmarkForwardDefaultWorkers` before and after, interleaved, in two sweeps.
 
 Every process is headed by its `uptime`.
 `bench-native-pprof-typed-decisions.txt` is the profile's top 15.
