@@ -9,10 +9,11 @@ import (
 	"runtime/debug"
 	"testing"
 
+	"github.com/cwbudde/algo-tensor/tensor"
+
 	"github.com/MeKo-Christian/go-laya/backend"
 	"github.com/MeKo-Christian/go-laya/internal/golden"
 	"github.com/MeKo-Christian/go-laya/internal/head"
-	"github.com/MeKo-Christian/go-laya/internal/runtime/tensor"
 )
 
 // intermediatesTol is the largest difference TestHeadIntermediates accepts per

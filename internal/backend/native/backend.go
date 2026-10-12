@@ -25,9 +25,8 @@ var (
 )
 
 // Options configures Open. It holds no tuning: the only tuning the kernels
-// have is tensor.SetWorkers, a process-wide setting that a per-backend
-// option would misrepresent, and internal/runtime/ops, whose worker loop
-// takes its count per call, is not on this backend's path. The kernels
+// of github.com/cwbudde/algo-tensor (D35) have is tensor.SetWorkers, a
+// process-wide setting that a per-backend option would misrepresent. They
 // default to one worker per GOMAXPROCS as read at start-up (D34), so a
 // process that wants fewer sets the GOMAXPROCS environment variable.
 type Options struct {

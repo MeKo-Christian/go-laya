@@ -11,11 +11,12 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cwbudde/algo-tensor/tensor"
+
 	"github.com/MeKo-Christian/go-laya/backend"
 	"github.com/MeKo-Christian/go-laya/internal/head"
 	"github.com/MeKo-Christian/go-laya/internal/modernbert"
 	"github.com/MeKo-Christian/go-laya/internal/regularfile"
-	"github.com/MeKo-Christian/go-laya/internal/runtime/tensor"
 	"github.com/MeKo-Christian/go-laya/internal/safetensors"
 )
 

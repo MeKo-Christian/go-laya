@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/MeKo-Christian/go-laya/internal/runtime/tensor"
+	"github.com/cwbudde/algo-tensor/tensor"
 )
 
 // Layer is ModernBertEncoderLayer, one pre-norm encoder layer

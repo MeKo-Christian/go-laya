@@ -9,8 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cwbudde/algo-tensor/tensor"
+
 	"github.com/MeKo-Christian/go-laya/internal/golden"
-	"github.com/MeKo-Christian/go-laya/internal/runtime/tensor"
 )
 
 // opsFixture is testdata/ops.json, written by scripts/dump_modernbert_ops.py from

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/MeKo-Christian/go-laya/internal/runtime/tensor"
+	"github.com/cwbudde/algo-tensor/tensor"
 )
 
 // MLP is ModernBertMLP, the GeGLU feed-forward block of every encoder layer

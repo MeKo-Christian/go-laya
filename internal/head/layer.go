@@ -6,7 +6,7 @@ import (
 	"math"
 	"slices"
 
-	"github.com/MeKo-Christian/go-laya/internal/runtime/tensor"
+	"github.com/cwbudde/algo-tensor/tensor"
 )
 
 // LayerWeights are one nn.TransformerEncoderLayer's tensors, in torch's
