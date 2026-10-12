@@ -6,7 +6,9 @@
 
 ## 1. Tiers
 
-**CI** runs with no Python, no weights and no network. `just ci` mirrors it: `fmt-check`, `lint-md`,
+**CI's tests** need no Python, no weights and no network: the committed tests and reference data
+are self-contained. The jobs themselves still download their tools, and the `config` job installs
+yamllint through pip (`AGENTS.md` allows a pinned Python linter). `just ci` mirrors the pipeline: `fmt-check`, `lint-md`,
 `lint-py`, `lint-config` (actionlint, taplo, yamllint over git-tracked files), `test-race`, `lint`
 and `check-tidy`. The workflows add:
 
@@ -19,16 +21,17 @@ and `check-tidy`. The workflows add:
 **Local gates** skip under `-short` and without their variable. They are how the real checkpoints,
 ONNX Runtime and the reference outputs are reached:
 
-| Variable                                                  | Unlocks                                                                          |
-| --------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `LAYA_MODELS`                                             | the checkpoints (`<dir>/laya/…`): tokenizer corpora, sequence, native, e2e tests |
-| `LAYA_ONNX_DIR`                                           | the local exports `laya-<name>.onnx`; `LAYA_ONNX_SUFFIX` picks `-dynamo` or `""` |
-| `LAYA_ORT_LIB`                                            | a specific ONNX Runtime library; `LAYA_ORT_OLD_LIB` a pre-1.23 one to be refused |
-| `LAYA_ORT_NET=1`                                          | `TestPinnedLive`, which downloads the pinned ORT archives                        |
-| `LAYA_ORT_FINALIZER=1`                                    | the binding's finalizer data-race reproduction (D5)                              |
-| `LAYA_CORPUS`                                             | the tokenizer differential corpus (`just corpus`, `just dump-stages`)            |
-| `LAYA_ONNX_INT8_DIR`                                      | `TestInt8Exports` over the `export_onnx.py --int8` output                        |
-| `LAYA_EVAL_DIR`, `LAYA_EVAL_CHECKPOINTS`, `LAYA_EVAL_OUT` | `TestInt8Calibration` over `cmd/laya-evalfetch`'s subsets                        |
+| Variable                                                  | Unlocks                                                                                                     |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `LAYA_MODELS`                                             | the checkpoints (`<dir>/laya/…`): tokenizer corpora, sequence, native, e2e tests                            |
+| `LAYA_ONNX_DIR`                                           | the local exports `laya-<name>.onnx`                                                                        |
+| `LAYA_ONNX_SUFFIX`                                        | the export suffix for the ONNX benchmarks only (`bench_test.go`); unset is `-dynamo`, `""` the int8 exports |
+| `LAYA_ORT_LIB`                                            | a specific ONNX Runtime library; `LAYA_ORT_OLD_LIB` a pre-1.23 one to be refused                            |
+| `LAYA_ORT_NET=1`                                          | `TestPinnedLive`, which downloads the pinned ORT archives                                                   |
+| `LAYA_ORT_FINALIZER=1`                                    | the binding's finalizer data-race reproduction (D5)                                                         |
+| `LAYA_CORPUS`                                             | the tokenizer differential corpus (`just corpus`, `just dump-stages`)                                       |
+| `LAYA_ONNX_INT8_DIR`                                      | `TestInt8Exports` over the `export_onnx.py --int8` output                                                   |
+| `LAYA_EVAL_DIR`, `LAYA_EVAL_CHECKPOINTS`, `LAYA_EVAL_OUT` | `TestInt8Calibration` over `cmd/laya-evalfetch`'s subsets                                                   |
 
 Recipes for the gated runs: `just test-onnx`, `just test-onnx-race`, `just bench-onnx`,
 `just bench-native`, `just diff-tokenizer`. A float32 checkpoint costs 1–2 GB, so the heavy runs take
@@ -53,8 +56,10 @@ one checkpoint per process under a memory cap (`systemd-run --user --scope -p Me
 ## 3. Tolerances
 
 - **Per checkpoint, from measurement.** Never a round global figure: on random inputs multilingual
-  is ~15× looser against PyTorch than the others. `e2eTol` is 2× the measured worst case, `matrixTol`
-  about 5×, each under the 1e-4 ceiling of the 1.0 gate.
+  is ~15× looser against PyTorch than the others. `e2eTol` is 2× the measured worst probability
+  diff, and `TestE2EParity` also holds every entry to the 1.0 gate's 1e-4 ceiling (`e2eCeiling`).
+  `matrixTol` bounds raw forward outputs at S1's shapes, about 5× the measured worst: 1.5e-4–4e-4
+  against Python ORT and 2e-4–2.5e-3 against PyTorch, so it is not under 1e-4.
 - **Scaled diffs** `|got − want| / max(1, |want|)` for logits, which carry the −1e4 sentinel.
 - **A NaN fails every comparison.** The end-to-end comparisons reject NaN explicitly
   (`TestCompareRejectsNaN`), since `NaN > tol` is false.

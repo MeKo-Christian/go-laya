@@ -320,7 +320,9 @@ triage := ask("message", "My payment failed twice", presets.TriageQuestions())
 
 go-laya answers as `laya` 0.3.4 does wherever the two can be compared. These are the places where
 it deliberately does not. Python line numbers refer to [`original/laya/`](original/laya), the
-frozen upstream source; the reasons are in [`docs/DECISIONS.md`](docs/DECISIONS.md).
+frozen upstream source; the reasons are in [`docs/DECISIONS.md`](docs/DECISIONS.md). A row that
+cites a PLAN task instead has its reason in that task: B.3 is open in [`PLAN.md`](PLAN.md), and the
+finished ones (3.1.4, 7.7.5, B.2) are in `git show af1a331:PLAN.md`.
 
 ### Behaviour
 

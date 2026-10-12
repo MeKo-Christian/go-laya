@@ -387,20 +387,24 @@ english and typed-decisions record identical batches with different logits. It f
 - The backend's `ErrUnsupportedPlatform` and `ErrUnknownDevice` are re-exported at the root, as
   `ErrIncompatibleCheckpoint` is, so callers match them with `errors.Is`.
 
-**`SystemOne`** (`systemone.go`), in order:
+**`SystemOne`** (`systemone.go`), in order; the first failure wins:
 
-1. `Questions.Validate` (`ErrDuplicateQuestionID`, since a Python dict cannot hold duplicates).
-2. `CheckCriteria` (`ErrCriteriaShape`): choice needs an object; score a list, an object or `""`;
-   noul an object or a Python-falsy value. A non-empty string for score is refused, where Python
-   would render one level per character. The typed API cannot produce these shapes; the check
-   guards the `Internal` path.
-3. `BuildSequence` at the config's `max_len`/`head_max_len`. A lost marker is an
-   `*OptionBudgetError` (`ErrOptionsExceedHeadBudget`).
-4. Refusals before the backend: an empty choice question is `ErrNoOptions`; a batch whose largest
-   option count is below 2 is `ErrTooFewOptions` (D32). A one-option question beside a larger one
-   still runs, at probability 1.
-5. `Collate`, then **one** `Forward` for the batch.
-6. `formatAnswer` per row with the config's temperatures. `input_tokens` is the batch's
+1. `Questions.Validate` (`ErrDuplicateQuestionID`, since a Python dict cannot hold duplicates),
+   then an empty question set is `ErrEmptyQuestions`.
+2. Per question, in question order:
+   1. `CheckCriteria` (`ErrCriteriaShape`): choice needs an object; score a list, an object or
+      `""`; noul an object or a Python-falsy value. A non-empty string for score is refused, where
+      Python would render one level per character. The typed API cannot produce these shapes; the
+      check guards the `Internal` path.
+   2. A question that renders no options, such as an empty choice question, is `ErrNoOptions`.
+   3. `BuildSequence` at the config's `max_len`/`head_max_len`; a state that cannot be serialized
+      fails here.
+   4. A marker lost to the budget is an `*OptionBudgetError` (`ErrOptionsExceedHeadBudget`).
+3. A batch whose largest option count is below 2 is `ErrTooFewOptions` (D32). A one-option question
+   beside a larger one still runs, at probability 1.
+4. `Collate`, then **one** `Forward` for the batch. Rows or widths that do not fit the batch are
+   `ErrIncompatibleCheckpoint`.
+5. `formatAnswer` per row with the config's temperatures. `input_tokens` is the batch's
    attention-mask sum.
 
 **Answer format** (`answer.go`, ports `agent.py:302-337`): choice keys come in option order and
