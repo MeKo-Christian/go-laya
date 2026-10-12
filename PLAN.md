@@ -66,8 +66,8 @@ Run `just ci` before every commit. Tick a box only against a command you ran and
       `ErrHashMismatch`; `regularfile.ErrNotRegular` lets both map the case. `TestReadCachedFIFO`
       (ref and listing) and `TestCachedFIFO` swap a FIFO in through a hook between the check and the
       open; `TestReadCachedCap` and `TestSnapshotListingCap` pin the caps.
-      `go test -count=1 -run 'FIFO|Cap|Limit|Large|NotRegular|ReadCached' -v ./internal/hub/
-    ./internal/ortlib/ ./internal/regularfile/` passes; with both opens put back to `os.Open`,
+      `go test -count=1 -run 'FIFO|Cap|ReadCached' -v ./internal/{hub,ortlib,regularfile}/` passes;
+      with both opens put back to `os.Open`,
       `TestReadCachedFIFO/ref`, `/listing` and `TestCachedFIFO` fail through the 5 s guard ("blocked
       on a FIFO with no writer"). `purego.Dlopen` still reopens the library path
       (`docs/ARCHITECTURE.md` §6).
