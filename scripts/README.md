@@ -177,7 +177,7 @@ survives only as a key that `ModernBertConfig.to_dict` pops for backwards compat
 
 Upstream declares `transformers>=4.45.0` with no upper bound, and the checkpoint loads
 under 5.17.0 with `load_state_dict(strict=True)` — which proves the parameter set matches.
-It does not prove the _numerics_ match 4.x. See the open task under `PLAN.md` M1.
+It does not prove the _numerics_ match 4.x; `crosscheck_transformers.py` measures that (D7).
 
 ## The checkpoints
 
@@ -234,7 +234,7 @@ protobuf limit the dynamo exporter splits the file into `laya-<name>.onnx` plus
 For each checkpoint the script reports the parameter count, eager-vs-sdpa and
 fused-vs-reference-head differences, the activation op counts in the exported graph, and
 the max absolute difference between ONNX Runtime and PyTorch at each of the four shapes.
-Measured numbers live in `PLAN.md` under Spike S1.
+Measured numbers live in `docs/ARCHITECTURE.md` §5.
 
 ### int8 (PLAN.md B.5)
 

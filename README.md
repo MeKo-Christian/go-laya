@@ -320,8 +320,7 @@ triage := ask("message", "My payment failed twice", presets.TriageQuestions())
 
 go-laya answers as `laya` 0.3.4 does wherever the two can be compared. These are the places where
 it deliberately does not. Python line numbers refer to [`original/laya/`](original/laya), the
-frozen upstream source; the reasons are in [`docs/DECISIONS.md`](docs/DECISIONS.md) and
-[`PLAN.md`](PLAN.md).
+frozen upstream source; the reasons are in [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
 ### Behaviour
 
