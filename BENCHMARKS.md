@@ -639,8 +639,8 @@ is where the time is. The outputs are the same bits (`TestForwardDigest`).
 ([CWBudde/algo-tensor#10](https://github.com/CWBudde/algo-tensor/pull/10), D36) runs every token
 over 256 KiB panels of weight rows on every architecture. On amd64 with AVX2 and FMA, a kernel runs
 three tokens over one weight row and replays the AVX2 dot product exactly, so no output bit moves
-(`TestForwardDigest`). algo-tensor#10 measured `BenchmarkForwardDefaultWorkers` on the i7-1255U above, with the
-commit v0.3.1 tags and B.19's method: one test binary on v0.2.0 and one on the new code, interleaved
+(`TestForwardDigest`). algo-tensor#10 measured `BenchmarkForwardDefaultWorkers` on the i7-1255U above, on
+f4a4dbc, the commit tagged v0.3.1, with B.19's method: one test binary on v0.2.0 and one on the new code, interleaved
 per checkpoint, three timed passes each under an 8 GB cap, `GOMAXPROCS` unset (12), two sweeps, the
 second with each pair's order reversed:
 
