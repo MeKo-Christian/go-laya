@@ -658,9 +658,9 @@ the ECE/Brier inputs.
       Building the binding package (`github.com/shota3506/onnxruntime-purego/onnxruntime`) with
       `CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build` fails with
       `runtime.go:65:31: undefined: purego.Dlopen` (plus `RTLD_NOW` and `RTLD_GLOBAL`). The module
-      itself builds and vets for windows/amd64 and windows/arm64 on the stub
-      (`CGO_ENABLED=0 GOOS=windows GOARCH={amd64,arm64} go build ./... && go vet ./...`). Beyond
-      compiling, the binding passes `CreateSession` a UTF-8 path where Windows' `ORTCHAR_T` is
+      itself builds and vets for windows/amd64 and windows/arm64 on the stub:
+      `for a in amd64 arm64; do GOOS=windows GOARCH=$a CGO_ENABLED=0 go build ./... && GOOS=windows GOARCH=$a CGO_ENABLED=0 go vet ./...; done`
+      exits 0. Beyond compiling, the binding passes `CreateSession` a UTF-8 path where Windows' `ORTCHAR_T` is
       `wchar_t`, and `internal/ortlib` has no Windows pin and no zip extraction. D21 records the
       finding; its platform list stays as it is. PR #63 proposed a follow-up (a Windows loader in
       the binding, then a `windows-latest` CI job); it is not on the backlog (user decision,
