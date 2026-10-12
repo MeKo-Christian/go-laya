@@ -12,7 +12,7 @@ byte-identical prompts and numerically equivalent decisions from the same Huggin
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | checkpoints, layout, tokenizer, prompt, ONNX backend, trust, numerics, agent   |
 | [`docs/NATIVE.md`](docs/NATIVE.md)             | the pure-Go native backend: loading, encoder, head, kernels, parity            |
 | [`docs/TESTING.md`](docs/TESTING.md)           | test tiers, gating variables, tolerances, mutation practice, known blind spots |
-| [`docs/DECISIONS.md`](docs/DECISIONS.md)       | D1–D35 with their evidence                                                     |
+| [`docs/DECISIONS.md`](docs/DECISIONS.md)       | D1–D36 with their evidence                                                     |
 | [`docs/INVARIANTS.md`](docs/INVARIANTS.md)     | the 74 behaviours a test must assert                                           |
 | [`docs/API.md`](docs/API.md)                   | the Go types and the JSON shapes Python emits                                  |
 | [`BENCHMARKS.md`](BENCHMARKS.md)               | measured latency, memory and int8 calibration                                  |
@@ -26,8 +26,8 @@ the detail of M0–M6. The ids of the open items below are kept, so citations of
 
 ## Status
 
-Milestones M0–M8 and the 1.0 definition of done are complete. Two Backlog items remain, B.3 and
-B.20; neither gates a release, and they share no code.
+Milestones M0–M8 and the 1.0 definition of done are complete. One Backlog item remains, B.3; it
+does not gate a release.
 
 Each task is TDD: write the failing test, watch it fail, implement minimally, watch it pass, commit.
 Run `just ci` before every commit. Tick a box only against a command you ran and can quote
@@ -42,7 +42,7 @@ Run `just ci` before every commit. Tick a box only against a command you ran and
       `replace`), which moves D5's pin. The T550 and `/opt/onnxruntime/gpu` on the dev box are
       enough to verify it. Update D22 and the README's "Differences from Python laya" (the `cuda`
       row, formerly Task 7.6.3's list) when it lands.
-- [ ] **B.20** A cache-blocked AVX2 GEMM behind `tensor.Linear` on amd64, written in algo-tensor so
+- [x] **B.20** A cache-blocked AVX2 GEMM behind `tensor.Linear` on amd64, written in algo-tensor so
       all three consumers gain. A profile puts 87% of native CPU time in `Linear`, which computes
       one dot product per output and streams the whole weight matrix again for every token
       (`BENCHMARKS.md`, Task 8.9). arm64 already has a 4×4 NEON block. It must keep every bit, or
@@ -50,6 +50,20 @@ Run `just ci` before every commit. Tick a box only against a command you ran and
       Task 8.9's cell. Its dependency, B.19, is done: the kernels are
       `github.com/cwbudde/algo-tensor` v0.2.0's (D35), and `TestForwardDigest` is the check that no
       bit moved before go.mod raises the required version.
+      (2026-10-12) algo-tensor v0.3.1 (CWBudde/algo-tensor#10, f4a4dbc) has it, and go.mod requires
+      it (D36). `Linear` runs every token over 256 KiB panels of weight rows on every architecture,
+      and on amd64 with AVX2 and FMA `linearDot3AVX2` runs three tokens over one weight row and
+      replays `dotF32AVX2` exactly. No bit moved: on linux/amd64 with AVX2 and FMA (Docker under
+      Rosetta) `TestForwardDigest` passes against the pinned digests on v0.2.0 and on v0.3.1; on
+      darwin/arm64 all twelve digests it logs are the same before and after, in the default and the
+      `purego` build; `TestForwardGolden` and `TestKernelsSameBitsAnyWorkers` pass in all six runs.
+      Task 8.9's cell (`BenchmarkForwardDefaultWorkers`, b1_s512_k4) gained 1.76–1.77× on `laya`,
+      1.38–1.68× on `laya-multilingual` and 1.82–1.84× on `laya-typed-decisions` on the i7-1255U,
+      measured in algo-tensor#10 under a load of 7–11. On an M5 Pro, which takes the panels only, it
+      moved by 0.94–1.15×, within noise (`docs/benchmarks/raw/bench-native-algo-tensor-b20.txt`).
+      The note "arm64 already has a 4×4 NEON block" was wrong: that block is `MatMulTransB`'s, and
+      `Linear` was one `dotF32` per output on every architecture. A multi-output NEON kernel
+      replaying `dotF32NEON` would be arm64's counterpart. Batch 1 gains nothing.
 - [x] **B.21** Read `internal/hub`'s cached refs and listings (`readCached`,
       `internal/hub/snapshot.go`) through `regularfile.Open` with a cap, and open the cached ORT
       library in `ortlib.Cached` the same way. Both `Lstat` the path and then plainly open it, so a

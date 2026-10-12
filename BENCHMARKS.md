@@ -511,7 +511,8 @@ in every S3 transcript). The weights are decoded from the checkpoints' fp16 `mod
 float32. The kernels are pure Go, plus an AVX2/FMA dot product, and run on 8 workers
 (`tensor.SetWorkers(8)`, the counterpart of S3's `IntraOpNumThreads=8`). These measurements ran on
 the repository's own copy of the kernels; since B.19 they come from `github.com/cwbudde/algo-tensor`
-with every output bit unchanged in a default build (D35).
+with every output bit unchanged in a default build (D35), and since B.20 from its v0.3.1, whose
+cache-blocked `Linear` is faster with the same bits (D36, below).
 
 **Method.** S3's reference cell, with S3's inputs value for value: one question, 512 tokens, 4
 options, every position attended, ids `1 + (i·7919) mod 997`. `BenchmarkForward` in
@@ -556,9 +557,9 @@ measurement over 10×.
 
 A CPU profile of one typed-decisions run under that load (`bench-native-pprof-typed-decisions.txt`;
 it covers `Open` and the warm-up pass too) puts **87%** of the CPU time in `tensor.Linear`, almost
-all of it in the AVX2 dot product. On amd64, `Linear` computes one dot product per output with no
-cache blocking, so every token streams the whole weight matrix again. Attention is 5%, on one
-goroutine, and decoding the weights about 2%.
+all of it in the AVX2 dot product. `Linear` then computed one dot product per output with no cache
+blocking, so every token streamed the whole weight matrix again; B.20 (below) blocks it. Attention
+is 5%, on one goroutine, and decoding the weights about 2%.
 
 **Loading.** `BenchmarkLoad` is `Open` from a warm page cache, timed over five loads per sweep, with
 the resident growth of the first load in a fresh process. The native column is the idle rerun; the
@@ -634,6 +635,45 @@ in both sweeps, which this setup cannot tell from noise. In the profile above `M
 of the CPU time and `Linear` 87%, so the parallel attention products had little to win; B.20's GEMM
 is where the time is. The outputs are the same bits (`TestForwardDigest`).
 
+**Cache-blocked `Linear` (PLAN.md B.20).** `github.com/cwbudde/algo-tensor` v0.3.1
+([CWBudde/algo-tensor#10](https://github.com/CWBudde/algo-tensor/pull/10), D36) runs every token
+over 256 KiB panels of weight rows on every architecture. On amd64 with AVX2 and FMA, a kernel runs
+three tokens over one weight row and replays the AVX2 dot product exactly, so no output bit moves
+(`TestForwardDigest`). algo-tensor#10 measured `BenchmarkForwardDefaultWorkers` on the i7-1255U above, on
+f4a4dbc, the commit tagged v0.3.1, with B.19's method: one test binary on v0.2.0 and one on the new code, interleaved
+per checkpoint, three timed passes each under an 8 GB cap, `GOMAXPROCS` unset (12), two sweeps, the
+second with each pair's order reversed:
+
+| checkpoint             | sweep 1: before → after | speedup | sweep 2: before → after | speedup |
+| ---------------------- | ----------------------- | ------- | ----------------------- | ------- |
+| `laya`                 | 9583 → 5431 ms          | 1.76×   | 9831 → 5553 ms          | 1.77×   |
+| `laya-multilingual`    | 3693 → 2685 ms          | 1.38×   | 4490 → 2677 ms          | 1.68×   |
+| `laya-typed-decisions` | 10250 → 5563 ms         | 1.84×   | 10248 → 5620 ms         | 1.82×   |
+
+These are p50s **under uncontrolled load**: the 1-minute load average at the start of the
+before/after runs was 7.26/8.53, 8.96/8.34 and 8.24/11.59 in sweep 1, and 9.23/11.09, 9.49/10.85
+and 7.56/9.93 in sweep 2. The two ModernBERT-large checkpoints gain 1.8× in both sweeps, agreeing
+within 2%. `laya-multilingual`'s "before" moved from 3693 to 4490 ms between the sweeps, so its gain
+is somewhere in 1.4–1.7×.
+
+arm64 gets the panels but not the kernel, which is amd64-only, so `Linear` there is still one NEON
+dot product per output. The same method on an Apple M5 Pro (darwin/arm64, 15 cores, `GOMAXPROCS`
+15, go1.27.1, no memory cap), on 2026-10-12:
+
+| checkpoint             | sweep 1: before → after | speedup | sweep 2: before → after | speedup |
+| ---------------------- | ----------------------- | ------- | ----------------------- | ------- |
+| `laya`                 | 2614 → 2427 ms          | 1.08×   | 2910 → 2639 ms          | 1.10×   |
+| `laya-multilingual`    | 1013 → 1079 ms          | 0.94×   | 1255 → 1097 ms          | 1.14×   |
+| `laya-typed-decisions` | 2519 → 2579 ms          | 0.98×   | 2972 → 2581 ms          | 1.15×   |
+
+The 1-minute load average at the start of the before/after runs was 5.09/6.32, 7.38/7.67 and
+7.38/8.55 in sweep 1, and 9.53/9.70, 9.59/10.25 and 10.74/10.27 in sweep 2, much of it the
+benchmark's own 15 workers. **No gain shows that this setup can tell from noise.** The "after"
+binary took nearly the same time in both sweeps (2427–2639, 1079–1097 and 2579–2581 ms), while
+"before" spread wider (2614–2910, 1013–1255 and 2519–2972 ms). Sweep 2, where "before" ran second
+in each pair, favours "after" by 10–15%; sweep 1 ranges from −6% to +8%. The arm64 counterpart of
+the amd64 kernel, several tokens per weight row replaying the NEON dot product, does not exist yet.
+
 **Raw transcripts.**
 
 - **Idle rerun:**
@@ -649,6 +689,8 @@ is where the time is. The outputs are the same bits (`TestForwardDigest`).
   `BenchmarkForwardDefaultWorkers` before and after, interleaved.
 - **B.19, the kernels from algo-tensor:** `bench-native-algo-tensor-b19.txt`,
   `BenchmarkForwardDefaultWorkers` before and after, interleaved, in two sweeps.
+- **B.20, cache-blocked `Linear`:** `bench-native-algo-tensor-b20.txt`, the arm64 run, in the same
+  form. The amd64 figures are algo-tensor#10's; its description holds them with their load averages.
 
 Every process is headed by its `uptime`.
 `bench-native-pprof-typed-decisions.txt` is the profile's top 15.
