@@ -30,6 +30,7 @@ import (
 	"strings"
 
 	"github.com/MeKo-Christian/go-laya/internal/hub"
+	"github.com/MeKo-Christian/go-laya/internal/regularfile"
 )
 
 // Version is the pinned ONNX Runtime release.
@@ -115,6 +116,10 @@ func Pinned(goos, goarch string) (Release, error) {
 	return rel, nil
 }
 
+// afterLstat, when set, runs between Cached's Lstat of the library and its
+// open. Tests set it to change the file inside that window.
+var afterLstat func(path string)
+
 // Client downloads into one cache directory.
 type Client struct {
 	BaseURL string       // DefaultBaseURL when empty
@@ -131,6 +136,10 @@ type Client struct {
 //
 // Every component below the cache root is Lstat'ed, not just the file: a
 // symlinked directory on the way would put the library outside the cache.
+// The library is then opened through regularfile.Open, so a named pipe or
+// device swapped in after the Lstat is refused on the descriptor instead of
+// blocking the open; the loader's dlopen opens the path again afterwards, a
+// second open no check here can cover.
 func (c *Client) Cached(rel Release) (string, error) {
 	root, parts, err := c.path(rel)
 	if err != nil {
@@ -152,8 +161,13 @@ func (c *Client) Cached(rel Release) (string, error) {
 			return "", fmt.Errorf("%w: %s is not a regular file", ErrHashMismatch, lib)
 		}
 	}
-	// #nosec G304 -- lib is built from the cache root and the pinned table, never from remote input.
-	f, err := os.Open(lib)
+	if afterLstat != nil {
+		afterLstat(lib)
+	}
+	f, err := regularfile.Open(lib)
+	if errors.Is(err, regularfile.ErrNotRegular) {
+		return "", fmt.Errorf("%w: %s is not a regular file", ErrHashMismatch, lib)
+	}
 	if err != nil {
 		return "", err
 	}
