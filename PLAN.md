@@ -12,7 +12,7 @@ byte-identical prompts and numerically equivalent decisions from the same Huggin
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | checkpoints, layout, tokenizer, prompt, ONNX backend, trust, numerics, agent   |
 | [`docs/NATIVE.md`](docs/NATIVE.md)             | the pure-Go native backend: loading, encoder, head, kernels, parity            |
 | [`docs/TESTING.md`](docs/TESTING.md)           | test tiers, gating variables, tolerances, mutation practice, known blind spots |
-| [`docs/DECISIONS.md`](docs/DECISIONS.md)       | D1–D36 with their evidence                                                     |
+| [`docs/DECISIONS.md`](docs/DECISIONS.md)       | D1–D37 with their evidence                                                     |
 | [`docs/INVARIANTS.md`](docs/INVARIANTS.md)     | the 74 behaviours a test must assert                                           |
 | [`docs/API.md`](docs/API.md)                   | the Go types and the JSON shapes Python emits                                  |
 | [`BENCHMARKS.md`](BENCHMARKS.md)               | measured latency, memory and int8 calibration                                  |
