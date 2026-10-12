@@ -13,10 +13,26 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/MeKo-Christian/go-laya/internal/regularfile"
 )
 
 // maxListing bounds the listing Snapshot reads: the bundle repo's is 7 KB.
 const maxListing = 16 << 20
+
+// maxCached caps the cached listing: the bundle repo's is 1091 bytes for its
+// 38 files, about 29 bytes a name, so the cap holds over half a million
+// names, far beyond the Hub's recommended 100k files a repo. Snapshot
+// refuses to cache a larger one, which only names that json.Marshal escapes
+// can produce from a listing that passed maxListing.
+const maxCached = maxListing
+
+// maxRef caps a cached ref, which Snapshot writes as a 40-byte commit id.
+const maxRef = 1 << 10
+
+// afterCached, when set, runs between readCached's cached check and its open.
+// Tests set it to change the file inside that window.
+var afterCached func(path string)
 
 // listing is the part of GET /api/models/{repo}/revision/{rev} Snapshot uses.
 type listing struct {
@@ -57,16 +73,19 @@ func (c *Client) Snapshot(ctx context.Context, repo, rev string, allow []string)
 	if err != nil {
 		return "", err
 	}
+	raw, err := json.Marshal(names)
+	if err != nil {
+		return "", fmt.Errorf("hub: %w", err)
+	}
+	if len(raw) > maxCached {
+		return "", fmt.Errorf("hub: %s at %s: cached listing larger than %d bytes", repo, rev, maxCached)
+	}
 	for _, path := range want {
 		if _, err := c.fetch(ctx, dir, owner, name, commit, path, commit); err != nil {
 			return "", err
 		}
 	}
 
-	raw, err := json.Marshal(names)
-	if err != nil {
-		return "", fmt.Errorf("hub: %w", err)
-	}
 	if err := writeAtomic(dir, repo+"/listings/"+commit+".json", raw); err != nil {
 		return "", fmt.Errorf("hub: %s: %w", repo, err)
 	}
@@ -124,7 +143,7 @@ func offlineSnapshot(dir, owner, name, rev string, allow []string) (string, erro
 	if err != nil {
 		return "", err
 	}
-	raw, err := readCached(dir, repo+"/listings/"+commit+".json")
+	raw, err := readCached(dir, repo+"/listings/"+commit+".json", maxCached)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("%w: %s at %s: no listing", ErrNotCached, repo, rev)
 	}
@@ -156,7 +175,7 @@ func cachedCommit(dir, owner, name, rev string) (string, error) {
 	if commitRE.MatchString(rev) {
 		return rev, nil
 	}
-	raw, err := readCached(dir, owner+"/"+name+"/refs/"+rev)
+	raw, err := readCached(dir, owner+"/"+name+"/refs/"+rev, maxRef)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("%w: %s/%s at %s", ErrNotCached, owner, name, rev)
 	}
@@ -264,12 +283,35 @@ func translate(pat string) string {
 }
 
 // readCached reads rel, a slash path below the cache root, only if cached
-// accepts it; anything else is fs.ErrNotExist.
-func readCached(root, rel string) ([]byte, error) {
+// accepts it; anything else is fs.ErrNotExist. The descriptor check repeats
+// the regular-file half of cached's verdict for whatever the path names by
+// the open, so a named pipe swapped in since is a miss too rather than an
+// open that waits for a writer; a symlink swapped in since is followed. A
+// file over limit is an error, since Snapshot never writes one.
+func readCached(root, rel string, limit int) ([]byte, error) {
 	if !cached(root, rel) {
 		return nil, fs.ErrNotExist
 	}
-	return os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	if afterCached != nil {
+		afterCached(path)
+	}
+	f, err := regularfile.Open(path)
+	if errors.Is(err, regularfile.ErrNotRegular) {
+		return nil, fs.ErrNotExist
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	raw, err := io.ReadAll(io.LimitReader(f, int64(limit)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > limit {
+		return nil, fmt.Errorf("%s: larger than %d bytes", path, limit)
+	}
+	return raw, nil
 }
 
 // writeAtomic writes data to rel, a slash path below the cache root, by
