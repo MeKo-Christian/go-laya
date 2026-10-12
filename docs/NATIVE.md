@@ -91,13 +91,14 @@ tensor name it reads.
 
 ## 5. Kernels and threads
 
-- The kernels are `github.com/cwbudde/algo-tensor` v0.2.0 (D35). `tensor.Workers()` defaults to
-  `GOMAXPROCS` at start-up (D34); `SetWorkers(n ≤ 1)` means one worker. `GOMAXPROCS` is the supported
-  knob; `SetWorkers` is not go-laya API.
+- The kernels are `github.com/cwbudde/algo-tensor` v0.3.1 (D35, D36). `tensor.Workers()` defaults
+  to `GOMAXPROCS` at start-up (D34); `SetWorkers(n ≤ 1)` means one worker. `GOMAXPROCS` is the
+  supported knob; `SetWorkers` is not go-laya API.
 - **Results do not depend on the worker count.** Each output of `Linear` and `MatMul` is one dot
-  product however the work is split. `MatMulTransB` (the attention products) splits over
-  `tensor.Parallel` from 2^20 multiply-adds, in whole 4-row blocks, with helper goroutines from one
-  budget of `Workers() − 1` shared by every caller.
+  product however the work is split. `Linear` splits over `tensor.Parallel` from 2^18 multiply-adds,
+  by outputs or by tokens. `MatMulTransB` (the attention products) splits over it from 2^20, in whole
+  4-row blocks. Both take their helper goroutines from one budget of `Workers() − 1` shared by every
+  caller.
 - **Bits are pinned per build.** `TestForwardDigest` hashes every output bit at Task 8.9's cell and
   on a padded batch of three, at one worker and at the default. The pins hold on amd64 with the
   assembly and without `GOAMD64=v3` (`digestBuildPinned`). A `purego` build runs the pure-Go
@@ -105,11 +106,17 @@ tensor name it reads.
 - **Concurrency.** Encoder and head only read their weights and allocate every intermediate per
   call, so concurrent `Forward` calls share one model. An `RWMutex` guards only the lifecycle
   against `Close`.
-- **Where the time goes.** 87% of CPU time is `tensor.Linear`, almost all in the AVX2 dot product:
-  one dot product per output with no cache blocking, so every token streams the whole weight
-  matrix again. Attention is about 5%, weight decoding about 2%. arm64 already has a 4×4 NEON block.
-  A blocked amd64 GEMM is the lever (Backlog B.20). At 512 tokens and 8 workers the backend runs at
-  5.4–6.0× ORT-CPU's latency, inside Task 8.9's 10× budget on an idle machine.
+- **Where the time goes.** Before B.20, 87% of CPU time was `tensor.Linear`, almost all in the AVX2
+  dot product: one dot product per output with no cache blocking, so every token streamed the whole
+  weight matrix again. Attention was about 5%, weight decoding about 2%. At 512 tokens and 8 workers
+  the backend ran at 5.4–6.0× ORT-CPU's latency, inside Task 8.9's 10× budget on an idle machine.
+- **Cache-blocked `Linear` (B.20, D36).** Since algo-tensor v0.3.1, every token runs over 256 KiB
+  panels of weight rows on every architecture. On amd64 with AVX2 and FMA, `linearDot3AVX2` runs
+  three tokens over one weight row and replays `dotF32AVX2` exactly, so no bit moved. Task 8.9's
+  cell at the default worker count gained 1.4–1.8× on the i7-1255U (`BENCHMARKS.md`). arm64 gets
+  only the panels; on an M5 Pro the gain could not be told from noise. arm64 has no multi-output
+  NEON kernel for `Linear`: the 4×4 NEON block is `MatMulTransB`'s, and it adds in another order
+  than `dotF32NEON`. Batch 1 has no group of three tokens and gains nothing.
 
 ## 6. Parity
 

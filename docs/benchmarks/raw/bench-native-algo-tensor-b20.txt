@@ -1,0 +1,101 @@
+# Backlog B.20: BenchmarkForwardDefaultWorkers at the Task 8.9 cell (b1_s512_k4), -test.benchtime=3x, on arm64.
+# before: go-laya dea8595 on github.com/cwbudde/algo-tensor v0.2.0 (b33d487; origin/main's go.mod via -modfile),
+# after: the same code on algo-tensor v0.3.1 (f4a4dbc, CWBudde/algo-tensor#10).
+# Machine: Apple M5 Pro, 15 cores, darwin/arm64, go1.27.1 (go.mod's toolchain go1.26.9 is a minimum).
+# arm64 takes v0.3.1's 256 KiB weight panels in Linear, not its kernel: linearDot3AVX2 is amd64-only.
+# One go test -c binary each, run interleaved per checkpoint under the machine lock, GOMAXPROCS unset (15),
+# no memory cap (no systemd-run on macOS). Sweep 1 runs before first in each pair, sweep 2 after first.
+# The amd64 result is not in this file: it is CWBudde/algo-tensor#10's, measured with exactly f4a4dbc on an
+# i7-1255U (https://github.com/CWBudde/algo-tensor/pull/10, "go-laya, Task 8.9's cell").
+
+2026-10-12T14:28:26+02:00
+nproc: 15
+cpu: Apple M5 Pro
+go version go1.27.1 darwin/arm64
+== before english:  14:28  up 11 days,  3:28, 1 user, load averages: 5.09 5.41 4.95
+BenchmarkForwardDefaultWorkers
+BenchmarkForwardDefaultWorkers/english
+BenchmarkForwardDefaultWorkers/english/workers=default
+BenchmarkForwardDefaultWorkers/english/workers=default/b1_s512_k4
+    bench_test.go:142: GOMAXPROCS=15, 15 kernel workers
+BenchmarkForwardDefaultWorkers/english/workers=default/b1_s512_k4-15         	       3	2634509319 ns/op	      2614 p50_ms	      2684 p90_ms
+== after english:  14:28  up 11 days,  3:28, 1 user, load averages: 6.32 5.66 5.05
+BenchmarkForwardDefaultWorkers
+BenchmarkForwardDefaultWorkers/english
+BenchmarkForwardDefaultWorkers/english/workers=default
+BenchmarkForwardDefaultWorkers/english/workers=default/b1_s512_k4
+    bench_test.go:142: GOMAXPROCS=15, 15 kernel workers
+BenchmarkForwardDefaultWorkers/english/workers=default/b1_s512_k4-15         	       3	2435640597 ns/op	      2427 p50_ms	      2572 p90_ms
+== before multilingual:  14:28  up 11 days,  3:28, 1 user, load averages: 7.38 5.92 5.15
+BenchmarkForwardDefaultWorkers
+BenchmarkForwardDefaultWorkers/multilingual
+BenchmarkForwardDefaultWorkers/multilingual/workers=default
+BenchmarkForwardDefaultWorkers/multilingual/workers=default/b1_s512_k4
+    bench_test.go:142: GOMAXPROCS=15, 15 kernel workers
+BenchmarkForwardDefaultWorkers/multilingual/workers=default/b1_s512_k4-15         	       3	1021608070 ns/op	      1013 p50_ms	      1046 p90_ms
+== after multilingual:  14:28  up 11 days,  3:28, 1 user, load averages: 7.67 6.00 5.18
+BenchmarkForwardDefaultWorkers
+BenchmarkForwardDefaultWorkers/multilingual
+BenchmarkForwardDefaultWorkers/multilingual/workers=default
+BenchmarkForwardDefaultWorkers/multilingual/workers=default/b1_s512_k4
+    bench_test.go:142: GOMAXPROCS=15, 15 kernel workers
+BenchmarkForwardDefaultWorkers/multilingual/workers=default/b1_s512_k4-15         	       3	1098358625 ns/op	      1079 p50_ms	      1142 p90_ms
+== before typed-decisions:  14:28  up 11 days,  3:28, 1 user, load averages: 7.38 5.97 5.17
+BenchmarkForwardDefaultWorkers
+BenchmarkForwardDefaultWorkers/typed-decisions
+BenchmarkForwardDefaultWorkers/typed-decisions/workers=default
+BenchmarkForwardDefaultWorkers/typed-decisions/workers=default/b1_s512_k4
+    bench_test.go:142: GOMAXPROCS=15, 15 kernel workers
+BenchmarkForwardDefaultWorkers/typed-decisions/workers=default/b1_s512_k4-15         	       3	2582451986 ns/op	      2519 p50_ms	      2749 p90_ms
+== after typed-decisions:  14:29  up 11 days,  3:28, 1 user, load averages: 8.55 6.25 5.28
+BenchmarkForwardDefaultWorkers
+BenchmarkForwardDefaultWorkers/typed-decisions
+BenchmarkForwardDefaultWorkers/typed-decisions/workers=default
+BenchmarkForwardDefaultWorkers/typed-decisions/workers=default/b1_s512_k4
+    bench_test.go:142: GOMAXPROCS=15, 15 kernel workers
+BenchmarkForwardDefaultWorkers/typed-decisions/workers=default/b1_s512_k4-15         	       3	2581566458 ns/op	      2579 p50_ms	      2588 p90_ms
+
+2026-10-12T14:29:19+02:00
+sweep 2, after first in each pair
+== after english:  14:29  up 11 days,  3:28, 1 user, load averages: 9.70 6.59 5.41
+BenchmarkForwardDefaultWorkers
+BenchmarkForwardDefaultWorkers/english
+BenchmarkForwardDefaultWorkers/english/workers=default
+BenchmarkForwardDefaultWorkers/english/workers=default/b1_s512_k4
+    bench_test.go:142: GOMAXPROCS=15, 15 kernel workers
+BenchmarkForwardDefaultWorkers/english/workers=default/b1_s512_k4-15         	       3	2631474125 ns/op	      2639 p50_ms	      2671 p90_ms
+== before english:  14:29  up 11 days,  3:29, 1 user, load averages: 9.53 6.65 5.45
+BenchmarkForwardDefaultWorkers
+BenchmarkForwardDefaultWorkers/english
+BenchmarkForwardDefaultWorkers/english/workers=default
+BenchmarkForwardDefaultWorkers/english/workers=default/b1_s512_k4
+    bench_test.go:142: GOMAXPROCS=15, 15 kernel workers
+BenchmarkForwardDefaultWorkers/english/workers=default/b1_s512_k4-15         	       3	2871055778 ns/op	      2910 p50_ms	      3049 p90_ms
+== after multilingual:  14:29  up 11 days,  3:29, 1 user, load averages: 10.25 6.93 5.57
+BenchmarkForwardDefaultWorkers
+BenchmarkForwardDefaultWorkers/multilingual
+BenchmarkForwardDefaultWorkers/multilingual/workers=default
+BenchmarkForwardDefaultWorkers/multilingual/workers=default/b1_s512_k4
+    bench_test.go:142: GOMAXPROCS=15, 15 kernel workers
+BenchmarkForwardDefaultWorkers/multilingual/workers=default/b1_s512_k4-15         	       3	1097028722 ns/op	      1097 p50_ms	      1110 p90_ms
+== before multilingual:  14:29  up 11 days,  3:29, 1 user, load averages: 9.59 6.85 5.55
+BenchmarkForwardDefaultWorkers
+BenchmarkForwardDefaultWorkers/multilingual
+BenchmarkForwardDefaultWorkers/multilingual/workers=default
+BenchmarkForwardDefaultWorkers/multilingual/workers=default/b1_s512_k4
+    bench_test.go:142: GOMAXPROCS=15, 15 kernel workers
+BenchmarkForwardDefaultWorkers/multilingual/workers=default/b1_s512_k4-15         	       3	1256134153 ns/op	      1255 p50_ms	      1296 p90_ms
+== after typed-decisions:  14:29  up 11 days,  3:29, 1 user, load averages: 10.27 7.04 5.62
+BenchmarkForwardDefaultWorkers
+BenchmarkForwardDefaultWorkers/typed-decisions
+BenchmarkForwardDefaultWorkers/typed-decisions/workers=default
+BenchmarkForwardDefaultWorkers/typed-decisions/workers=default/b1_s512_k4
+    bench_test.go:142: GOMAXPROCS=15, 15 kernel workers
+BenchmarkForwardDefaultWorkers/typed-decisions/workers=default/b1_s512_k4-15         	       3	2559711778 ns/op	      2581 p50_ms	      2616 p90_ms
+== before typed-decisions:  14:30  up 11 days,  3:29, 1 user, load averages: 10.74 7.23 5.71
+BenchmarkForwardDefaultWorkers
+BenchmarkForwardDefaultWorkers/typed-decisions
+BenchmarkForwardDefaultWorkers/typed-decisions/workers=default
+BenchmarkForwardDefaultWorkers/typed-decisions/workers=default/b1_s512_k4
+    bench_test.go:142: GOMAXPROCS=15, 15 kernel workers
+BenchmarkForwardDefaultWorkers/typed-decisions/workers=default/b1_s512_k4-15         	       3	2961904542 ns/op	      2972 p50_ms	      3124 p90_ms
