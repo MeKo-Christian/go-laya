@@ -13,12 +13,14 @@ text.
 - **The plan is the spec.** `PLAN.md` drives the work; `docs/INVARIANTS.md` lists the 74
   behaviours a test must assert, each citing the Python line that defines it; `docs/API.md`
   gives the target Go types and the exact JSON shapes Python emits; `docs/ARCHITECTURE.md` holds
-  the verified facts and technical constraints, `docs/DECISIONS.md` the decisions (D1…) with
-  their evidence.
+  the verified facts and technical constraints, `docs/NATIVE.md` those of the pure-Go backend,
+  `docs/TESTING.md` the test strategy, and `docs/DECISIONS.md` the decisions (D1…) with their
+  evidence. `PLAN.md` holds open work only.
 
 This is a **parity port**. The measure of correctness is not "is this good Go" but "does
 this agree with `original/`". Where upstream is inconsistent, reproducing the inconsistency
-is usually right and deviating from it always needs a line in `PLAN.md` saying so.
+is usually right and deviating from it always needs a decision in `docs/DECISIONS.md` and a row
+in the README's "Differences from Python laya".
 
 ## Build & Development Commands
 

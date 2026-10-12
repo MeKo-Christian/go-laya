@@ -4,6 +4,8 @@
 > The decisions behind it, with their evidence, are in [`DECISIONS.md`](DECISIONS.md). The public
 > types and JSON shapes are in [`API.md`](API.md), the 74 behaviours a test must assert are in
 > [`INVARIANTS.md`](INVARIANTS.md), and measured latency is in [`../BENCHMARKS.md`](../BENCHMARKS.md).
+> The pure-Go native backend has its own file, [`NATIVE.md`](NATIVE.md), and so does the test
+> strategy, [`TESTING.md`](TESTING.md).
 
 ## 1. What is being ported
 
@@ -101,11 +103,17 @@ go-laya/
   internal/hub/           HF resolve + verified cache + snapshot + offline
   internal/checkpoint/    rl_agent_config.json loading and validation
   internal/onnxheader/    ONNX graph header validation (protowire, no generated types)
-  internal/safetensors/   safetensors header validation
+  internal/safetensors/   safetensors header validation and F16/F32 decoding
+  internal/regularfile/   opens that refuse FIFOs, devices and directories without blocking
   internal/ortlib/        pinned, hash-verified ONNX Runtime download
   internal/backend/fake/  replays testdata/logits.jsonl per checkpoint
   internal/backend/onnx/  ONNX Runtime backend
+  internal/backend/native/ pure-Go backend over model.safetensors (NATIVE.md, D30)
+  internal/modernbert/    the native ModernBERT/mmBERT encoder blocks
+  internal/head/          the native decision head
+  internal/evalset/       the public-dataset calibration harness behind D33
   cmd/laya-ort/           downloads the pinned ORT library
+  cmd/laya-evalfetch/     draws the seeded evaluation subsets (docs/benchmarks/eval-manifest.json)
   scripts/       dump_python_parity.py, export_onnx.py, crosscheck_transformers.py, … (scripts/README.md)
   testdata/      golden vectors, checked in; CI never needs Python
   original/      frozen upstream Python (D4)
@@ -166,9 +174,20 @@ it, and multilingual (no NFC) cannot. `scripts/probe_ccc.py` enumerates the set.
 decided (2026-10-10) to stay Unicode-conformant rather than reproduce the Rust tables, so the
 divergence is a documented deviation (README, "Differences from Python laya").
 
-**Cost.** `Open`: english 34–63 ms / 11.6 MB, multilingual 0.42–0.47 s / 110 MB, after Task B.1
-stopped decoding the vocabulary and merges through `encoding/json` (before: 0.51–0.53 s / 207 MB).
-`Encode`: 191–456 µs.
+**Differential acceptance.** `just diff-tokenizer` accepts a mismatch only when the stale tables
+explain all of it: `explainedByStaleCCC` re-runs the line with `staleStarterNFC`, which treats the
+108 codepoints (`staleCCC`, pinned by size and SHA-256 in `TestStaleCCCTable`) as starters, and the
+result must equal the oracle's ids and tokens exactly. Any other stage, any other `normalize`
+mismatch and any multilingual mismatch fail.
+
+**Loading.** `model.vocab` and `model.merges` are not decoded through `encoding/json`:
+`tokenizer/decode.go` scans their raw bytes once and resolves every merge to ids. `encoding/json`
+still validates the document and decodes every non-plain string, and a repeated or case-variant key
+behaves as it would there (the old decode is the oracle in `decode_test.go`). Map size hints count
+separators in untrusted input, so they are capped at 1<<20.
+
+**Cost.** `Open`: english 34–63 ms / 11.6 MB, multilingual 0.42–0.47 s / 110 MB; what remains is
+mostly `encoding/json`'s validation pass and map lookups. `Encode`: 191–456 µs.
 
 ## 4. Prompt assembly
 
@@ -223,7 +242,9 @@ diff is english 4.3e-06, multilingual 2.8e-06, typed-decisions 1.4e-06, with no 
 - `Close` releases session, env and runtime, waits for in-flight `Forward`s, and is idempotent.
 - `IntraOpThreads` defaults to physical cores, not `runtime.NumCPU()` (D6).
 - Device: `""`/`auto` walks cuda → coreml → cpu. An explicit device the library lacks falls back
-  to CPU with one `slog` warning, as does `cuda` for now (D22).
+  to CPU with one `slog` warning, as does `cuda` for now (D22). The resolve, CPU-retry and
+  warn-once logic is the pure `placeSession` (`device.go`), testable without ORT. There is no `mps`;
+  CoreML is ORT's Apple backend.
 - Builds only on D21's platform list; elsewhere `ErrUnsupportedPlatform`.
 
 **Runtime library.** The binding speaks C API 23. `Open` resolves `LAYA_ORT_LIB`, then
@@ -308,6 +329,9 @@ Each of these gives a plausible wrong answer rather than an error if done the ob
   8757 rows (widths 1–20, 32, 33) of `act_softmax.jsonl`. numpy's `exp32` with a divide
   misses 2234 of them in the last bits, and 96 after `Round4`. Only the AVX2 kernel is verified.
 - **`p.argmax()` is the first max.**
+- **No fused multiply-add where numpy rounds twice.** Go fuses `a*b + c` into one `FMADD` on arm64
+  (and on amd64 under `GOAMD64=v3`). An explicit `float64(…)` conversion around the product forbids
+  the fusion; `calib.ECE` needs it to stay bit-exact on arm64.
 
 ## 8. Golden corpus
 
@@ -337,3 +361,60 @@ The ONNX fixtures live beside the backend: `internal/backend/onnx/testdata/forwa
 `internal/backend/fake` replays `logits.jsonl` keyed on all five tensors **and** the checkpoint:
 english and typed-decisions record identical batches with different logits. It fails with
 `ErrUnknownBatch`, naming the first differing cell.
+
+## 9. Agent, loader and Router
+
+**Loading a checkpoint** (`loader.go`, shared by `Open` and the Router's default loader):
+
+- A local directory is used as it is; a missing path-shaped id is `ErrCheckpointNotFound`; anything
+  else is a Hub snapshot, then the subfolder. The bundle repo resolves at D17's pin and other repos
+  at `main`, unless `WithRevision`/`WithRouterRevision` names another (D29); a local directory
+  ignores the revision, and an unsafe one is `ErrInvalidRevision` when the option is applied.
+- **Offline** is huggingface_hub's rule, `HF_HUB_OFFLINE` or else `TRANSFORMERS_OFFLINE` read as a
+  truthy string, plus `LAYA_OFFLINE`. Offline, a snapshot resolves only from recorded refs and
+  listings.
+- **Token:** the option, else `$HF_TOKEN`, read once by `NewRouter` (`router.py:159`).
+- **Config limits.** A config with `max_len` or `head_max_len` ≤ 0, or a `temperature` list not 3
+  long, is `ErrIncompatibleCheckpoint`; `NaN`/`Infinity` literals are refused (D31). Python would
+  raise a `ValueError` blaming `head_max_len` for `max_len` ≤ 0, and cut every option to 4 tokens and
+  the question head to 8 for `head_max_len` ≤ 0 (`common.py:70-86`). `SetLimits`/`WithLimits` ≤ 0 is
+  `ErrInvalidLimits`; `SystemOne` reads both limits once under an `RWMutex`.
+- **`Open` options.** Without `WithGraph`, the export name comes from the checkpoint the spec
+  locates in either registry; anything else, a local directory included, is `ErrNoGraph`.
+  `WithBackend` skips the export: a successful `Open` hands the backend to the `Agent`, a failed one
+  leaves it with the caller, and its outputs are held to the ONNX backend's shapes. Options that
+  would be silently ignored together are `ErrConflictingOptions` (D29, D30).
+- The backend's `ErrUnsupportedPlatform` and `ErrUnknownDevice` are re-exported at the root, as
+  `ErrIncompatibleCheckpoint` is, so callers match them with `errors.Is`.
+
+**`SystemOne`** (`systemone.go`), in order; the first failure wins:
+
+1. `Questions.Validate` (`ErrDuplicateQuestionID`, since a Python dict cannot hold duplicates),
+   then an empty question set is `ErrEmptyQuestions`.
+2. Per question, in question order:
+   1. `CheckCriteria` (`ErrCriteriaShape`): choice needs an object; score a list, an object or
+      `""`; noul an object or a Python-falsy value. A non-empty string for score is refused, where
+      Python would render one level per character. The typed API cannot produce these shapes; the
+      check guards the `Internal` path.
+   2. A question that renders no options, such as an empty choice question, is `ErrNoOptions`.
+   3. `BuildSequence` at the config's `max_len`/`head_max_len`; a state that cannot be serialized
+      fails here.
+   4. A marker lost to the budget is an `*OptionBudgetError` (`ErrOptionsExceedHeadBudget`).
+3. A batch whose largest option count is below 2 is `ErrTooFewOptions` (D32). A one-option question
+   beside a larger one still runs, at probability 1.
+4. `Collate`, then **one** `Forward` for the batch. Rows or widths that do not fit the batch are
+   `ErrIncompatibleCheckpoint`.
+5. `formatAnswer` per row with the config's temperatures. `input_tokens` is the batch's
+   attention-mask sum.
+
+**Answer format** (`answer.go`, ports `agent.py:302-337`): choice keys come in option order and
+`zip` truncates to the shorter of keys and `p`. `score` is the expectation `Σ i·p[i]`, not an argmax.
+`noul` has no `probabilities` and no `legend`, and its confidence is `max(p1, 1 − p1)`. `legend`
+carries the raw criterion value of every level, not the rendered text. `act_probability` is column 0
+of `calib.ActSoftmax` over the whole act row, rounded (D26). `MarshalJSON` goes through `jsonx` with
+no `omitempty`: a criteria key of `""` and empty collections are emitted.
+
+**`Router.Predict`** (`predict.go`, `router.py:293-311`): `Route`, then a leased agent (D27), then
+`SystemOne`; `Result.Routing` is a copy of the decision. `jsonx.Marshal(res.Map())` appends
+`"routing"` last, and `repo` is always a JSON string (README, "Differences from Python laya"). A
+failed route loads nothing. `Load` itself is unleased.

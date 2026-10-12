@@ -290,7 +290,8 @@ func TestSerializeStateFailsLoudly(t *testing.T) {
 // TestRenderOptionsUnknownTypeIsNoul pins a quirk rather than a design: Python's
 // render_options has no `if t == "noul"` guard (common.py:41-46), so the noul
 // branch is the fallthrough for every type it does not recognise. Reproducing
-// the quirk is the parity-port default; deviating would need a line in PLAN.md.
+// the quirk is the parity-port default; deviating would need a decision in
+// docs/DECISIONS.md and a row in the README's differences.
 func TestRenderOptionsUnknownTypeIsNoul(t *testing.T) {
 	got := RenderOptions(Internal{T: "not-a-type", Ins: "x", Crit: nil})
 	want := []string{"false: no, the statement does not hold", "true: yes, the statement holds"}

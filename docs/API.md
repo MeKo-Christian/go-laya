@@ -1,8 +1,7 @@
 # Proposed Go API
 
-> Referenced from `PLAN.md` §7. The type definitions the port targets, and the decisions that resolve
-> Python's dynamic typing into explicit Go types. **This file is the type appendix; `PLAN.md` wins on
-> any conflict.** The package layout is owned by `docs/ARCHITECTURE.md` §2, not duplicated here.
+> The type definitions the port targets, and the decisions that resolve Python's dynamic typing
+> into explicit Go types. **This file is the type appendix; `DECISIONS.md` wins on any conflict.** The package layout is owned by `docs/ARCHITECTURE.md` §2, not duplicated here.
 
 ## Return-value shapes to reproduce
 

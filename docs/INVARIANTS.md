@@ -1,7 +1,15 @@
 # Invariants the Go port must reproduce
 
 > Derived from `original/laya/` (upstream Python `laya` 0.3.4). Every item cites the line that defines
-> it. Referenced from `PLAN.md` §5. These are assertions, not guidance: each one is a test.
+> it. These are assertions, not guidance: each one is a test.
+
+These four cause silent wrong answers rather than loud failures:
+
+- **#18:** `serialize_state` byte parity (separators, key order, HTML escaping).
+- **#29:** `round()` half-to-even vs Go's half-away-from-zero.
+- **#56 / #63:** dict iteration order as a tie-break in `detect_script` and
+  `guess_latin_language`.
+- **#26:** `noul` confidence is `max(p1, 1-p1)`, not the entropy formula.
 
 Numbered checklist. Each item cites the line that defines it.
 
