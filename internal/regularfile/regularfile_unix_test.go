@@ -3,6 +3,7 @@
 package regularfile
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -30,8 +31,8 @@ func TestOpenFIFO(t *testing.T) {
 	}()
 	select {
 	case err := <-done:
-		if err == nil || !strings.Contains(err.Error(), "not a regular file") {
-			t.Fatalf("Open(FIFO) = %v, want a not-a-regular-file error", err)
+		if !errors.Is(err, ErrNotRegular) || !strings.Contains(err.Error(), "not a regular file") {
+			t.Fatalf("Open(FIFO) = %v, want ErrNotRegular", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Open blocked on a FIFO with no writer")
