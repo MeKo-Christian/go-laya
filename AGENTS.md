@@ -19,7 +19,8 @@ text.
 
 This is a **parity port**. The measure of correctness is not "is this good Go" but "does
 this agree with `original/`". Where upstream is inconsistent, reproducing the inconsistency
-is usually right and deviating from it always needs a line in `PLAN.md` saying so.
+is usually right and deviating from it always needs a decision in `docs/DECISIONS.md` and a row
+in the README's "Differences from Python laya".
 
 ## Build & Development Commands
 
