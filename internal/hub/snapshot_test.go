@@ -1,11 +1,13 @@
 package hub
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -102,7 +104,11 @@ func (f *fakeRepo) serveListing(w http.ResponseWriter) {
 	for i, n := range names {
 		sibs[i] = sibling{n}
 	}
-	err := json.NewEncoder(w).Encode(struct {
+	// Unescaped: Go's encoder alone escapes "&" by default, and a Hub need
+	// not, so TestSnapshotEscapedListing's names cost their own size on the wire.
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	err := enc.Encode(struct {
 		ID       string    `json:"id"`
 		SHA      string    `json:"sha"`
 		Siblings []sibling `json:"siblings"`
@@ -488,5 +494,83 @@ func TestOffline(t *testing.T) {
 
 	if after := len(f.seen()); after != before {
 		t.Errorf("offline calls reached the Hub: %d requests", after-before)
+	}
+}
+
+// TestReadCachedCap: Snapshot only ever writes a 40-byte ref and a listing
+// no larger than maxCached, so a cached file over its cap is an error naming
+// it, not a miss and not something to read whole. Each file is padded with
+// whitespace that the reader would otherwise ignore, so only the cap can
+// refuse it.
+func TestReadCachedCap(t *testing.T) {
+	for _, c := range []struct {
+		name, rev, rel string
+		limit          int
+	}{
+		{"ref", "main", "refs/main", maxRef},
+		{"listing", commit, "listings/" + commit + ".json", maxCached},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := context.Background()
+			f := newFakeRepo(t)
+			online := f.client(t, "")
+			if _, err := online.Snapshot(ctx, "org/model", "main", []string{"multilingual/*"}); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(online.Dir, "org", "model", filepath.FromSlash(c.rel))
+			body, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body = append(body, bytes.Repeat([]byte(" "), c.limit+1-len(body))...)
+			if err := os.WriteFile(path, body, 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			offline := &Client{
+				Endpoint: f.srv.URL, Dir: online.Dir, Offline: true,
+				HTTP: &http.Client{Transport: failTransport{t}},
+			}
+			_, err = offline.Snapshot(ctx, "org/model", c.rev, []string{"multilingual/*"})
+			if err == nil || errors.Is(err, ErrNotCached) || !strings.Contains(err.Error(), path) ||
+				!strings.Contains(err.Error(), fmt.Sprintf("larger than %d bytes", c.limit)) {
+				t.Fatalf("Snapshot = %v, want an error naming %s as larger than %d bytes, not ErrNotCached", err, path, c.limit)
+			}
+		})
+	}
+}
+
+// TestSnapshotEscapedListing: the cached listing is the names re-encoded,
+// and json.Marshal writes each "&" as 6 bytes, so a listing that passed
+// maxListing on the wire can cache at several times that size. Snapshot
+// caches it, and an offline Snapshot reads it back: maxCached holds every
+// listing Snapshot writes, so the cap adds no failure Python does not have.
+func TestSnapshotEscapedListing(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeRepo(t)
+	for name := range f.files {
+		f.listed = append(f.listed, name)
+	}
+	f.listed = append(f.listed, strings.Repeat("&", maxListing-(1<<16)))
+	online := f.client(t, "")
+	want, err := online.Snapshot(ctx, "org/model", "main", []string{"multilingual/*"})
+	if err != nil {
+		t.Fatalf("Snapshot = %v, want the listing cached", err)
+	}
+	fi, err := os.Stat(filepath.Join(online.Dir, "org", "model", "listings", commit+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Size() <= 5*maxListing {
+		t.Fatalf("cached listing is %d bytes, want over 5·maxListing for the test to mean anything", fi.Size())
+	}
+
+	offline := &Client{
+		Endpoint: f.srv.URL, Dir: online.Dir, Offline: true,
+		HTTP: &http.Client{Transport: failTransport{t}},
+	}
+	got, err := offline.Snapshot(ctx, "org/model", "main", []string{"multilingual/*"})
+	if err != nil || got != want {
+		t.Fatalf("offline Snapshot = %q, %v, want %q", got, err, want)
 	}
 }

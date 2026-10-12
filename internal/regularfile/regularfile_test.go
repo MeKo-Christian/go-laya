@@ -1,6 +1,7 @@
 package regularfile
 
 import (
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -24,21 +25,22 @@ func TestOpenRegular(t *testing.T) {
 	}
 }
 
-// A directory opens on every platform, and must still be refused.
+// A directory opens on every platform, and must still be refused, as
+// ErrNotRegular so that callers can tell it from a failed open.
 func TestOpenDirectory(t *testing.T) {
 	f, err := Open(t.TempDir())
 	if err == nil {
 		f.Close()
 		t.Fatal("Open accepted a directory")
 	}
-	if !strings.Contains(err.Error(), "not a regular file") {
-		t.Fatalf("Open = %v, want a not-a-regular-file error", err)
+	if !errors.Is(err, ErrNotRegular) || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("Open = %v, want ErrNotRegular", err)
 	}
 }
 
 // A missing file is os.OpenFile's error.
 func TestOpenMissing(t *testing.T) {
-	if _, err := Open(filepath.Join(t.TempDir(), "absent")); !os.IsNotExist(err) {
+	if _, err := Open(filepath.Join(t.TempDir(), "absent")); !os.IsNotExist(err) || errors.Is(err, ErrNotRegular) {
 		t.Fatalf("Open = %v, want a not-exist error", err)
 	}
 }
