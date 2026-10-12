@@ -295,8 +295,10 @@ checkpoint, and is `ErrNoGraph` otherwise.
   it. The cached refs and listings, and the cached ORT library, are `Lstat`ed first as well, then
   checked again on the opened descriptor, so a named pipe swapped in after the `Lstat` is a cache
   miss (refs and listings) or `ErrHashMismatch` (the library); a symlink swapped in there is
-  followed. A ref is read with a 1 KiB cap and a listing with a 16 MiB one, which `Snapshot` also
-  holds when it writes the listing, so a file over its cap is an error rather than a miss. The
+  followed. A ref is read with a 1 KiB cap and a listing with a 96 MiB one: six times the 16 MiB
+  `Snapshot` accepts from the Hub, the most `json.Marshal`'s escaping can grow the names it caches,
+  so every listing `Snapshot` writes reads back, and a file over its cap is an error rather than a
+  miss. The
   library has the same kind of window as the graph: `purego.Dlopen` opens the verified path again
   to load it.
 - CI forbids `encoding/gob` and `os/exec` outside tests, and filesystem `replace` directives.

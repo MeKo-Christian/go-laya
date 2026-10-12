@@ -59,18 +59,19 @@ Run `just ci` before every commit. Tick a box only against a command you ran and
       write access to the user's cache directory, so it is low severity. A FIFO test per reader,
       modelled on `TestReadFIFO`. Found in B.17's audit, PR #61 (2026-10-11).
       (2026-10-12, PR #69) `readCached` opens through `regularfile.Open` and reads a ref with a 1 KiB
-      cap and a listing with a 16 MiB one (the bundle's cached listing is 1091 bytes for 38 files). A
-      file that is not regular at the open is a miss, so an offline `Snapshot` is `ErrNotCached`, not
-      a wait; one over its cap is an error naming it, and `Snapshot` refuses to cache a listing over
-      the cap. `ortlib.Cached` opens through `regularfile.Open`, and a non-regular file there is
+      cap and a listing with a 96 MiB one, six times the 16 MiB accepted from the Hub, so every
+      listing `Snapshot` caches reads back even after `json.Marshal` escapes its names (the bundle's
+      is 1091 bytes for 38 files). A file that is not regular at the open is a miss, so an offline
+      `Snapshot` is `ErrNotCached`, not a wait; one over its cap is an error naming it.
+      `ortlib.Cached` opens through `regularfile.Open`, and a non-regular file there is
       `ErrHashMismatch`; `regularfile.ErrNotRegular` lets both map the case. `TestReadCachedFIFO`
       (ref and listing) and `TestCachedFIFO` swap a FIFO in through a hook between the check and the
-      open; `TestReadCachedCap` and `TestSnapshotListingCap` pin the caps.
-      `go test -count=1 -run 'FIFO|Cap|ReadCached' -v ./internal/{hub,ortlib,regularfile}/` passes;
-      with both opens put back to `os.Open`,
-      `TestReadCachedFIFO/ref`, `/listing` and `TestCachedFIFO` fail through the 5 s guard ("blocked
-      on a FIFO with no writer"). `purego.Dlopen` still reopens the library path
-      (`docs/ARCHITECTURE.md` §6).
+      open; `TestReadCachedCap` pins the caps, and `TestSnapshotEscapedListing` reads back a listing
+      that escaping grew past 80 MiB (it fails with the cap at 16 MiB).
+      `go test -count=1 -run 'FIFO|Cap|Escaped|ReadCached' -v ./internal/{hub,ortlib,regularfile}/`
+      passes; with both opens put back to `os.Open`, `TestReadCachedFIFO/ref`, `/listing` and
+      `TestCachedFIFO` fail through the 5 s guard ("blocked on a FIFO with no writer").
+      `purego.Dlopen` still reopens the library path (`docs/ARCHITECTURE.md` §6).
 
 ## Risks
 

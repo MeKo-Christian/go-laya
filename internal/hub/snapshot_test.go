@@ -105,7 +105,7 @@ func (f *fakeRepo) serveListing(w http.ResponseWriter) {
 		sibs[i] = sibling{n}
 	}
 	// Unescaped: Go's encoder alone escapes "&" by default, and a Hub need
-	// not, so TestSnapshotListingCap's names cost their own size on the wire.
+	// not, so TestSnapshotEscapedListing's names cost their own size on the wire.
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 	err := enc.Encode(struct {
@@ -540,25 +540,37 @@ func TestReadCachedCap(t *testing.T) {
 	}
 }
 
-// TestSnapshotListingCap: the cached listing is the names re-encoded, and
-// json.Marshal writes each "&" as 6 bytes, so a listing that passed
-// maxListing can grow past maxCached on disk. Snapshot refuses it before
-// downloading anything, so it never caches a listing readCached refuses.
-func TestSnapshotListingCap(t *testing.T) {
+// TestSnapshotEscapedListing: the cached listing is the names re-encoded,
+// and json.Marshal writes each "&" as 6 bytes, so a listing that passed
+// maxListing on the wire can cache at several times that size. Snapshot
+// caches it, and an offline Snapshot reads it back: maxCached holds every
+// listing Snapshot writes, so the cap adds no failure Python does not have.
+func TestSnapshotEscapedListing(t *testing.T) {
+	ctx := context.Background()
 	f := newFakeRepo(t)
 	for name := range f.files {
 		f.listed = append(f.listed, name)
 	}
-	f.listed = append(f.listed, strings.Repeat("&", maxCached/5))
-	cl := f.client(t, "")
-	_, err := cl.Snapshot(context.Background(), "org/model", "main", []string{"multilingual/*"})
-	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("larger than %d bytes", maxCached)) {
-		t.Fatalf("Snapshot = %v, want the cached listing refused as larger than %d bytes", err, maxCached)
+	f.listed = append(f.listed, strings.Repeat("&", maxListing-(1<<16)))
+	online := f.client(t, "")
+	want, err := online.Snapshot(ctx, "org/model", "main", []string{"multilingual/*"})
+	if err != nil {
+		t.Fatalf("Snapshot = %v, want the listing cached", err)
 	}
-	if got := f.downloads(); len(got) != 0 {
-		t.Errorf("downloaded %q", got)
+	fi, err := os.Stat(filepath.Join(online.Dir, "org", "model", "listings", commit+".json"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := files(t, cl.Dir); len(got) != 0 {
-		t.Errorf("left files %q", got)
+	if fi.Size() <= 5*maxListing {
+		t.Fatalf("cached listing is %d bytes, want over 5·maxListing for the test to mean anything", fi.Size())
+	}
+
+	offline := &Client{
+		Endpoint: f.srv.URL, Dir: online.Dir, Offline: true,
+		HTTP: &http.Client{Transport: failTransport{t}},
+	}
+	got, err := offline.Snapshot(ctx, "org/model", "main", []string{"multilingual/*"})
+	if err != nil || got != want {
+		t.Fatalf("offline Snapshot = %q, %v, want %q", got, err, want)
 	}
 }

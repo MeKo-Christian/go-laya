@@ -20,12 +20,14 @@ import (
 // maxListing bounds the listing Snapshot reads: the bundle repo's is 7 KB.
 const maxListing = 16 << 20
 
-// maxCached caps the cached listing: the bundle repo's is 1091 bytes for its
-// 38 files, about 29 bytes a name, so the cap holds over half a million
-// names, far beyond the Hub's recommended 100k files a repo. Snapshot
-// refuses to cache a larger one, which only names that json.Marshal escapes
-// can produce from a listing that passed maxListing.
-const maxCached = maxListing
+// maxCached caps the cached listing: the names of a listing that passed
+// maxListing, re-encoded by json.Marshal, so that every listing Snapshot
+// caches can be read back. Each byte of a name on the wire becomes at most
+// six here ("&" is written "\u0026"; an invalid byte decodes to U+FFFD and is
+// written as its three bytes), and each name's quotes and comma here are
+// covered by its sibling's braces on the wire. So the cached listing is at
+// most six times the wire's. The bundle repo's is 1091 bytes for 38 files.
+const maxCached = 6 * maxListing
 
 // maxRef caps a cached ref, which Snapshot writes as a 40-byte commit id.
 const maxRef = 1 << 10
@@ -73,19 +75,16 @@ func (c *Client) Snapshot(ctx context.Context, repo, rev string, allow []string)
 	if err != nil {
 		return "", err
 	}
-	raw, err := json.Marshal(names)
-	if err != nil {
-		return "", fmt.Errorf("hub: %w", err)
-	}
-	if len(raw) > maxCached {
-		return "", fmt.Errorf("hub: %s at %s: cached listing larger than %d bytes", repo, rev, maxCached)
-	}
 	for _, path := range want {
 		if _, err := c.fetch(ctx, dir, owner, name, commit, path, commit); err != nil {
 			return "", err
 		}
 	}
 
+	raw, err := json.Marshal(names)
+	if err != nil {
+		return "", fmt.Errorf("hub: %w", err)
+	}
 	if err := writeAtomic(dir, repo+"/listings/"+commit+".json", raw); err != nil {
 		return "", fmt.Errorf("hub: %s: %w", repo, err)
 	}
