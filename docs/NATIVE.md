@@ -91,7 +91,7 @@ tensor name it reads.
 
 ## 5. Kernels and threads
 
-- The kernels are `github.com/cwbudde/algo-tensor` v0.3.1 (D35, D36). `tensor.Workers()` defaults
+- The kernels are `github.com/cwbudde/algo-tensor` v0.4.0 (D35, D36). `tensor.Workers()` defaults
   to `GOMAXPROCS` at start-up (D34); `SetWorkers(n ≤ 1)` means one worker. `GOMAXPROCS` is the
   supported knob; `SetWorkers` is not go-laya API.
 - **Results do not depend on the worker count.** Each output of `Linear` and `MatMul` is one dot
@@ -117,6 +117,12 @@ tensor name it reads.
   only the panels; on an M5 Pro the gain could not be told from noise. arm64 has no multi-output
   NEON kernel for `Linear`: the 4×4 NEON block is `MatMulTransB`'s, and it adds in another order
   than `dotF32NEON`. Batch 1 has no group of three tokens and gains nothing.
+- **`MatMulTransB` on amd64 (algo-tensor v0.4.0).** With AVX2 and FMA, the attention products run
+  the same kernel and panels as `Linear`, three rows of A over one row of B, from three rows and
+  k ≥ 8 (algo-tensor's PLAN 1.4, CWBudde/algo-tensor#12). Every output is still one `dotF32`, so no
+  bit moved: `TestForwardDigest` gives the pinned digests on v0.4.0. v0.4.0's numerics change, AVX2
+  kernels for `MatMulTransBBias`, reaches nothing here; arm64 and `purego` builds run the same code
+  as on v0.3.1.
 
 ## 6. Parity
 
